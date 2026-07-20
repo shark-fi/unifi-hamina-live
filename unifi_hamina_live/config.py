@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     )
     poll_interval_seconds: float = Field(default=30.0, ge=2.0)
 
+    # Experimental: subscribe to the controller's WebSocket event stream for
+    # push updates (client connect/disconnect/roam, AP up/down). The periodic
+    # poll stays on as the authoritative reconciler. Undocumented UniFi API.
+    websocket_enabled: bool = Field(default=False)
+
     # --- Meraki-compatible facade ----------------------------------------
     meraki_compat_api_key: str = Field(default="")
     meraki_org_name: str = Field(default="UniFi")
@@ -38,6 +43,10 @@ class Settings(BaseSettings):
     # --- Server -----------------------------------------------------------
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8080)
+
+    # --- Public exposure (Cloudflare Tunnel; used by docker compose) ------
+    # Not consumed by the app itself — the `tunnel` compose profile reads it.
+    cf_tunnel_token: str = Field(default="")
 
     @property
     def site_filter(self) -> list[str]:

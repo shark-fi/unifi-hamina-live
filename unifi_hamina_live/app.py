@@ -38,12 +38,20 @@ async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
     collector: Collector = app.state.collector
     collector.start()
+    if settings.websocket_enabled:
+        from .unifi.websocket import WebSocketListener
+
+        app.state.ws_listener = WebSocketListener(settings, collector)
+        app.state.ws_listener.start()
     if settings.openintent_refresh_enabled:
         app.state.refresher = OpenIntentRefresher(settings)
         app.state.refresher.start()
     try:
         yield
     finally:
+        listener = getattr(app.state, "ws_listener", None)
+        if listener is not None:
+            await listener.stop()
         await collector.stop()
         refresher = getattr(app.state, "refresher", None)
         if refresher is not None:

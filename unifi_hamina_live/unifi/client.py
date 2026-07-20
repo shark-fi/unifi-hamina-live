@@ -35,6 +35,7 @@ class UniFiClient:
         self._base = host.rstrip("/")
         self._username = username
         self._password = password
+        self._verify = verify_tls
         # Network app path prefix: "/proxy/network" on UniFi OS, "" on classic.
         self._prefix: str | None = None
         self._client = httpx.AsyncClient(
@@ -143,3 +144,27 @@ class UniFiClient:
     async def clients(self, site: str) -> list[dict]:
         """Active wireless/wired stations (stat/sta)."""
         return self._data(await self._get(f"{self._net}/s/{site}/stat/sta"))
+
+    # -- websocket event stream (experimental, undocumented) ---------------
+    def events_ws_url(self, site: str) -> str:
+        """wss:// URL for the controller event stream of a site."""
+        if self._prefix is None:
+            raise UniFiError("not logged in — call login() first")
+        scheme = "wss" if self._base.lower().startswith("https") else "ws"
+        host = self._base.split("://", 1)[-1]
+        return f"{scheme}://{host}{self._prefix}/wss/s/{site}/events?clients=v2"
+
+    def auth_headers(self) -> dict[str, str]:
+        """Cookie + CSRF headers to authenticate a websocket handshake."""
+        cookie = "; ".join(f"{c.name}={c.value}" for c in self._client.cookies.jar)
+        headers = {}
+        if cookie:
+            headers["Cookie"] = cookie
+        csrf = self._client.headers.get("X-CSRF-Token")
+        if csrf:
+            headers["X-CSRF-Token"] = csrf
+        return headers
+
+    @property
+    def verify_tls(self) -> bool:
+        return self._verify

@@ -43,6 +43,30 @@ class Collector:
     def snapshot(self) -> Snapshot:
         return self._snapshot
 
+    async def apply_events(self, site_id: str, events: list[dict]) -> bool:
+        """Apply a batch of WebSocket events to the current snapshot in place.
+        Returns True if anything changed. Safe against a concurrent poll swap."""
+        from . import events as ev_mod
+
+        if not events:
+            return False
+        async with self._lock:
+            snap = self._snapshot
+            serial_by_mac = {
+                a.mac: a.serial for a in snap.access_points if a.site_id == site_id
+            }
+            changed = False
+            for ev in events:
+                if ev_mod.apply_event(snap, ev, site_id, serial_by_mac):
+                    changed = True
+            if changed:
+                snap.generated_at = time.time()
+                # keep site rollup counts consistent for the touched site
+                for s in snap.sites:
+                    if s.id == site_id:
+                        s.num_clients = len(snap.clients_for_site(site_id))
+        return changed
+
     async def poll_once(self) -> Snapshot:
         """Fetch and normalize one full snapshot. Never raises; failures are
         recorded on the returned (and stored) snapshot."""

@@ -99,6 +99,13 @@ All reads are GETs; the only write is the login POST. Poll failures are logged
 and the last good snapshot is kept — the server never falls over because the
 console blips.
 
+**Live push (experimental):** set `WEBSOCKET_ENABLED=true` to also subscribe to
+the controller's event stream, so client connect/disconnect/roam and AP up/down
+land in near real time instead of at the poll interval. The poll stays on as the
+authoritative reconciler, so a missed event self-heals. The event stream is
+undocumented and varies by Network version — hence experimental, and off by
+default.
+
 ## The three surfaces
 
 ### Meraki-compatible facade — `/api/v1`
@@ -122,8 +129,22 @@ path that works with Hamina **today** — see [docs/HAMINA.md](docs/HAMINA.md).
 ## Configuration
 
 All via environment / `.env` — see [`.env.example`](.env.example) for the full
-annotated list (UniFi connection, poll interval, Meraki facade key, OpenIntent
-refresh, host/port).
+annotated list (UniFi connection, poll interval, WebSocket push, Meraki facade
+key, OpenIntent refresh, host/port, Cloudflare Tunnel token).
+
+## Expose it to Hamina / the cloud
+
+The bridge runs on your LAN; a cloud consumer calls in from outside and can't
+reach a private IP. To make it reachable you need a public HTTPS endpoint — the
+easiest is the built-in **Cloudflare Tunnel** profile:
+
+```bash
+# put CF_TUNNEL_TOKEN in .env, then:
+docker compose --profile tunnel up -d
+```
+
+Full walkthrough and alternatives (reverse proxy + Let's Encrypt, VPS relay) in
+[docs/EXPOSURE.md](docs/EXPOSURE.md).
 
 ## Run as a systemd service
 

@@ -49,6 +49,28 @@ One background poller, one immutable snapshot, three read-only projections.
   `FakeCollector` with canned snapshots — the whole API is testable without a
   network.
 
+## Three independent data layers
+
+It helps to see the data as three layers with different change rates and
+transports — they are deliberately decoupled:
+
+| Layer | Source | Transport | Consumed as |
+|---|---|---|---|
+| **Telemetry** (clients, radio channel/power, AP up/down) | `stat/device`, `stat/sta` | poll + optional WebSocket push | live API / dashboard |
+| **Placement** (floor plans, AP x,y) | InnerSpace / Maps | *(not collected live yet)* | Meraki `floorPlans` + device `floorPlanId`/coords |
+| **Import bundle** (floor-plan images + geometry + config) | the OpenIntent exporter | scheduled subprocess | OpenIntent zip |
+
+Why this matters: **telemetry never touches OpenIntent**, and the WebSocket only
+accelerates the telemetry layer — so live client/radio churn never triggers a
+zip rebuild. **Placement is its own layer.** The model already carries
+`floorplan_id`/`x`/`y` and the Meraki `device` maps `floorPlanId`, so positions
+can be served through the live API the moment a *placement collector* populates
+them — meaning an AP move becomes a snapshot update a live consumer sees
+instantly, rather than a full OpenIntent regeneration. Today placement still
+rides in the periodic zip (the exporter owns all InnerSpace parsing, kept in one
+place); adding the live placement collector is the planned next step to fully
+separate "an AP moved" from "rebuild the import bundle".
+
 ## The OpenIntent refresher
 
 `refresh/openintent.py` is independent of the live poll. It shells out to the
@@ -63,9 +85,11 @@ generated zip is served at `/openintent/latest.zip`. See
 |---|---|
 | `config.py` | env/`.env` settings |
 | `models.py` | neutral data models + snapshot helpers |
-| `unifi/client.py` | async UniFi HTTP client (login/CSRF/TLS, GET helpers) |
+| `unifi/client.py` | async UniFi HTTP client (login/CSRF/TLS, GET helpers, WS URL/auth) |
 | `unifi/normalize.py` | raw UniFi payload → neutral models |
-| `unifi/collector.py` | poll loop + snapshot ownership |
+| `unifi/collector.py` | poll loop + snapshot ownership + WS event application |
+| `unifi/events.py` | pure WebSocket-event → snapshot mutations (tested) |
+| `unifi/websocket.py` | experimental WS listener (push updates, off by default) |
 | `meraki/mapping.py` | neutral → Meraki v1 JSON |
 | `meraki/router.py` | Meraki-compatible endpoints + auth |
 | `api/router.py` | neutral REST endpoints |

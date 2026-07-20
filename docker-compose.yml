@@ -13,3 +13,18 @@ services:
     #   - ./exports:/app/exports
     # environment:
     #   OPENINTENT_EXPORTER_PATH: /exporter/unifi_export.py
+
+  # Optional public exposure via Cloudflare Tunnel — only starts with the
+  # `tunnel` profile:  docker compose --profile tunnel up
+  # Create a tunnel in the Cloudflare Zero Trust dashboard, set its public
+  # hostname's service to  http://unifi-hamina-live:8080, and put the tunnel
+  # token in CF_TUNNEL_TOKEN (.env). See docs/EXPOSURE.md.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - unifi-hamina-live
+    restart: unless-stopped
