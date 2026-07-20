@@ -66,12 +66,12 @@ class MapExportJobs:
         self._by_file: dict[str, dict] = {}
 
     def create(self, floor_id: str) -> dict:
+        # Each export submission gets a FRESH completion stamp — the task must
+        # appear to have finished *after* this submit, or the client decides it
+        # hasn't completed yet and polls to timeout. (ids stay deterministic;
+        # only the timestamp refreshes.) Stability across polls is guaranteed by
+        # task_response reading this stored ts, not the wall clock.
         task_id = str(uuid.uuid5(_JOB_NS, "task:" + floor_id))
-        # A completed DNAC task is immutable — its endTime/version must stay
-        # constant across polls or the client thinks it's still updating and
-        # never sees it finish. Stamp once and reuse on retries.
-        if task_id in self._by_task:
-            return self._by_task[task_id]
         file_id = str(uuid.uuid5(_JOB_NS, "file:" + floor_id))
         job = {"floor_id": floor_id, "task_id": task_id, "file_id": file_id,
                "ts_ms": int(time.time() * 1000)}
@@ -108,15 +108,16 @@ def task_response(job: dict) -> dict:
       * endTime/version/lastUpdate are the fixed completion stamp and equal
         each other, so every poll returns the identical immutable task.
     """
-    ts = job["ts_ms"]
+    start = job["ts_ms"]        # task started when it was submitted
+    end = start + 250           # ...and finished shortly after (like real DNAC)
     fid = job["file_id"]
     return {
         "response": {
-            "version": ts,
-            "endTime": ts,
+            "version": end,
+            "endTime": end,
             "progress": json.dumps({"fileId": fid}, separators=(",", ":")),
-            "startTime": ts - 200,
-            "lastUpdate": ts,
+            "startTime": start,
+            "lastUpdate": end,
             "serviceType": "Maps Service",
             "username": "admin",
             "isError": False,
