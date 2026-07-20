@@ -134,7 +134,7 @@ def test_network_devices_and_ap_config(cat_client):
     assert cfg[0]["location"] == {"xCoord": 30.0, "yCoord": 22.5, "unit": "meters"}
 
 
-def test_maps_export_async_flow(cat_client):
+def test_maps_export_returns_cisco_archive(cat_client):
     import io
     import tarfile
 
@@ -144,28 +144,25 @@ def test_maps_export_async_flow(cat_client):
     h = {"X-Auth-Token": tok}
     floor_id = mapping.floor_id_for(_snapshot().floorplans[0])
 
-    # 1. POST export -> async execution handle
+    # POST export returns the map archive synchronously (no async poll)
     r = cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}", headers=h)
     assert r.status_code == 200
-    body = r.json()
-    assert body["executionId"] and body["executionStatusUrl"].endswith(body["executionId"])
+    assert r.headers["content-type"] == "application/octet-stream"
 
-    # 2. GET execution-status -> SUCCESS + download URL
-    st = cat_client.get(body["executionStatusUrl"], headers=h).json()
-    assert st["status"] == "SUCCESS"
-    dl = st["additionalStatusURL"]
-
-    # 3. GET file -> a gzipped tar carrying the maps XML + the floor image
-    arch = cat_client.get(dl, headers=h)
-    assert arch.status_code == 200
-    tar = tarfile.open(fileobj=io.BytesIO(arch.content), mode="r:gz")
+    tar = tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz")
     names = tar.getnames()
-    assert "maps.xml" in names
-    xml = tar.extractfile("maps.xml").read().decode()
-    assert "AP-Lobby" in xml and "Ground" in xml  # AP placed + floor named
-    assert any(n.endswith((".png", ".jpg")) for n in names)  # image embedded
+    # CiscoUnifiedInterchange layout: images/<id>.png + xmlDir/MapsImportExport.xml
+    assert "xmlDir/MapsImportExport.xml" in names
+    assert f"images/{floor_id}.png" in names
+    xml = tar.extractfile("xmlDir/MapsImportExport.xml").read().decode()
+    assert 'xmlns:ns0="http://importexport.cisco.com/1.0"' in xml
+    assert 'distUnits="FEET"' in xml
+    assert '<ns0:Floor name="Ground" level="1">' in xml
+    # 1000px * 0.05 m/px = 50 m wide -> 164.041995 ft
+    assert 'width="164.041995"' in xml and 'imageType="PNG"' in xml
 
-    # unauth is rejected at each step
+    # unknown floor -> DNAC-shaped 404; unauth -> 401
+    assert cat_client.post("/dna/intent/api/v1/maps/export/nope", headers=h).status_code == 404
     assert cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}").status_code == 401
 
 

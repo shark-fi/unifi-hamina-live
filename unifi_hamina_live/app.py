@@ -77,11 +77,9 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         from collections import deque
 
         from .catalyst.auth import TokenStore
-        from .catalyst.maps import MapExportJobs
         from .catalyst.router import router as catalyst_router
 
         app.state.catalyst_tokens = TokenStore()
-        app.state.catalyst_maps = MapExportJobs()
         app.state.catalyst_captured = deque(maxlen=500)
         app.include_router(catalyst_router)
 

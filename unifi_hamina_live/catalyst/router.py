@@ -138,7 +138,7 @@ def get_ap_configuration(request: Request, key: str = ""):
     return mapping.wrap([mapping.ap_configuration(a, snap) for a in aps])
 
 
-# --- maps import/export (async BAPI) --------------------------------------
+# --- maps export ----------------------------------------------------------
 def _dna_404(msg: str) -> JSONResponse:
     return JSONResponse(status_code=404,
                         content={"response": {"errors": [msg]}, "version": "1.0"})
@@ -146,56 +146,21 @@ def _dna_404(msg: str) -> JSONResponse:
 
 @router.post("/dna/intent/api/v1/maps/export/{floor_id}")
 def maps_export(floor_id: str, request: Request):
-    """Kick off a floor map export. Returns an async execution handle."""
+    """Export a floor's map. Hamina makes no follow-up poll after this call, so
+    the archive is returned synchronously in the response body (the real
+    appliance streams the CiscoUnifiedInterchange archive back here)."""
     if not _require_token(request):
         return _unauthorized()
-    job = request.app.state.catalyst_maps.create(floor_id)
-    return {
-        "executionId": job["exec_id"],
-        "executionStatusUrl":
-            f"/dna/intent/api/v1/dnacaap/management/execution-status/{job['exec_id']}",
-        "message": "Maps export job submitted",
-    }
-
-
-@router.get("/dna/intent/api/v1/dnacaap/management/execution-status/{execution_id}")
-def execution_status(execution_id: str, request: Request):
-    """Report the export job as complete, pointing at the archive download."""
-    if not _require_token(request):
-        return _unauthorized()
-    job = request.app.state.catalyst_maps.by_exec(execution_id)
-    if job is None:
-        return _dna_404(f"No execution {execution_id}")
-    return {
-        "bapiKey": "e77a44a4-40bd-4c6f-b6f6-mapsexport",
-        "bapiName": "Export Maps",
-        "bapiExecutionId": execution_id,
-        "status": "SUCCESS",
-        "bapiError": None,
-        "runtimeInstanceId": "DNACP_Runtime",
-        "timeDuration": 100,
-        "additionalStatusURL": f"/dna/intent/api/v1/file/{job['file_id']}",
-    }
-
-
-@router.get("/dna/intent/api/v1/file/{file_id}")
-def maps_file(file_id: str, request: Request):
-    """Serve the generated map archive (gzipped tar) for a completed export."""
-    if not _require_token(request):
-        return _unauthorized()
-    job = request.app.state.catalyst_maps.by_file(file_id)
-    if job is None:
-        return _dna_404(f"No file {file_id}")
     snap = _snap(request)
-    floor = maps._floor(snap, job["floor_id"])
+    floor = maps._floor(snap, floor_id)
     if floor is None:
-        return _dna_404(f"Floor {job['floor_id']} not found")
+        return _dna_404(f"Floor {floor_id} not found")
     image = request.app.state.collector.floor_image(floor.id)
-    archive = maps.build_archive(snap, job["floor_id"], image)
+    archive = maps.build_archive(snap, floor_id, image)
     return Response(
         content=archive,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{floor.name}_maps.tar.gz"'},
+        headers={"Content-Disposition": f'attachment; filename="{floor.name}.tar.gz"'},
     )
 
 
