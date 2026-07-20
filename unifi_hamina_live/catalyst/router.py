@@ -138,7 +138,7 @@ def get_ap_configuration(request: Request, key: str = ""):
     return mapping.wrap([mapping.ap_configuration(a, snap) for a in aps])
 
 
-# --- maps export ----------------------------------------------------------
+# --- maps export (task-based async BAPI) ----------------------------------
 def _dna_404(msg: str) -> JSONResponse:
     return JSONResponse(status_code=404,
                         content={"response": {"errors": [msg]}, "version": "1.0"})
@@ -146,17 +146,44 @@ def _dna_404(msg: str) -> JSONResponse:
 
 @router.post("/dna/intent/api/v1/maps/export/{floor_id}")
 def maps_export(floor_id: str, request: Request):
-    """Export a floor's map. Hamina makes no follow-up poll after this call, so
-    the archive is returned synchronously in the response body (the real
-    appliance streams the CiscoUnifiedInterchange archive back here)."""
+    """Submit a floor map export. Returns the task-based async handle
+    (response.taskId + url); the client polls the task then downloads the file."""
     if not _require_token(request):
         return _unauthorized()
-    snap = _snap(request)
-    floor = maps._floor(snap, floor_id)
+    floor = maps._floor(_snap(request), floor_id)
     if floor is None:
         return _dna_404(f"Floor {floor_id} not found")
+    job = request.app.state.catalyst_maps.create(floor_id)
+    return maps.submit_response(job)
+
+
+@router.get("/dna/intent/api/v1/task/{task_id}")
+@router.get("/api/v1/task/{task_id}")
+def get_task(task_id: str, request: Request):
+    """Report the export task as complete, pointing at the file download."""
+    if not _require_token(request):
+        return _unauthorized()
+    job = request.app.state.catalyst_maps.by_task(task_id)
+    if job is None:
+        return _dna_404(f"No task {task_id}")
+    return maps.task_response(job)
+
+
+@router.get("/dna/intent/api/v1/file/{file_id}")
+@router.get("/api/v1/file/{file_id}")
+def get_file(file_id: str, request: Request):
+    """Serve the generated CiscoUnifiedInterchange map archive."""
+    if not _require_token(request):
+        return _unauthorized()
+    job = request.app.state.catalyst_maps.by_file(file_id)
+    if job is None:
+        return _dna_404(f"No file {file_id}")
+    snap = _snap(request)
+    floor = maps._floor(snap, job["floor_id"])
+    if floor is None:
+        return _dna_404(f"Floor {job['floor_id']} not found")
     image = request.app.state.collector.floor_image(floor.id)
-    archive = maps.build_archive(snap, floor_id, image)
+    archive = maps.build_archive(snap, job["floor_id"], image)
     return Response(
         content=archive,
         media_type="application/octet-stream",

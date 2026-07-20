@@ -35,9 +35,11 @@ device endpoints after the floor image is in.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import tarfile
 import time
+import uuid
 from xml.sax.saxutils import quoteattr
 
 from ..models import FloorPlan, Snapshot
@@ -47,6 +49,69 @@ log = logging.getLogger("unifi_hamina_live.catalyst.maps")
 
 _M_TO_FT = 3.280839895
 _CEILING_M = 2.5  # matches Hamina's default 8.2021 ft ceiling
+_JOB_NS = uuid.UUID("6f5c9e2a-3333-4000-8000-000000000000")
+
+
+class MapExportJobs:
+    """Registry of maps/export async tasks (taskId/fileId -> floor).
+
+    Catalyst Center's maps export is the task-based async BAPI: POST returns a
+    {taskId, url}; the client polls GET /task/{taskId} which reports completion
+    and a file id; the client then downloads GET /file/{fileId}. Ids are
+    derived deterministically from the floor so repeated exports are stable.
+    """
+
+    def __init__(self) -> None:
+        self._by_task: dict[str, dict] = {}
+        self._by_file: dict[str, dict] = {}
+
+    def create(self, floor_id: str) -> dict:
+        task_id = str(uuid.uuid5(_JOB_NS, "task:" + floor_id))
+        file_id = str(uuid.uuid5(_JOB_NS, "file:" + floor_id))
+        job = {"floor_id": floor_id, "task_id": task_id, "file_id": file_id}
+        self._by_task[task_id] = job
+        self._by_file[file_id] = job
+        return job
+
+    def by_task(self, task_id: str) -> dict | None:
+        return self._by_task.get(task_id)
+
+    def by_file(self, file_id: str) -> dict | None:
+        return self._by_file.get(file_id)
+
+
+def submit_response(job: dict) -> dict:
+    """The POST maps/export body: an async task handle (response.taskId + url)."""
+    return {
+        "response": {
+            "taskId": job["task_id"],
+            "url": f"/dna/intent/api/v1/task/{job['task_id']}",
+        },
+        "version": "1.0",
+    }
+
+
+def task_response(job: dict, now_ms: int | None = None) -> dict:
+    """A completed DNAC task pointing at the file download. We report success
+    immediately — the archive is generated on demand at download time."""
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    fid = job["file_id"]
+    return {
+        "response": {
+            "id": job["task_id"],
+            "rootId": job["task_id"],
+            "serviceType": "Maps Service",
+            "isError": False,
+            "progress": json.dumps({"fileId": fid}),
+            "data": fid,
+            "additionalStatusURL": f"/dna/intent/api/v1/file/{fid}",
+            "startTime": now_ms - 1000,
+            "endTime": now_ms,
+            "version": now_ms,
+        },
+        "version": "1.0",
+    }
 
 
 def _ft(metres: float | None) -> str:
