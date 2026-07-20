@@ -56,7 +56,12 @@ def auth_token(request: Request, authorization: str | None = Header(default=None
 def get_sites(request: Request):
     if not _require_token(request):
         return _unauthorized()
-    return mapping.wrap(mapping.site_hierarchy(_snap(request)))
+    return mapping.wrap(_hierarchy(request))
+
+
+def _hierarchy(request: Request) -> list:
+    cfg = _cfg(request)
+    return mapping.site_hierarchy(_snap(request), cfg.catalyst_advertise_floor_maps)
 
 
 @router.get("/dna/intent/api/v2/site")
@@ -70,7 +75,7 @@ def get_sites_v2(
     """v2 GetSite — what Hamina calls: ?groupNameHierarchy=Global&limit&offset."""
     if not _require_token(request):
         return _unauthorized()
-    sites = mapping.site_hierarchy(_snap(request))
+    sites = _hierarchy(request)
     sites = mapping.limit_depth(sites, _cfg(request).catalyst_site_max_depth)
     page = mapping.filter_sites(sites, groupNameHierarchy, type, offset, limit)
     return mapping.wrap(page)
@@ -80,7 +85,7 @@ def get_sites_v2(
 def get_site_count(request: Request):
     if not _require_token(request):
         return _unauthorized()
-    return mapping.wrap(len(mapping.site_hierarchy(_snap(request))))
+    return mapping.wrap(len(_hierarchy(request)))
 
 
 @router.get("/dna/intent/api/v1/membership/{site_id}")

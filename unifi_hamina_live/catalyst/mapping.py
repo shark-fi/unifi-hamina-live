@@ -95,7 +95,7 @@ def _root() -> dict:
     }
 
 
-def site_hierarchy(snap: Snapshot) -> list[dict]:
+def site_hierarchy(snap: Snapshot, advertise_maps: bool = True) -> list[dict]:
     a_names = f"Global/{_AREA_NAME}"
     a_ids = f"{GLOBAL_ID}/{AREA_ID}"
     sites = [
@@ -119,6 +119,18 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
         for fp in snap.floorplans_for_site(site.id):
             fid = floor_id_for(fp)
             w_m, l_m = _metres_dims(fp)
+            # mapGeometry/mapsSummary tell Hamina the floor HAS a map, which
+            # makes it attempt the (currently unsupported) maps/export image
+            # download on import. Omit them so the floor + live AP data import
+            # cleanly; the image is added by hand afterwards.
+            extra_ns = [
+                {"nameSpace": "mapGeometry", "attributes": {
+                    "offsetX": "0.0", "offsetY": "0.0",
+                    "width": _s(w_m) or "0", "length": _s(l_m) or "0",
+                    "height": "3.0"}},
+                {"nameSpace": "mapsSummary", "attributes": {
+                    "rfModel": _RF_MODEL, "imageURL": "", "floorIndex": "1"}},
+            ] if advertise_maps else None
             sites.append(_site(
                 id=fid, name=fp.name,
                 name_path=f"{b_names}/{fp.name}",
@@ -126,14 +138,7 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
                 parent_id=bid,
                 location_attrs={"address": "", "addressInheritedFrom": bid,
                                 "type": "floor"},
-                extra_ns=[
-                    {"nameSpace": "mapGeometry", "attributes": {
-                        "offsetX": "0.0", "offsetY": "0.0",
-                        "width": _s(w_m) or "0", "length": _s(l_m) or "0",
-                        "height": "3.0"}},
-                    {"nameSpace": "mapsSummary", "attributes": {
-                        "rfModel": _RF_MODEL, "imageURL": "", "floorIndex": "1"}},
-                ]))
+                extra_ns=extra_ns))
     return sites
 
 

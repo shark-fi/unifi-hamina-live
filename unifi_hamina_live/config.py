@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # that window (ms) — an instant-done task can trip a client that waits for
     # the running->done transition. 0 = complete immediately (used in tests).
     catalyst_export_delay_ms: int = Field(default=1000, ge=0)
+    # Advertise floors WITH a map (mapGeometry/mapsSummary), which makes Hamina
+    # attempt the maps/export image download on import. That auto-import can't
+    # be completed against the facade yet (see docs/CATALYST.md), and Hamina
+    # blocks Import until a floor plan is selected — so by default floors are
+    # advertised WITHOUT a map: the floor + live AP data import cleanly and the
+    # floor image is added once by hand. Flip to True if maps/export is fixed.
+    catalyst_advertise_floor_maps: bool = Field(default=False)
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)

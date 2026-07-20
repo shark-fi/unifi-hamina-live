@@ -34,7 +34,8 @@ def cat_client():
     from unifi_hamina_live.app import create_app
 
     settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
-                        catalyst_password="secret", catalyst_export_delay_ms=0)
+                        catalyst_password="secret", catalyst_export_delay_ms=0,
+                        catalyst_advertise_floor_maps=True)
     app = create_app(settings=settings,
                      collector=FakeCollector(_snapshot(), images={"p1": _PNG}))
     with TestClient(app) as c:
@@ -193,6 +194,27 @@ def test_unimplemented_is_captured(cat_client):
     # a matched endpoint is recorded as implemented
     assert any(p[1] == "/dna/intent/api/v1/network-device" or p[2] for p in paths) or True
     assert any(x["path"] == "/dna/system/api/v1/auth/token" for x in cap["requests"])
+
+
+def test_floors_omit_map_by_default():
+    """Default: floors advertise no map, so Hamina imports floor + AP data
+    without attempting the maps/export image download."""
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret")  # advertise_maps defaults False
+    app = create_app(settings=settings, collector=FakeCollector(_snapshot()))
+    with TestClient(app) as c:
+        tok = _token(c).json()["Token"]
+        floors = c.get("/dna/intent/api/v2/site", params={"type": "floor"},
+                       headers={"X-Auth-Token": tok}).json()["response"]
+        assert floors, "the floor is still present, just without a map"
+        for f in floors:
+            spaces = [a["nameSpace"] for a in f["additionalInfo"]]
+            assert "mapGeometry" not in spaces and "mapsSummary" not in spaces
+            assert mapping.site_type(f) == "floor"
 
 
 def test_facade_absent_when_disabled():
