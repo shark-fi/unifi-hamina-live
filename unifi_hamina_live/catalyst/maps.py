@@ -67,8 +67,14 @@ class MapExportJobs:
 
     def create(self, floor_id: str) -> dict:
         task_id = str(uuid.uuid5(_JOB_NS, "task:" + floor_id))
+        # A completed DNAC task is immutable — its endTime/version must stay
+        # constant across polls or the client thinks it's still updating and
+        # never sees it finish. Stamp once and reuse on retries.
+        if task_id in self._by_task:
+            return self._by_task[task_id]
         file_id = str(uuid.uuid5(_JOB_NS, "file:" + floor_id))
-        job = {"floor_id": floor_id, "task_id": task_id, "file_id": file_id}
+        job = {"floor_id": floor_id, "task_id": task_id, "file_id": file_id,
+               "ts_ms": int(time.time() * 1000)}
         self._by_task[task_id] = job
         self._by_file[file_id] = job
         return job
@@ -91,24 +97,23 @@ def submit_response(job: dict) -> dict:
     }
 
 
-def task_response(job: dict, now_ms: int | None = None) -> dict:
-    """A completed DNAC task pointing at the file download. We report success
-    immediately — the archive is generated on demand at download time."""
-    if now_ms is None:
-        now_ms = int(time.time() * 1000)
+def task_response(job: dict) -> dict:
+    """A completed DNAC task pointing at the file download. endTime/version are
+    the FIXED completion stamp (== each other, as on a real appliance) so every
+    poll returns the identical immutable task and the client sees it finish."""
+    ts = job["ts_ms"]
     fid = job["file_id"]
     return {
         "response": {
             "id": job["task_id"],
-            "rootId": job["task_id"],
             "serviceType": "Maps Service",
+            "instanceTenantId": mapping._TENANT,
             "isError": False,
             "progress": json.dumps({"fileId": fid}),
             "data": fid,
             "additionalStatusURL": f"/dna/intent/api/v1/file/{fid}",
-            "startTime": now_ms - 1000,
-            "endTime": now_ms,
-            "version": now_ms,
+            "endTime": ts,
+            "version": ts,
         },
         "version": "1.0",
     }
