@@ -72,10 +72,48 @@ paths over and they get mapped to the live snapshot + placement layer.
 
 Everything else under `/dna/*` is captured and returns a 404 until implemented.
 
+## Verified against Hamina Live (Catalyst Center connector)
+
+Pointing Hamina's "Cisco Catalyst (DNA) Center API" integration at the bridge,
+the following are confirmed working end-to-end against live UniFi data:
+
+- **Connect / auth** — Instance URL + username/password (the `catalyst_*`
+  settings), TLS-verify off.
+- **Site discovery** — Hamina walks `GET /dna/intent/api/v2/site` by
+  `type=area|building|floor`. The bridge exposes the hierarchy
+  `Global → UniFi (area) → <site> (building) → <floor>`, matched field-for-field
+  to a real 2.3.7.x appliance (`groupNameHierarchy` / `groupHierarchy`, bare
+  root, no `systemGroup`). Hamina's Area/Building/Floor pickers populate.
+- **Live AP telemetry** — model, TX power, channels, and x/y placement flow via
+  the `network-device` / `device-detail` / `accesspoint-configuration`
+  endpoints.
+
+### Known limitation: floor-map image auto-import
+
+`POST /dna/intent/api/v1/maps/export/{floorId}` is implemented as the real
+task-based async BAPI (submit → poll `GET /task/{id}` → download
+`GET /file/{id}` returning a `CiscoUnifiedInterchange` `.tar.gz` with the floor
+image + geometry, matched to a real Hamina Catalyst export). The submit and the
+task poll work, and the task reports done with the fileId in `progress`, `data`,
+and `additionalStatusURL` — but **Hamina polls the task to timeout and never
+issues the file download**, so the background *image* does not import
+automatically. The exact completion/download signal Catalyst's maps service
+uses could not be reproduced without a real appliance to observe (the DevNet
+sandbox denies maps permissions).
+
+**Workaround — manual one-time map add.** The hierarchy and live AP data import
+fine; only the floor *image* is manual. In Hamina Planner open the floor and
+upload the plan image (the bridge already holds it — it is served inside the
+maps/export archive, and `GET /catalyst/_captured` / the collector cache expose
+it), then calibrate scale to the floor width the bridge reports (metres =
+`width_px × meters_per_px`). Live AP positions then overlay on it. If a real
+Catalyst maps/export task capture becomes available, finishing the auto-import
+is a one-field change in `catalyst/maps.py:task_response`.
+
 ## Status
 
 This is a **skeleton for the observe-and-match loop**, not a certified DNA
-Center emulation. The auth flow and the endpoints above are real and tested;
-the remaining floor-map/placement endpoints are finalised from the captured
-request log once Hamina is pointed at it. Model strings map UniFi → a plausible
-`Unified AP`; the true UniFi model is preserved in the fields.
+Center emulation. The auth flow, site hierarchy, and device endpoints are real
+and tested; the maps/export archive delivery is the one piece still pending a
+real-appliance capture. Model strings map UniFi → a plausible `Unified AP`; the
+true UniFi model is preserved in the fields.
