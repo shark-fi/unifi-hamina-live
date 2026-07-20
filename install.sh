@@ -11,7 +11,13 @@
 #   --systemd         install+enable a systemd service (needs root/sudo)
 #   --user NAME       run the service as this user     (default: invoking user)
 #   --start           start the service after installing (implies --systemd)
+#   --no-openintent   skip fetching the OpenIntent exporter (live API only)
+#   --exporter-dir P  where to place the exporter        (default: sibling of --dir)
 #   -h | --help       show this help
+#
+# By default the installer also fetches the companion OpenIntent exporter
+# (unifi-hamina-export) and enables the scheduled refresh, wiring up the full
+# Hamina integration: live Meraki-compatible API + near-live OpenIntent zip.
 #
 set -euo pipefail
 
@@ -22,18 +28,51 @@ DO_SYSTEMD=0
 DO_START=0
 SERVICE_USER="${SERVICE_USER:-}"
 SERVICE_NAME="unifi-hamina-live"
+EXPORTER_URL="${EXPORTER_URL:-https://github.com/shark-fi/unifi-hamina-export.git}"
+EXPORTER_BRANCH="${EXPORTER_BRANCH:-main}"
+EXPORTER_DIR="${EXPORTER_DIR:-}"
+WITH_OPENINTENT=1
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Clone a repo shallowly, or fast-forward it if already present.
+clone_or_update() {
+  local url="$1" dir="$2" branch="$3"
+  if [ -d "$dir/.git" ]; then
+    log "updating $(basename "$dir") in $dir"
+    git -C "$dir" fetch --depth 1 origin "$branch"
+    git -C "$dir" checkout -q -B "$branch" "origin/$branch"
+    git -C "$dir" reset --hard -q "origin/$branch"
+  else
+    log "cloning $url ($branch) into $dir"
+    mkdir -p "$(dirname "$dir")"
+    git clone --depth 1 --branch "$branch" "$url" "$dir"
+  fi
+}
+
+# set_env KEY VALUE FILE — replace an existing KEY= line or append it.
+set_env() {
+  local key="$1" val="$2" file="$3"
+  if grep -qE "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dir)     INSTALL_DIR="$2"; shift 2 ;;
-    --branch)  BRANCH="$2"; shift 2 ;;
-    --user)    SERVICE_USER="$2"; shift 2 ;;
-    --systemd) DO_SYSTEMD=1; shift ;;
-    --start)   DO_SYSTEMD=1; DO_START=1; shift ;;
+    --dir)            INSTALL_DIR="$2"; shift 2 ;;
+    --branch)         BRANCH="$2"; shift 2 ;;
+    --user)           SERVICE_USER="$2"; shift 2 ;;
+    --systemd)        DO_SYSTEMD=1; shift ;;
+    --start)          DO_SYSTEMD=1; DO_START=1; shift ;;
+    --no-openintent)  WITH_OPENINTENT=0; shift ;;
+    --openintent)     WITH_OPENINTENT=1; shift ;;
+    --exporter-dir)   EXPORTER_DIR="$2"; shift 2 ;;
+    --exporter-branch) EXPORTER_BRANCH="$2"; shift 2 ;;
     -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -78,6 +117,7 @@ else
   fi
 fi
 cd "$INSTALL_DIR"
+INSTALL_DIR="$(pwd)"   # normalize to absolute
 log "install dir: $INSTALL_DIR"
 
 # --- virtualenv + package -------------------------------------------------
@@ -90,11 +130,40 @@ log "installing package + dependencies"
 ./.venv/bin/pip install --quiet -e .
 
 # --- config ---------------------------------------------------------------
+FRESH_ENV=0
 if [ ! -f .env ]; then
   cp .env.example .env
+  FRESH_ENV=1
   warn "created .env from .env.example — EDIT IT (UNIFI_HOST / UNIFI_USERNAME / UNIFI_PASSWORD)"
 else
   log ".env already present — leaving it untouched"
+fi
+
+# --- OpenIntent exporter (full Hamina integration) ------------------------
+# Fetch the companion exporter so the scheduled OpenIntent refresh works, and
+# wire it into a freshly created .env. This is what turns the live API into a
+# full integration (live Meraki-compatible feed + near-live OpenIntent zip).
+if [ "$WITH_OPENINTENT" -eq 1 ]; then
+  EXPORTER_DIR="${EXPORTER_DIR:-$(dirname "$INSTALL_DIR")/unifi-hamina-export}"
+  if clone_or_update "$EXPORTER_URL" "$EXPORTER_DIR" "$EXPORTER_BRANCH"; then
+    EXPORTER_SCRIPT="$EXPORTER_DIR/unifi_export.py"
+    if [ -f "$EXPORTER_SCRIPT" ]; then
+      log "OpenIntent exporter ready at $EXPORTER_SCRIPT (stdlib-only, no deps)"
+      if [ "$FRESH_ENV" -eq 1 ]; then
+        set_env OPENINTENT_EXPORTER_PATH "$EXPORTER_SCRIPT" .env
+        set_env OPENINTENT_REFRESH_ENABLED true .env
+        log "enabled OpenIntent refresh in .env"
+      else
+        warn "existing .env kept — to enable the refresh, set in $INSTALL_DIR/.env:"
+        warn "  OPENINTENT_REFRESH_ENABLED=true"
+        warn "  OPENINTENT_EXPORTER_PATH=$EXPORTER_SCRIPT"
+      fi
+    else
+      warn "exporter fetched but $EXPORTER_SCRIPT missing — skipping OpenIntent wiring"
+    fi
+  else
+    warn "could not fetch the OpenIntent exporter — continuing with live API only"
+  fi
 fi
 
 # --- systemd (optional) ---------------------------------------------------
@@ -141,5 +210,14 @@ else
   2. Run it:                cd $INSTALL_DIR && ./.venv/bin/python -m unifi_hamina_live
   3. Open the dashboard:    http://localhost:8080/
      (or re-run with --systemd to install it as a service)
+EOF
+fi
+if [ "$WITH_OPENINTENT" -eq 1 ] && [ -f "${EXPORTER_SCRIPT:-/nonexistent}" ]; then
+  cat <<EOF
+
+OpenIntent refresh wired up (exporter: $EXPORTER_DIR)
+  Fresh import zip:         http://localhost:8080/openintent/latest.zip
+  Refresh status:           http://localhost:8080/openintent/status
+  Re-import that zip into your Hamina Planner project for near-live data.
 EOF
 fi

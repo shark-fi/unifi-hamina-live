@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -37,8 +38,10 @@ class OpenIntentRefresher:
 
     def _command(self) -> list[str]:
         exporter = self._s.openintent_exporter_path
+        # Use the interpreter running this server (the venv's Python) rather
+        # than a bare "python3" from PATH, which may be missing under systemd.
         return [
-            "python3", exporter, self._s.openintent_mode,
+            sys.executable, exporter, self._s.openintent_mode,
             "--host", self._s.unifi_host,
             "-u", self._s.unifi_username,
             "--openintent", str(self.output_zip),

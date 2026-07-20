@@ -25,7 +25,11 @@ Companion to [**unifi-hamina-export**](https://github.com/shark-fi/unifi-hamina-
 
 ## Install
 
-**One command** (clones to `/opt/unifi-hamina-live`, builds a venv, installs, seeds `.env`):
+**One command** — full integration in one shot. It builds a venv, installs the
+package, seeds `.env`, **and also fetches the companion OpenIntent exporter
+([unifi-hamina-export](https://github.com/shark-fi/unifi-hamina-export)) and
+enables the scheduled refresh** — so you get both surfaces: the live
+Meraki-compatible feed *and* the near-live OpenIntent zip.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/shark-fi/unifi-hamina-live/main/install.sh | bash
@@ -39,9 +43,14 @@ cd unifi-hamina-live
 ./install.sh --systemd --start        # enable + start a systemd unit (needs root/sudo)
 ```
 
+By default the exporter lands next to the install dir and the installer writes
+`OPENINTENT_EXPORTER_PATH` + `OPENINTENT_REFRESH_ENABLED=true` into a fresh
+`.env`. The fresh import zip is then served at `/openintent/latest.zip`.
+
 Then edit the `.env` it created and restart. Installer flags: `--dir PATH`,
-`--branch NAME`, `--systemd`, `--user NAME`, `--start` (`./install.sh --help`).
-Running it as a service is covered under [Run as a systemd service](#run-as-a-systemd-service).
+`--branch NAME`, `--systemd`, `--user NAME`, `--start`, `--no-openintent`
+(live API only), `--exporter-dir PATH` (`./install.sh --help`). Running it as a
+service is covered under [Run as a systemd service](#run-as-a-systemd-service).
 
 ## Quick start (manual)
 
