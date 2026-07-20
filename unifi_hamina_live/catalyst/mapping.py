@@ -24,65 +24,72 @@ def wrap(data) -> dict:
 
 
 # --- site hierarchy -------------------------------------------------------
-def _area(name: str, site_id: str, parent_id: str, hierarchy: str) -> dict:
+# One object shape serves both the v1 (/site) and v2 (/v2/site) GetSite APIs:
+# siteNameHierarchy = the name path, siteHierarchy = the id path, nameHierarchy
+# is the v2 alias, `type` is exposed at top level and in the Location namespace.
+def _site(*, id, name, name_path, id_path, parent_id, type_,
+          location_attrs=None, extra_ns=None) -> dict:
+    location = {"type": type_}
+    if location_attrs:
+        location.update(location_attrs)
+    info = [{"nameSpace": "Location", "attributes": location}]
+    if extra_ns:
+        info.extend(extra_ns)
     return {
-        "id": site_id,
-        "name": name,
-        "siteNameHierarchy": hierarchy,
+        "id": id,
+        "instanceTenantId": "unifi",
         "parentId": parent_id,
-        "additionalInfo": [
-            {"nameSpace": "Location", "attributes": {"type": "area"}}
-        ],
-    }
-
-
-def _building(site) -> dict:
-    return {
-        "id": f"bld_{site.id}",
-        "name": site.name,
-        "siteNameHierarchy": f"Global/{site.name}",
-        "parentId": GLOBAL_ID,
-        "additionalInfo": [
-            {"nameSpace": "Location",
-             "attributes": {"type": "building", "address": "", "latitude": "",
-                            "longitude": "", "country": ""}}
-        ],
-    }
-
-
-def _floor(site, fp: FloorPlan) -> dict:
-    w_m, l_m = _metres_dims(fp)
-    return {
-        "id": f"flr_{fp.id}",
-        "name": fp.name,
-        "siteNameHierarchy": f"Global/{site.name}/{fp.name}",
-        "parentId": f"bld_{site.id}",
-        "additionalInfo": [
-            {"nameSpace": "Location",
-             "attributes": {"type": "floor"}},
-            {"nameSpace": "mapGeometry",
-             "attributes": {
-                 "width": _s(w_m), "length": _s(l_m), "height": "3.0",
-                 "offsetX": "0", "offsetY": "0",
-                 "widthPx": _s(fp.width_px), "lengthPx": _s(fp.height_px),
-                 "metersPerPixel": _s(fp.meters_per_px)}},
-            {"nameSpace": "mapsSummary",
-             "attributes": {"floorIndex": "1", "rfModel": "Cubes And Walled Offices"}},
-        ],
+        "name": name,
+        "type": type_,
+        "siteNameHierarchy": name_path,
+        "nameHierarchy": name_path,
+        "siteHierarchy": id_path,
+        "additionalInfo": info,
     }
 
 
 def site_hierarchy(snap: Snapshot) -> list[dict]:
-    sites = [
-        {"id": GLOBAL_ID, "name": "Global", "siteNameHierarchy": "Global",
-         "parentId": "", "additionalInfo": [
-             {"nameSpace": "Location", "attributes": {"type": "area"}}]}
-    ]
+    sites = [_site(id=GLOBAL_ID, name="Global", name_path="Global",
+                   id_path=GLOBAL_ID, parent_id="", type_="area")]
     for site in snap.sites:
-        sites.append(_building(site))
+        sites.append(_site(
+            id=f"bld_{site.id}", name=site.name,
+            name_path=f"Global/{site.name}", id_path=f"{GLOBAL_ID}/bld_{site.id}",
+            parent_id=GLOBAL_ID, type_="building",
+            location_attrs={"address": "", "latitude": "", "longitude": "",
+                            "country": ""}))
         for fp in snap.floorplans_for_site(site.id):
-            sites.append(_floor(site, fp))
+            w_m, l_m = _metres_dims(fp)
+            sites.append(_site(
+                id=f"flr_{fp.id}", name=fp.name,
+                name_path=f"Global/{site.name}/{fp.name}",
+                id_path=f"{GLOBAL_ID}/bld_{site.id}/flr_{fp.id}",
+                parent_id=f"bld_{site.id}", type_="floor",
+                extra_ns=[
+                    {"nameSpace": "mapGeometry", "attributes": {
+                        "width": _s(w_m), "length": _s(l_m), "height": "3.0",
+                        "offsetX": "0", "offsetY": "0",
+                        "widthPx": _s(fp.width_px), "lengthPx": _s(fp.height_px),
+                        "metersPerPixel": _s(fp.meters_per_px)}},
+                    {"nameSpace": "mapsSummary", "attributes": {
+                        "floorIndex": "1", "rfModel": "Cubes And Walled Offices"}},
+                ]))
     return sites
+
+
+def filter_sites(sites: list[dict], group_name_hierarchy: str, type_: str,
+                 offset: int, limit: int) -> list[dict]:
+    """Apply the v2 GetSite query params: subtree filter + type + pagination
+    (offset is 1-based in DNA Center)."""
+    out = sites
+    if group_name_hierarchy and group_name_hierarchy != "Global":
+        out = [s for s in out
+               if s["siteNameHierarchy"] == group_name_hierarchy
+               or s["siteNameHierarchy"].startswith(group_name_hierarchy + "/")]
+    if type_:
+        out = [s for s in out if s["type"] == type_]
+    start = max(0, (offset or 1) - 1)
+    return out[start:start + (limit or 500)]
 
 
 def floor_id_for(fp: FloorPlan) -> str:

@@ -59,6 +59,22 @@ def get_sites(request: Request):
     return mapping.wrap(mapping.site_hierarchy(_snap(request)))
 
 
+@router.get("/dna/intent/api/v2/site")
+def get_sites_v2(
+    request: Request,
+    groupNameHierarchy: str = "",
+    type: str = "",
+    offset: int = 1,
+    limit: int = 500,
+):
+    """v2 GetSite — what Hamina calls: ?groupNameHierarchy=Global&limit&offset."""
+    if not _require_token(request):
+        return _unauthorized()
+    sites = mapping.site_hierarchy(_snap(request))
+    page = mapping.filter_sites(sites, groupNameHierarchy, type, offset, limit)
+    return mapping.wrap(page)
+
+
 @router.get("/dna/intent/api/v1/site/count")
 def get_site_count(request: Request):
     if not _require_token(request):
