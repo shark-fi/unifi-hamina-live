@@ -79,8 +79,9 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
             id=bid, name=site.name,
             name_path=f"Global/{site.name}", id_path=f"{GLOBAL_ID}/{bid}",
             parent_id=GLOBAL_ID,
-            location_attrs={"country": "United States", "address": "",
-                            "latitude": "0.0", "longitude": "0.0",
+            location_attrs={"country": "United States",
+                            "address": f"{site.name}, USA",
+                            "latitude": "37.41810", "longitude": "-121.91900",
                             "addressInheritedFrom": bid, "type": "building"}))
         for fp in snap.floorplans_for_site(site.id):
             fid = floor_id_for(fp)
@@ -101,6 +102,16 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
                         "rfModel": _RF_MODEL, "imageURL": "", "floorIndex": "1"}},
                 ]))
     return sites
+
+
+def limit_depth(sites: list[dict], max_depth: int) -> list[dict]:
+    """Debug bisect: keep only sites up to max_depth (1=area, 2=building, 3=floor)."""
+    allowed = {"area"}
+    if max_depth >= 2:
+        allowed.add("building")
+    if max_depth >= 3:
+        allowed.add("floor")
+    return [s for s in sites if site_type(s) in allowed]
 
 
 def site_type(site: dict) -> str | None:

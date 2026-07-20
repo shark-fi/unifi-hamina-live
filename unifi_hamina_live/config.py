@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Record every /dna/* request (matched or not) so you can see exactly what
     # Hamina calls and implement to match. Served at /catalyst/_captured.
     catalyst_log_requests: bool = Field(default=True)
+    # Debug bisect for the site hierarchy Hamina consumes: 1=area only,
+    # 2=+buildings, 3=+floors (default). Lets you narrow which level a strict
+    # client chokes on without rebuilding the image.
+    catalyst_site_max_depth: int = Field(default=3, ge=1, le=3)
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)

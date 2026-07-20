@@ -71,6 +71,7 @@ def get_sites_v2(
     if not _require_token(request):
         return _unauthorized()
     sites = mapping.site_hierarchy(_snap(request))
+    sites = mapping.limit_depth(sites, _cfg(request).catalyst_site_max_depth)
     page = mapping.filter_sites(sites, groupNameHierarchy, type, offset, limit)
     return mapping.wrap(page)
 
