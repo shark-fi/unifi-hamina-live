@@ -68,12 +68,15 @@ def test_site_hierarchy_shape(cat_client):
     assert "Global" in types and "HQ" in types and "Ground" in types
     floor = next(s for s in sites if s["name"] == "Ground")
     assert mapping.site_type(floor) == "floor"          # type lives in Location
+    # Global -> Area (UniFi) -> Building (HQ) -> Floor (Ground)
+    assert "UniFi" in types  # synthesized area for Hamina's ?type=area query
+    assert any(mapping.site_type(s) == "area" for s in sites)
     # v2 GetSite names the paths group*Hierarchy, not site*Hierarchy
-    assert floor["groupNameHierarchy"] == "Global/HQ/Ground"
+    assert floor["groupNameHierarchy"] == "Global/UniFi/HQ/Ground"
     assert "siteNameHierarchy" not in floor and "siteHierarchy" not in floor
-    # ids are real UUIDs, and groupHierarchy is a 3-segment UUID path
+    # ids are real UUIDs, and groupHierarchy is a 4-segment UUID path
     _uuid.UUID(floor["id"])
-    assert len(floor["groupHierarchy"].split("/")) == 3
+    assert len(floor["groupHierarchy"].split("/")) == 4
     # real v2 has no systemGroup field; the root omits parentId entirely
     assert all("systemGroup" not in s for s in sites)
     root = next(s for s in sites if s["name"] == "Global")

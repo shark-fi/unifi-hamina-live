@@ -29,6 +29,12 @@ _TENANT = uuid.uuid5(_NS, "tenant").hex[:24]
 # human name — a client that parses it as a number would choke otherwise.
 _RF_MODEL = "57057"
 
+# Hamina's importer cascades Global -> Area -> Building -> Floor and queries the
+# Area dropdown with GET /v2/site?type=area. UniFi has no "area" concept, so we
+# synthesize a single area that holds every UniFi site (mapped to a building).
+_AREA_NAME = "UniFi"
+AREA_ID = str(uuid.uuid5(_NS, "area:" + _AREA_NAME))
+
 
 def building_id(site_id: str) -> str:
     return str(uuid.uuid5(_NS, "building:" + site_id))
@@ -90,13 +96,22 @@ def _root() -> dict:
 
 
 def site_hierarchy(snap: Snapshot) -> list[dict]:
-    sites = [_root()]
+    a_names = f"Global/{_AREA_NAME}"
+    a_ids = f"{GLOBAL_ID}/{AREA_ID}"
+    sites = [
+        _root(),
+        _site(id=AREA_ID, name=_AREA_NAME, name_path=a_names, id_path=a_ids,
+              parent_id=GLOBAL_ID,
+              location_attrs={"addressInheritedFrom": AREA_ID, "type": "area"}),
+    ]
     for site in snap.sites:
         bid = building_id(site.id)
+        b_names = f"{a_names}/{site.name}"
+        b_ids = f"{a_ids}/{bid}"
         sites.append(_site(
             id=bid, name=site.name,
-            name_path=f"Global/{site.name}", id_path=f"{GLOBAL_ID}/{bid}",
-            parent_id=GLOBAL_ID,
+            name_path=b_names, id_path=b_ids,
+            parent_id=AREA_ID,
             location_attrs={"country": "United States",
                             "address": f"{site.name}, USA",
                             "latitude": "37.41810", "longitude": "-121.91900",
@@ -106,8 +121,8 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
             w_m, l_m = _metres_dims(fp)
             sites.append(_site(
                 id=fid, name=fp.name,
-                name_path=f"Global/{site.name}/{fp.name}",
-                id_path=f"{GLOBAL_ID}/{bid}/{fid}",
+                name_path=f"{b_names}/{fp.name}",
+                id_path=f"{b_ids}/{fid}",
                 parent_id=bid,
                 location_attrs={"address": "", "addressInheritedFrom": bid,
                                 "type": "floor"},
@@ -155,8 +170,8 @@ def filter_sites(sites: list[dict], group_name_hierarchy: str, type_: str,
 
 
 def aps_for_site_id(snap: Snapshot, site_id: str) -> list[AccessPoint]:
-    """Resolve a site UUID (global / building / floor) to its access points."""
-    if site_id == GLOBAL_ID:
+    """Resolve a site UUID (global / area / building / floor) to its APs."""
+    if site_id in (GLOBAL_ID, AREA_ID):
         return snap.access_points
     for site in snap.sites:
         if building_id(site.id) == site_id:
