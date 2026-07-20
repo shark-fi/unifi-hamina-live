@@ -83,18 +83,29 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         app.state.catalyst_captured = deque(maxlen=500)
         app.include_router(catalyst_router)
 
+        _skip = ("/catalyst/_captured", "/api/", "/docs", "/openapi.json", "/redoc")
+
         @app.middleware("http")
         async def _capture_dna(request, call_next):
-            is_dna = request.url.path.startswith("/dna/")
+            path = request.url.path
             response = await call_next(request)
-            if is_dna and settings.catalyst_log_requests:
+            # Capture EVERY request (not just /dna/*) so any call Hamina makes —
+            # including on an unexpected path — is visible; skip our own debug /
+            # health / docs noise. Record a couple of client headers to reveal
+            # which DNA Center client/version Hamina is emulating.
+            if settings.catalyst_log_requests and not (
+                path == "/" or any(path.startswith(p) for p in _skip)
+            ):
+                h = request.headers
                 app.state.catalyst_captured.append({
                     "method": request.method,
-                    "path": request.url.path,
+                    "path": path,
                     "query": request.url.query,
                     "status": response.status_code,
                     "implemented": response.status_code != 404,
-                    "authenticated": "X-Auth-Token" in request.headers,
+                    "authenticated": "X-Auth-Token" in h,
+                    "user_agent": h.get("user-agent"),
+                    "accept": h.get("accept"),
                 })
             return response
 
