@@ -68,13 +68,16 @@ def test_site_hierarchy_shape(cat_client):
     assert "Global" in types and "HQ" in types and "Ground" in types
     floor = next(s for s in sites if s["name"] == "Ground")
     assert mapping.site_type(floor) == "floor"          # type lives in Location
-    assert floor["siteNameHierarchy"] == "Global/HQ/Ground"
-    # ids are real UUIDs, and siteHierarchy is a 3-segment UUID path
+    # v2 GetSite names the paths group*Hierarchy, not site*Hierarchy
+    assert floor["groupNameHierarchy"] == "Global/HQ/Ground"
+    assert "siteNameHierarchy" not in floor and "siteHierarchy" not in floor
+    # ids are real UUIDs, and groupHierarchy is a 3-segment UUID path
     _uuid.UUID(floor["id"])
-    assert len(floor["siteHierarchy"].split("/")) == 3
-    # every site carries systemGroup; root parentId is "" (not null)
-    assert all("systemGroup" in s for s in sites)
-    assert next(s for s in sites if s["name"] == "Global")["parentId"] == ""
+    assert len(floor["groupHierarchy"].split("/")) == 3
+    # real v2 has no systemGroup field; the root omits parentId entirely
+    assert all("systemGroup" not in s for s in sites)
+    root = next(s for s in sites if s["name"] == "Global")
+    assert "parentId" not in root and "additionalInfo" not in root
     geo = next(a["attributes"] for a in floor["additionalInfo"] if a["nameSpace"] == "mapGeometry")
     # 1000px * 0.05 m/px = 50 m wide, 800 * 0.05 = 40 m long
     assert geo["width"] == "50.0" and geo["length"] == "40.0"
@@ -90,7 +93,7 @@ def test_site_v2_matches_hamina_call(cat_client):
     sites = r.json()["response"]
     names = {s["name"] for s in sites}
     assert {"Global", "HQ", "Ground"} <= names
-    assert all("siteNameHierarchy" in s and "siteHierarchy" in s for s in sites)
+    assert all("groupNameHierarchy" in s and "groupHierarchy" in s for s in sites)
     # unauth v2 call is rejected
     assert cat_client.get("/dna/intent/api/v2/site").status_code == 401
 

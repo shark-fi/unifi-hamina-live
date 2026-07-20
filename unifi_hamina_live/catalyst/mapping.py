@@ -51,33 +51,46 @@ def wrap(data) -> dict:
 
 
 # --- site hierarchy -------------------------------------------------------
-# Faithful to DNA Center 2.3.x GetSite (v1 + v2): UUID ids, siteNameHierarchy
-# (name path) + siteHierarchy (id path), parentId null at the root, and the
-# Location / mapGeometry / mapsSummary additionalInfo namespaces. `type` lives
-# only inside the Location attributes, as on a real appliance.
+# Faithful to Catalyst Center 2.3.7.x GET /dna/intent/api/v2/site, verified
+# field-for-field against a live appliance (Cisco DevNet sandbox):
+#   * v2 names the paths groupNameHierarchy (names) + groupHierarchy (ids) —
+#     NOT the v1 siteNameHierarchy/siteHierarchy. Hamina reads the v2 names.
+#   * a non-root site has exactly: parentId, additionalInfo, groupTypeList,
+#     groupNameHierarchy, groupHierarchy, name, instanceTenantId, id — and
+#     nothing else (a strict fail-on-unknown parser rejects extra fields).
+#   * the root (Global) omits parentId, additionalInfo and groupTypeList.
+#   * `type` lives only inside the Location additionalInfo attributes.
+# additionalInfo[].attributes is a free-form string map, so the extra
+# mapGeometry / mapsSummary namespaces on a floor are safe to carry.
 def _site(*, id, name, name_path, id_path, parent_id, location_attrs, extra_ns=None) -> dict:
-    info = list(extra_ns or [])
-    info.append({"nameSpace": "Location", "attributes": location_attrs})
-    # Field set + order matches a real DNA Center GetSite object exactly
-    # (verified against a recorded appliance response). Every field a strict
-    # client might read must be present, or it NPEs on the first site.
+    info = [{"nameSpace": "Location", "attributes": location_attrs}]
+    info.extend(extra_ns or [])
     return {
         "parentId": parent_id,
-        "systemGroup": False,
-        "groupTypeList": ["SITE"],
         "additionalInfo": info,
+        "groupTypeList": ["SITE"],
+        "groupNameHierarchy": name_path,
+        "groupHierarchy": id_path,
         "name": name,
         "instanceTenantId": _TENANT,
         "id": id,
-        "siteHierarchy": id_path,
-        "siteNameHierarchy": name_path,
+    }
+
+
+def _root() -> dict:
+    """The Global root: no parentId / additionalInfo / groupTypeList, as on a
+    real appliance. groupHierarchy is its own id."""
+    return {
+        "groupNameHierarchy": "Global",
+        "groupHierarchy": GLOBAL_ID,
+        "name": "Global",
+        "instanceTenantId": _TENANT,
+        "id": GLOBAL_ID,
     }
 
 
 def site_hierarchy(snap: Snapshot) -> list[dict]:
-    sites = [_site(id=GLOBAL_ID, name="Global", name_path="Global",
-                   id_path=GLOBAL_ID, parent_id="",   # root parentId is "" not null
-                   location_attrs={"addressInheritedFrom": GLOBAL_ID, "type": "area"})]
+    sites = [_root()]
     for site in snap.sites:
         bid = building_id(site.id)
         sites.append(_site(
@@ -110,8 +123,9 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
 
 
 def limit_depth(sites: list[dict], max_depth: int) -> list[dict]:
-    """Debug bisect: keep only sites up to max_depth (1=area, 2=building, 3=floor)."""
-    allowed = {"area"}
+    """Debug bisect: keep sites up to max_depth (1=root/areas, 2=+buildings,
+    3=+floors). The root (Global) has no type and is always kept."""
+    allowed = {None, "area"}
     if max_depth >= 2:
         allowed.add("building")
     if max_depth >= 3:
@@ -132,8 +146,8 @@ def filter_sites(sites: list[dict], group_name_hierarchy: str, type_: str,
     out = sites
     if group_name_hierarchy and group_name_hierarchy != "Global":
         out = [s for s in out
-               if s["siteNameHierarchy"] == group_name_hierarchy
-               or s["siteNameHierarchy"].startswith(group_name_hierarchy + "/")]
+               if s["groupNameHierarchy"] == group_name_hierarchy
+               or s["groupNameHierarchy"].startswith(group_name_hierarchy + "/")]
     if type_:
         out = [s for s in out if site_type(s) == type_]
     start = max(0, (offset or 1) - 1)
