@@ -61,12 +61,19 @@ def test_site_hierarchy_shape(cat_client):
     tok = _token(cat_client).json()["Token"]
     sites = cat_client.get("/dna/intent/api/v1/site",
                            headers={"X-Auth-Token": tok}).json()["response"]
+    import uuid as _uuid
+    from unifi_hamina_live.catalyst import mapping
+
     types = {s["name"] for s in sites}
     assert "Global" in types and "HQ" in types and "Ground" in types
     floor = next(s for s in sites if s["name"] == "Ground")
-    assert floor["type"] == "floor"
+    assert mapping.site_type(floor) == "floor"          # type lives in Location
     assert floor["siteNameHierarchy"] == "Global/HQ/Ground"
-    assert floor["siteHierarchy"].startswith("global/bld_default/flr_")
+    # ids are real UUIDs, and siteHierarchy is a 3-segment UUID path
+    _uuid.UUID(floor["id"])
+    assert len(floor["siteHierarchy"].split("/")) == 3
+    # parentId of Global is null
+    assert next(s for s in sites if s["name"] == "Global")["parentId"] is None
     geo = next(a["attributes"] for a in floor["additionalInfo"] if a["nameSpace"] == "mapGeometry")
     # 1000px * 0.05 m/px = 50 m wide, 800 * 0.05 = 40 m long
     assert geo["width"] == "50.0" and geo["length"] == "40.0"
@@ -82,7 +89,7 @@ def test_site_v2_matches_hamina_call(cat_client):
     sites = r.json()["response"]
     names = {s["name"] for s in sites}
     assert {"Global", "HQ", "Ground"} <= names
-    assert all("siteNameHierarchy" in s and "nameHierarchy" in s for s in sites)
+    assert all("siteNameHierarchy" in s and "siteHierarchy" in s for s in sites)
     # unauth v2 call is rejected
     assert cat_client.get("/dna/intent/api/v2/site").status_code == 401
 
@@ -90,9 +97,11 @@ def test_site_v2_matches_hamina_call(cat_client):
 def test_site_v2_pagination_and_type_filter(cat_client):
     tok = _token(cat_client).json()["Token"]
     h = {"X-Auth-Token": tok}
+    from unifi_hamina_live.catalyst import mapping
+
     floors = cat_client.get("/dna/intent/api/v2/site",
                             params={"type": "floor"}, headers=h).json()["response"]
-    assert floors and all(s["type"] == "floor" for s in floors)
+    assert floors and all(mapping.site_type(s) == "floor" for s in floors)
     # offset is 1-based: offset=1 returns from the first element
     first = cat_client.get("/dna/intent/api/v2/site",
                            params={"limit": 1, "offset": 1}, headers=h).json()["response"]

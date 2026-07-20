@@ -87,13 +87,7 @@ def get_membership(site_id: str, request: Request):
     if not _require_token(request):
         return _unauthorized()
     snap = _snap(request)
-    if site_id.startswith("flr_"):
-        fp_id = site_id[4:]
-        devs = [a for a in snap.access_points if a.floorplan_id == fp_id]
-    elif site_id.startswith("bld_"):
-        devs = snap.aps_for_site(site_id[4:])
-    else:
-        devs = snap.access_points
+    devs = mapping.aps_for_site_id(snap, site_id)
     return {
         "version": "1.0",
         "site": {"response": [], "version": "1.0"},

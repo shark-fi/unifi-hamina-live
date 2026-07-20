@@ -13,9 +13,31 @@ the well-known endpoints and leaves room to extend.
 
 from __future__ import annotations
 
+import uuid
+
 from ..models import AccessPoint, FloorPlan, Snapshot
 
-GLOBAL_ID = "global"
+# DNA Center identifies every site with a UUID; a strict Catalyst client will
+# choke on plain strings like "global". Synthesize deterministic UUIDs, and let
+# floors reuse their InnerSpace/Maps UUID directly so a floor's id equals the
+# device floorPlanId.
+_NS = uuid.UUID("6f5c9e2a-1111-4000-8000-000000000000")
+GLOBAL_ID = str(uuid.uuid5(_NS, "global"))
+
+
+def building_id(site_id: str) -> str:
+    return str(uuid.uuid5(_NS, "building:" + site_id))
+
+
+def floor_id_for(fp: FloorPlan) -> str:
+    return _as_uuid(fp.id)
+
+
+def _as_uuid(value) -> str:
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        return str(uuid.uuid5(_NS, "floor:" + str(value)))
 
 
 def wrap(data) -> dict:
@@ -24,25 +46,19 @@ def wrap(data) -> dict:
 
 
 # --- site hierarchy -------------------------------------------------------
-# One object shape serves both the v1 (/site) and v2 (/v2/site) GetSite APIs:
-# siteNameHierarchy = the name path, siteHierarchy = the id path, nameHierarchy
-# is the v2 alias, `type` is exposed at top level and in the Location namespace.
-def _site(*, id, name, name_path, id_path, parent_id, type_,
-          location_attrs=None, extra_ns=None) -> dict:
-    location = {"type": type_}
-    if location_attrs:
-        location.update(location_attrs)
-    info = [{"nameSpace": "Location", "attributes": location}]
-    if extra_ns:
-        info.extend(extra_ns)
+# Faithful to DNA Center 2.3.x GetSite (v1 + v2): UUID ids, siteNameHierarchy
+# (name path) + siteHierarchy (id path), parentId null at the root, and the
+# Location / mapGeometry / mapsSummary additionalInfo namespaces. `type` lives
+# only inside the Location attributes, as on a real appliance.
+def _site(*, id, name, name_path, id_path, parent_id, location_attrs, extra_ns=None) -> dict:
+    info = list(extra_ns or [])
+    info.append({"nameSpace": "Location", "attributes": location_attrs})
     return {
         "id": id,
         "instanceTenantId": "unifi",
         "parentId": parent_id,
         "name": name,
-        "type": type_,
         "siteNameHierarchy": name_path,
-        "nameHierarchy": name_path,
         "siteHierarchy": id_path,
         "additionalInfo": info,
     }
@@ -50,50 +66,68 @@ def _site(*, id, name, name_path, id_path, parent_id, type_,
 
 def site_hierarchy(snap: Snapshot) -> list[dict]:
     sites = [_site(id=GLOBAL_ID, name="Global", name_path="Global",
-                   id_path=GLOBAL_ID, parent_id="", type_="area")]
+                   id_path=GLOBAL_ID, parent_id=None,
+                   location_attrs={"type": "area"})]
     for site in snap.sites:
+        bid = building_id(site.id)
         sites.append(_site(
-            id=f"bld_{site.id}", name=site.name,
-            name_path=f"Global/{site.name}", id_path=f"{GLOBAL_ID}/bld_{site.id}",
-            parent_id=GLOBAL_ID, type_="building",
-            location_attrs={"address": "", "latitude": "", "longitude": "",
-                            "country": ""}))
+            id=bid, name=site.name,
+            name_path=f"Global/{site.name}", id_path=f"{GLOBAL_ID}/{bid}",
+            parent_id=GLOBAL_ID,
+            location_attrs={"type": "building", "address": "",
+                            "latitude": "0", "longitude": "0", "country": ""}))
         for fp in snap.floorplans_for_site(site.id):
+            fid = floor_id_for(fp)
             w_m, l_m = _metres_dims(fp)
             sites.append(_site(
-                id=f"flr_{fp.id}", name=fp.name,
+                id=fid, name=fp.name,
                 name_path=f"Global/{site.name}/{fp.name}",
-                id_path=f"{GLOBAL_ID}/bld_{site.id}/flr_{fp.id}",
-                parent_id=f"bld_{site.id}", type_="floor",
+                id_path=f"{GLOBAL_ID}/{bid}/{fid}",
+                parent_id=bid,
+                location_attrs={"type": "floor"},
                 extra_ns=[
                     {"nameSpace": "mapGeometry", "attributes": {
-                        "width": _s(w_m), "length": _s(l_m), "height": "3.0",
-                        "offsetX": "0", "offsetY": "0",
-                        "widthPx": _s(fp.width_px), "lengthPx": _s(fp.height_px),
-                        "metersPerPixel": _s(fp.meters_per_px)}},
+                        "offsetX": "0.0", "offsetY": "0.0",
+                        "length": _s(l_m) or "0", "width": _s(w_m) or "0",
+                        "height": "3.0", "geometryType": "DUMMY_TYPE"}},
                     {"nameSpace": "mapsSummary", "attributes": {
-                        "floorIndex": "1", "rfModel": "Cubes And Walled Offices"}},
+                        "rfModel": "Cubes And Walled Offices", "floorIndex": "1"}},
                 ]))
     return sites
 
 
+def site_type(site: dict) -> str | None:
+    for ai in site.get("additionalInfo", []):
+        if ai.get("nameSpace") == "Location":
+            return ai.get("attributes", {}).get("type")
+    return None
+
+
 def filter_sites(sites: list[dict], group_name_hierarchy: str, type_: str,
                  offset: int, limit: int) -> list[dict]:
-    """Apply the v2 GetSite query params: subtree filter + type + pagination
-    (offset is 1-based in DNA Center)."""
+    """v2 GetSite query params: subtree filter + type + 1-based pagination."""
     out = sites
     if group_name_hierarchy and group_name_hierarchy != "Global":
         out = [s for s in out
                if s["siteNameHierarchy"] == group_name_hierarchy
                or s["siteNameHierarchy"].startswith(group_name_hierarchy + "/")]
     if type_:
-        out = [s for s in out if s["type"] == type_]
+        out = [s for s in out if site_type(s) == type_]
     start = max(0, (offset or 1) - 1)
     return out[start:start + (limit or 500)]
 
 
-def floor_id_for(fp: FloorPlan) -> str:
-    return f"flr_{fp.id}"
+def aps_for_site_id(snap: Snapshot, site_id: str) -> list[AccessPoint]:
+    """Resolve a site UUID (global / building / floor) to its access points."""
+    if site_id == GLOBAL_ID:
+        return snap.access_points
+    for site in snap.sites:
+        if building_id(site.id) == site_id:
+            return snap.aps_for_site(site.id)
+    for fp in snap.floorplans:
+        if floor_id_for(fp) == site_id:
+            return [a for a in snap.access_points if a.floorplan_id == fp.id]
+    return []
 
 
 # --- devices --------------------------------------------------------------
