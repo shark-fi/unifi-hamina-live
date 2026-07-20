@@ -10,6 +10,26 @@ Two routes: pull the prebuilt image (recommended) or build from source.
 
 A multi-arch image (Intel + ARM) is published to
 `ghcr.io/shark-fi/unifi-hamina-live:latest`, so the NAS never has to build.
+The image is **private**, so the NAS authenticates to GHCR to pull it.
+
+### One-time: a token to pull the private image
+
+GHCR doesn't accept your GitHub account password — create a token:
+
+1. GitHub → **Settings → Developer settings → Personal access tokens → Tokens
+   (classic) → Generate new token (classic)**.
+2. Scope: **`read:packages`** only. Copy the token (starts `ghp_…`).
+
+### Add GHCR to Container Manager
+
+**Container Manager → Registry → Settings → Add**:
+- Registry URL: `https://ghcr.io`
+- Username: your GitHub username (the account that owns/can read the package)
+- Password: the `read:packages` token
+
+(Equivalent on the CLI: `docker login ghcr.io -u <github-user> -p <token>`.)
+
+### Deploy
 
 1. **SSH in** (Control Panel → Terminal & SNMP → Enable SSH) and make a folder:
    ```bash

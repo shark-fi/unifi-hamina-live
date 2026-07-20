@@ -206,8 +206,10 @@ Build locally:
 docker compose up --build        # reads .env, serves on :8080
 ```
 
-Or pull the prebuilt multi-arch image (Intel + ARM) from GHCR:
+Or pull the prebuilt multi-arch image (Intel + ARM) from GHCR. The image is
+**private**, so log in first with a GitHub token that has `read:packages`:
 ```bash
+echo $GHCR_TOKEN | docker login ghcr.io -u <github-user> --password-stdin
 docker run -d --env-file .env -p 8080:8080 \
   ghcr.io/shark-fi/unifi-hamina-live:latest
 ```

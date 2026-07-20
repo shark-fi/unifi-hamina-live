@@ -3,6 +3,7 @@ name: Publish image
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
     tags: ["v*"]
   workflow_dispatch:
 
