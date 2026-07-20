@@ -23,6 +23,11 @@ from ..models import AccessPoint, FloorPlan, Snapshot
 # device floorPlanId.
 _NS = uuid.UUID("6f5c9e2a-1111-4000-8000-000000000000")
 GLOBAL_ID = str(uuid.uuid5(_NS, "global"))
+# DNA Center tenant ids are 24-hex (Mongo ObjectId style), not a UUID/word.
+_TENANT = uuid.uuid5(_NS, "tenant").hex[:24]
+# rfModel on a real appliance is a numeric code string (e.g. "106110"), NOT the
+# human name — a client that parses it as a number would choke otherwise.
+_RF_MODEL = "57057"
 
 
 def building_id(site_id: str) -> str:
@@ -54,13 +59,13 @@ def _site(*, id, name, name_path, id_path, parent_id, location_attrs, extra_ns=N
     info = list(extra_ns or [])
     info.append({"nameSpace": "Location", "attributes": location_attrs})
     return {
-        "id": id,
-        "instanceTenantId": "unifi",
         "parentId": parent_id,
-        "name": name,
-        "siteNameHierarchy": name_path,
-        "siteHierarchy": id_path,
         "additionalInfo": info,
+        "name": name,
+        "instanceTenantId": _TENANT,
+        "id": id,
+        "siteHierarchy": id_path,
+        "siteNameHierarchy": name_path,
     }
 
 
@@ -74,8 +79,9 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
             id=bid, name=site.name,
             name_path=f"Global/{site.name}", id_path=f"{GLOBAL_ID}/{bid}",
             parent_id=GLOBAL_ID,
-            location_attrs={"type": "building", "address": "",
-                            "latitude": "0", "longitude": "0", "country": ""}))
+            location_attrs={"country": "United States", "address": "",
+                            "latitude": "0.0", "longitude": "0.0",
+                            "addressInheritedFrom": bid, "type": "building"}))
         for fp in snap.floorplans_for_site(site.id):
             fid = floor_id_for(fp)
             w_m, l_m = _metres_dims(fp)
@@ -84,14 +90,15 @@ def site_hierarchy(snap: Snapshot) -> list[dict]:
                 name_path=f"Global/{site.name}/{fp.name}",
                 id_path=f"{GLOBAL_ID}/{bid}/{fid}",
                 parent_id=bid,
-                location_attrs={"type": "floor"},
+                location_attrs={"address": "", "addressInheritedFrom": bid,
+                                "type": "floor"},
                 extra_ns=[
                     {"nameSpace": "mapGeometry", "attributes": {
                         "offsetX": "0.0", "offsetY": "0.0",
-                        "length": _s(l_m) or "0", "width": _s(w_m) or "0",
-                        "height": "3.0", "geometryType": "DUMMY_TYPE"}},
+                        "width": _s(w_m) or "0", "length": _s(l_m) or "0",
+                        "height": "3.0"}},
                     {"nameSpace": "mapsSummary", "attributes": {
-                        "rfModel": "Cubes And Walled Offices", "floorIndex": "1"}},
+                        "rfModel": _RF_MODEL, "imageURL": "", "floorIndex": "1"}},
                 ]))
     return sites
 
