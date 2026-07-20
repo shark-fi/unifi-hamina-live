@@ -201,9 +201,19 @@ sudo systemctl restart unifi-hamina-live     # after editing .env
 
 ## Run with Docker
 
+Build locally:
 ```bash
 docker compose up --build        # reads .env, serves on :8080
 ```
+
+Or pull the prebuilt multi-arch image (Intel + ARM) from GHCR:
+```bash
+docker run -d --env-file .env -p 8080:8080 \
+  ghcr.io/shark-fi/unifi-hamina-live:latest
+```
+
+**Synology (Container Manager):** see [docs/SYNOLOGY.md](docs/SYNOLOGY.md) —
+pull the image via a Project, no on-NAS build needed.
 
 ## Development
 
