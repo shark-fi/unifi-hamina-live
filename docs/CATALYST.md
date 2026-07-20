@@ -88,32 +88,49 @@ the following are confirmed working end-to-end against live UniFi data:
   the `network-device` / `device-detail` / `accesspoint-configuration`
   endpoints.
 
-### Known limitation: floor-map image auto-import
+### Blocker: Hamina requires the maps/export image download (LIVE path)
 
 `POST /dna/intent/api/v1/maps/export/{floorId}` is implemented as the real
 task-based async BAPI (submit → poll `GET /task/{id}` → download
 `GET /file/{id}` returning a `CiscoUnifiedInterchange` `.tar.gz` with the floor
-image + geometry, matched to a real Hamina Catalyst export). The submit and the
-task poll work, and the task reports done with the fileId in `progress`, `data`,
-and `additionalStatusURL` — but **Hamina polls the task to timeout and never
-issues the file download**, so the background *image* does not import
-automatically. The exact completion/download signal Catalyst's maps service
-uses could not be reproduced without a real appliance to observe (the DevNet
-sandbox denies maps permissions).
+image + geometry, matched byte-for-byte to a real Hamina Catalyst export). The
+submit and the task poll work. But **Hamina never downloads the archive**, and
+its Catalyst connector treats a successful map download as *mandatory* before it
+will sync device (AP) data. Verified exhaustively against live Hamina:
 
-**Workaround — manual one-time map add.** The hierarchy and live AP data import
-fine; only the floor *image* is manual. In Hamina Planner open the floor and
-upload the plan image (the bridge already holds it — it is served inside the
-maps/export archive, and `GET /catalyst/_captured` / the collector cache expose
-it), then calibrate scale to the floor width the bridge reports (metres =
-`width_px × meters_per_px`). Live AP positions then overlay on it. If a real
-Catalyst maps/export task capture becomes available, finishing the auto-import
-is a one-field change in `catalyst/maps.py:task_response`.
+- Task reports **success** (fileId in `progress` / `data` / `additionalStatusURL`,
+  immutable, `endTime>submit`, running→done transition) → Hamina polls the task
+  ~10× then errors, **never issuing a `/file/` request** at any path.
+- Task reports **failure** (`isError`) → Hamina **retries the whole export** in a
+  loop, then errors.
+- Advertising the floor **without** a map (`mapGeometry`/`mapsSummary` omitted)
+  does **not** stop Hamina from calling `maps/export` for the selected floor.
+
+So the exact completion/download trigger Catalyst's maps service uses can't be
+reproduced without a real appliance to observe, and the sync never reaches the
+device endpoints. **The Catalyst LIVE connector cannot currently ingest UniFi
+data end-to-end** — not because of the hierarchy or device shapes (those work),
+but because Hamina gates the whole sync on a map download the facade can't
+satisfy. If a real `maps/export → task → file` capture from an actual Catalyst
+appliance becomes available, this is a one-shot fix in
+`catalyst/maps.py:task_response`.
+
+### Recommended path: OpenIntent for the map/floor, near-live refresh
+
+Because the map export is the blocker, get the floor plan + AP placement into
+Hamina via the **OpenIntent export** (companion `unifi-hamina-export`) instead —
+Hamina imports that cleanly (verified). Keep it current with the scheduled
+refresher built into this project (`openintent_refresh_enabled`,
+`openintent_refresh_seconds`, plus the stale-map detection). That is the working
+UniFi → Hamina pipeline today; the Catalyst facade below remains useful for the
+site hierarchy + device shapes if Hamina ever relaxes the mandatory map export.
 
 ## Status
 
-This is a **skeleton for the observe-and-match loop**, not a certified DNA
-Center emulation. The auth flow, site hierarchy, and device endpoints are real
-and tested; the maps/export archive delivery is the one piece still pending a
-real-appliance capture. Model strings map UniFi → a plausible `Unified AP`; the
-true UniFi model is preserved in the fields.
+The auth flow, site hierarchy (area/building/floor cascade), and device
+endpoints are real and tested and match a live 2.3.7.x appliance. The one
+unresolved piece — the `maps/export` archive **download**, which Hamina makes
+mandatory — blocks the end-to-end LIVE path and needs a real-appliance capture
+to finish. Use the OpenIntent refresh path (above) for a working pipeline in the
+meantime. Model strings map UniFi → a plausible `Unified AP`; the true UniFi
+model is preserved in the fields.

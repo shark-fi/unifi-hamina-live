@@ -197,15 +197,15 @@ def test_unimplemented_is_captured(cat_client):
     assert any(x["path"] == "/dna/system/api/v1/auth/token" for x in cap["requests"])
 
 
-def test_maps_export_error_mode_is_default():
-    """Default: the export task reports failure so Hamina skips the image and
-    proceeds to the device sync instead of waiting for an undeliverable map."""
+def test_maps_export_error_mode_reports_failed_task():
+    """With catalyst_maps_export_error, the export task reports failure (a real
+    Catalyst map export can fail) rather than a success awaiting a download."""
     from fastapi.testclient import TestClient
     from unifi_hamina_live.app import create_app
     from unifi_hamina_live.catalyst import mapping
 
     settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
-                        catalyst_password="secret")  # export_error defaults True
+                        catalyst_password="secret", catalyst_maps_export_error=True)
     app = create_app(settings=settings, collector=FakeCollector(_snapshot()))
     with TestClient(app) as c:
         tok = _token(c).json()["Token"]
