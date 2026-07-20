@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # 2=+buildings, 3=+floors (default). Lets you narrow which level a strict
     # client chokes on without rebuilding the image.
     catalyst_site_max_depth: int = Field(default=3, ge=1, le=3)
+    # A real Catalyst maps/export job takes seconds to build the archive, so a
+    # client polling the task sees it "running" before it goes "done". Simulate
+    # that window (ms) — an instant-done task can trip a client that waits for
+    # the running->done transition. 0 = complete immediately (used in tests).
+    catalyst_export_delay_ms: int = Field(default=4000, ge=0)
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)

@@ -34,7 +34,7 @@ def cat_client():
     from unifi_hamina_live.app import create_app
 
     settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
-                        catalyst_password="secret")
+                        catalyst_password="secret", catalyst_export_delay_ms=0)
     app = create_app(settings=settings,
                      collector=FakeCollector(_snapshot(), images={"p1": _PNG}))
     with TestClient(app) as c:

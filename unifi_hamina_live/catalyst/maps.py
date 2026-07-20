@@ -97,35 +97,43 @@ def submit_response(job: dict) -> dict:
     }
 
 
-def task_response(job: dict) -> dict:
-    """A completed DNAC file task, matched field-for-field to a real appliance
-    (verified against a Command Runner task on the sandbox).
+def task_response(job: dict, delay_ms: int = 0) -> tuple[dict, bool]:
+    """A DNAC file task, matched field-for-field to a real appliance (verified
+    against a Command Runner task on the sandbox). Returns (body, done).
 
-    Key points, learned the hard way:
-      * the fileId is carried ONLY in ``progress`` as COMPACT JSON
-        (``{"fileId":"..."}`` — no spaces); the client regex-extracts it and
-        builds the /file/{fileId} URL itself. There is no additionalStatusURL.
-      * endTime/version/lastUpdate are the fixed completion stamp and equal
-        each other, so every poll returns the identical immutable task.
+    For the first ``delay_ms`` after submit the task reports RUNNING (no endTime,
+    no fileId) — a real maps/export takes seconds, and an instant-done task can
+    trip a client that waits for the running->done transition. After that it
+    reports DONE, with the fileId carried ONLY in ``progress`` as COMPACT JSON
+    (``{"fileId":"..."}``); the client regex-extracts it and builds the
+    /file/{fileId} URL itself. endTime/version/lastUpdate are the fixed
+    completion stamp and equal each other, so every poll once done is identical.
     """
-    start = job["ts_ms"]        # task started when it was submitted
-    end = start + 250           # ...and finished shortly after (like real DNAC)
-    fid = job["file_id"]
-    return {
-        "response": {
+    start = job["ts_ms"]
+    end = start + max(delay_ms, 250)
+    done = int(time.time() * 1000) - start >= delay_ms
+    resp = {
+        "startTime": start,
+        "serviceType": "Maps Service",
+        "username": "admin",
+        "isError": False,
+        "instanceTenantId": mapping._TENANT,
+        "id": job["task_id"],
+    }
+    if done:
+        resp.update({
             "version": end,
             "endTime": end,
-            "progress": json.dumps({"fileId": fid}, separators=(",", ":")),
-            "startTime": start,
             "lastUpdate": end,
-            "serviceType": "Maps Service",
-            "username": "admin",
-            "isError": False,
-            "instanceTenantId": mapping._TENANT,
-            "id": job["task_id"],
-        },
-        "version": "1.0",
-    }
+            "progress": json.dumps({"fileId": job["file_id"]}, separators=(",", ":")),
+        })
+    else:
+        resp.update({
+            "version": start,
+            "lastUpdate": start,
+            "progress": "CREATING MAP ARCHIVE",
+        })
+    return {"response": resp, "version": "1.0"}, done
 
 
 def _ft(metres: float | None) -> str:
