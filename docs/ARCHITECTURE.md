@@ -80,6 +80,17 @@ on live positions. Floor-plan *images* still come from the exporter, so its
 InnerSpace/image parsing stays the single source of truth there; the bridge
 duplicates only the lightweight coordinate math it needs for live positions.
 
+**Staleness detection.** Because the zip is baked once, a *map* change (rescale,
+resize, replaced image, or a plan added/removed) would otherwise silently leave
+Hamina's imported image out of date. Each poll the refresher's monitor compares
+a **structural signature** of the floor plans — name, dimensions, scale, image
+identity, *not* AP x,y — against the baseline captured at the last export
+(`OpenIntentRefresher.evaluate`, a pure tested state machine). An AP move never
+changes the signature, so it never flags stale; a real map edit does. On a
+change it sets `stale: true` on `/openintent/status`, logs a warning, and POSTs
+`OPENINTENT_STALE_WEBHOOK` if configured. With `OPENINTENT_AUTO_REGENERATE=true`
+it instead re-runs the exporter automatically and re-baselines.
+
 ## The OpenIntent refresher
 
 `refresh/openintent.py` is independent of the live poll. It shells out to the

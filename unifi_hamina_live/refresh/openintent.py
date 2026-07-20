@@ -21,16 +21,25 @@ import time
 from pathlib import Path
 
 from ..config import Settings
+from ..unifi import placement
 
 log = logging.getLogger("unifi_hamina_live.refresh")
 
 
 class OpenIntentRefresher:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, collector=None) -> None:
         self._s = settings
+        self._collector = collector  # source of live floor-plan structure
         self._task: asyncio.Task | None = None
+        self._monitor_task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self.last_run: dict = {"ran_at": None, "ok": None, "output": None, "error": None}
+        # staleness state: the exported baseline vs. current floor-plan structure
+        self._baseline_sigs: dict | None = None
+        self._need_baseline = False
+        self.stale = False
+        self.stale_since: float | None = None
+        self.stale_detail: dict | None = None
 
     @property
     def output_zip(self) -> Path:
@@ -84,6 +93,11 @@ class OpenIntentRefresher:
             }
             if ok:
                 log.info("openintent refresh wrote %s", self.output_zip)
+                # re-baseline staleness against whatever the next good poll sees
+                self._need_baseline = True
+                self.stale = False
+                self.stale_since = None
+                self.stale_detail = None
             else:
                 log.warning("openintent refresh failed (%s)", proc.returncode)
         except Exception as exc:  # pragma: no cover - defensive
@@ -93,6 +107,82 @@ class OpenIntentRefresher:
             }
             log.exception("openintent refresh crashed")
         return self.last_run
+
+    # -- staleness -----------------------------------------------------------
+    def evaluate(self, floorplans) -> str | None:
+        """Compare current floor-plan structure to the exported baseline.
+
+        Pure state machine (no I/O), so it is unit-testable. Returns
+        'became_stale', 'recovered', or None. AP x,y moves never affect this —
+        only map-structure changes do (see placement.plan_signatures).
+        """
+        cur = placement.plan_signatures(floorplans)
+        if self._need_baseline:
+            self._baseline_sigs = cur
+            self._need_baseline = False
+            self.stale = False
+            self.stale_since = None
+            self.stale_detail = None
+            return None
+        if self._baseline_sigs is None:
+            return None
+        diff = placement.diff_signatures(self._baseline_sigs, cur)
+        if placement.has_changes(diff):
+            if not self.stale:
+                self.stale = True
+                self.stale_since = time.time()
+                self.stale_detail = diff
+                return "became_stale"
+            self.stale_detail = diff  # keep the latest delta
+        elif self.stale:
+            self.stale = False
+            self.stale_since = None
+            self.stale_detail = None
+            return "recovered"
+        return None
+
+    async def _notify_stale(self) -> None:
+        summary = self.stale_detail or {}
+        log.warning(
+            "openintent import is STALE — floor plan structure changed "
+            "(added=%s removed=%s changed=%s). Re-import %s into Hamina.",
+            summary.get("added"), summary.get("removed"), summary.get("changed"),
+            self.output_zip,
+        )
+        url = self._s.openintent_stale_webhook.strip()
+        if not url:
+            return
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(url, json={
+                    "event": "openintent_stale",
+                    "at": self.stale_since,
+                    "detail": self.stale_detail,
+                    "zip": str(self.output_zip),
+                })
+        except Exception as exc:  # best-effort
+            log.warning("stale webhook failed: %s", exc)
+
+    async def _monitor(self) -> None:
+        interval = max(10.0, self._s.poll_interval_seconds)
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+            if self._stop.is_set() or self._collector is None:
+                continue
+            snap = self._collector.snapshot
+            if not getattr(snap, "ok", False):
+                continue
+            action = self.evaluate(snap.floorplans)
+            if action == "became_stale":
+                await self._notify_stale()
+                if self._s.openintent_auto_regenerate:
+                    log.info("openintent: auto-regenerating after map change")
+                    await self.run_once()
 
     async def _loop(self) -> None:
         interval = self._s.openintent_refresh_seconds
@@ -114,9 +204,15 @@ class OpenIntentRefresher:
         if self._task is None:
             self._stop.clear()
             self._task = asyncio.create_task(self._loop(), name="openintent-refresh")
+            if self._collector is not None:
+                self._monitor_task = asyncio.create_task(
+                    self._monitor(), name="openintent-stale-monitor"
+                )
 
     async def stop(self) -> None:
         self._stop.set()
-        if self._task:
-            await self._task
-            self._task = None
+        for task in (self._task, self._monitor_task):
+            if task:
+                await task
+        self._task = None
+        self._monitor_task = None

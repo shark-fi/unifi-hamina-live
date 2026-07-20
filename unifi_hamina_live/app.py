@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
         app.state.ws_listener = WebSocketListener(settings, collector)
         app.state.ws_listener.start()
     if settings.openintent_refresh_enabled:
-        app.state.refresher = OpenIntentRefresher(settings)
+        app.state.refresher = OpenIntentRefresher(settings, collector=collector)
         app.state.refresher.start()
     try:
         yield

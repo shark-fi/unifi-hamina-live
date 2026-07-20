@@ -137,6 +137,14 @@ it re-runs the exporter on that interval; with `=0` it generates once at startup
 the live placement layer. The newest zip is served at `/openintent/latest.zip`
 for import into Hamina Planner — see [docs/HAMINA.md](docs/HAMINA.md).
 
+**Stale-import detection:** since the zip is baked once, a *map* change
+(rescale, resize, replaced image, plan added/removed — **not** an AP move) would
+leave Hamina's imported image out of date. The refresher watches the floor-plan
+structure and, on such a change, sets `stale: true` on `/openintent/status`,
+logs it, and POSTs `OPENINTENT_STALE_WEBHOOK` if set — so you re-import
+deliberately. Set `OPENINTENT_AUTO_REGENERATE=true` to regenerate automatically
+instead.
+
 ## Configuration
 
 All via environment / `.env` — see [`.env.example`](.env.example) for the full

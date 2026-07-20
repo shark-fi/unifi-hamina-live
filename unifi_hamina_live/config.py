@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # (initial import) — AP positions then flow live via the placement layer.
     openintent_refresh_seconds: float = Field(default=900.0, ge=0.0)
     openintent_output_dir: str = Field(default="./exports")
+    # When a floor plan's structure changes (rescale/resize/replaced image/
+    # added/removed plan) the exported zip goes stale. Default: flag it on
+    # /openintent/status + log + optional webhook. Opt in to regenerate instead.
+    openintent_auto_regenerate: bool = Field(default=False)
+    openintent_stale_webhook: str = Field(
+        default="", description="Optional URL to POST when the import goes stale."
+    )
 
     # --- Server -----------------------------------------------------------
     host: str = Field(default="0.0.0.0")

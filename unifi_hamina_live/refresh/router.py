@@ -29,6 +29,12 @@ def status(request: Request):
         "output_zip": str(r.output_zip),
         "zip_available": r.output_zip.exists(),
         "last_run": r.last_run,
+        # staleness: True once a floor-plan structure change is detected since
+        # the last export (AP moves do NOT set this). Re-import the zip to clear.
+        "stale": r.stale,
+        "stale_since": r.stale_since,
+        "stale_detail": r.stale_detail,
+        "auto_regenerate": request.app.state.settings.openintent_auto_regenerate,
     }
 
 

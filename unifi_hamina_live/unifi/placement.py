@@ -115,6 +115,7 @@ def innerspace_placement(
                 width_px=img_w,
                 height_px=img_h,
                 meters_per_px=_meters_per_px(shapes, map_shape),
+                image_ref=map_shape.get("urlImage"),
             )
         )
         if not dims:
@@ -145,6 +146,34 @@ def _meters_per_px(shapes: list[dict], map_shape: dict) -> float | None:
     m_per_unit = float(scale_shape["scale"]) / dist
     sx = float((map_shape.get("scale") or {}).get("x") or 1) or 1
     return round(m_per_unit * sx, 6)
+
+
+# --- structural change detection ------------------------------------------
+# A floor plan's "structure" is everything the OpenIntent import depends on
+# EXCEPT AP x,y — i.e. the map itself: name, pixel dimensions, scale, and image
+# identity. AP moves change positions but not this signature, so they never mark
+# the import stale; a map edit (rescale, resize, replaced image, added/removed
+# plan) does.
+def plan_signatures(floorplans: list[FloorPlan]) -> dict[str, str]:
+    return {
+        fp.id: "|".join(str(v) for v in (
+            fp.name, fp.width_px, fp.height_px, fp.meters_per_px, fp.image_ref
+        ))
+        for fp in floorplans
+    }
+
+
+def diff_signatures(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str]]:
+    old_k, new_k = set(old), set(new)
+    return {
+        "added": sorted(new_k - old_k),
+        "removed": sorted(old_k - new_k),
+        "changed": sorted(k for k in old_k & new_k if old[k] != new[k]),
+    }
+
+
+def has_changes(diff: dict[str, list[str]]) -> bool:
+    return any(diff.values())
 
 
 # --- shared ---------------------------------------------------------------

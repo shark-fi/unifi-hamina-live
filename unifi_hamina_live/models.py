@@ -76,6 +76,11 @@ class FloorPlan(BaseModel):
     width_px: float | None = None
     height_px: float | None = None
     meters_per_px: float | None = None
+    image_ref: str | None = Field(
+        default=None,
+        description="Image identity (InnerSpace urlImage); changes when the "
+        "floor-plan image is replaced. Used for staleness detection.",
+    )
     num_aps: int = 0
 
 
