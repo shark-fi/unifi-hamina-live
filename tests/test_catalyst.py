@@ -136,6 +136,7 @@ def test_network_devices_and_ap_config(cat_client):
 
 def test_maps_export_task_flow_and_archive(cat_client):
     import io
+    import json
     import tarfile
 
     from unifi_hamina_live.catalyst import mapping
@@ -151,13 +152,19 @@ def test_maps_export_task_flow_and_archive(cat_client):
     task_id, url = resp["taskId"], resp["url"]
     assert url.endswith(task_id)
 
-    # 2. GET task -> not error, points at the file download
+    # 2. GET task -> a completed, immutable task; fileId is in progress (compact
+    #    JSON, no additionalStatusURL) exactly like a real appliance
     task = cat_client.get(url, headers=h).json()["response"]
-    assert task["isError"] is False
-    dl = task["additionalStatusURL"]
+    assert task["isError"] is False and task["endTime"] == task["version"]
+    assert "additionalStatusURL" not in task
+    assert '{"fileId":"' in task["progress"]        # compact, no space
+    file_id = json.loads(task["progress"])["fileId"]
 
-    # 3. GET file -> the CiscoUnifiedInterchange archive
-    arch = cat_client.get(dl, headers=h)
+    # a completed task is immutable: a second poll is byte-identical
+    assert cat_client.get(url, headers=h).json()["response"] == task
+
+    # 3. client builds /file/{fileId} itself and downloads the archive
+    arch = cat_client.get(f"/dna/intent/api/v1/file/{file_id}", headers=h)
     assert arch.status_code == 200 and arch.headers["content-type"] == "application/octet-stream"
     tar = tarfile.open(fileobj=io.BytesIO(arch.content), mode="r:gz")
     names = tar.getnames()

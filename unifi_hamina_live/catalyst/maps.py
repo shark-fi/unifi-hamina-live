@@ -98,22 +98,30 @@ def submit_response(job: dict) -> dict:
 
 
 def task_response(job: dict) -> dict:
-    """A completed DNAC task pointing at the file download. endTime/version are
-    the FIXED completion stamp (== each other, as on a real appliance) so every
-    poll returns the identical immutable task and the client sees it finish."""
+    """A completed DNAC file task, matched field-for-field to a real appliance
+    (verified against a Command Runner task on the sandbox).
+
+    Key points, learned the hard way:
+      * the fileId is carried ONLY in ``progress`` as COMPACT JSON
+        (``{"fileId":"..."}`` — no spaces); the client regex-extracts it and
+        builds the /file/{fileId} URL itself. There is no additionalStatusURL.
+      * endTime/version/lastUpdate are the fixed completion stamp and equal
+        each other, so every poll returns the identical immutable task.
+    """
     ts = job["ts_ms"]
     fid = job["file_id"]
     return {
         "response": {
-            "id": job["task_id"],
-            "serviceType": "Maps Service",
-            "instanceTenantId": mapping._TENANT,
-            "isError": False,
-            "progress": json.dumps({"fileId": fid}),
-            "data": fid,
-            "additionalStatusURL": f"/dna/intent/api/v1/file/{fid}",
-            "endTime": ts,
             "version": ts,
+            "endTime": ts,
+            "progress": json.dumps({"fileId": fid}, separators=(",", ":")),
+            "startTime": ts - 200,
+            "lastUpdate": ts,
+            "serviceType": "Maps Service",
+            "username": "admin",
+            "isError": False,
+            "instanceTenantId": mapping._TENANT,
+            "id": job["task_id"],
         },
         "version": "1.0",
     }
