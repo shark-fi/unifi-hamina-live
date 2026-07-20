@@ -42,7 +42,7 @@ GHCR doesn't accept your GitHub account password — create a token:
    ```yaml
    services:
      unifi-hamina-live:
-       image: ghcr.io/shark-fi/unifi-hamina-live:latest
+       image: ghcr.io/shark-fi/unifi-hamina-live:latest   # or pin a release: :0.1.0
        container_name: unifi-hamina-live
        ports: ["8080:8080"]          # change left side if DSM already uses 8080
        env_file: [.env]
