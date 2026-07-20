@@ -1,8 +1,14 @@
 # Getting UniFi data into Hamina — the honest version
 
-This document exists so nobody is surprised. **Hamina Live cannot be made to
-show a live UniFi heatmap on its own today**, and it's worth understanding
-exactly why before deciding how to use this tool.
+This document exists so nobody is surprised. It explains why the **Meraki**
+route is blocked, and points to the route that actually works.
+
+> **Update — the Catalyst Center route works today.** Hamina's *Cisco Catalyst
+> (DNA) Center API* connector accepts a free-text **Instance URL**, a
+> **username/password**, and **self-signed / disable-TLS** options — none of
+> the Meraki blockers below apply to it. The bridge ships a Catalyst Center
+> facade for exactly this; see [CATALYST.md](CATALYST.md). The rest of this doc
+> explains why Meraki specifically can't be used, which is still worth knowing.
 
 ## How Hamina Live actually works
 

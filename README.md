@@ -115,6 +115,17 @@ client needs, backed by live UniFi data. Auth via `X-Cisco-Meraki-API-Key` or
 `Authorization: Bearer`. Full endpoint list and field mapping in
 [docs/MERAKI_COMPAT.md](docs/MERAKI_COMPAT.md).
 
+### Catalyst Center (DNA Center) facade — `/dna/*`
+Hamina's **Cisco Catalyst (DNA) Center API** connector takes an Instance URL +
+username/password and can disable TLS verification — so, unlike Meraki, it can
+be pointed at this bridge **today**. This facade speaks the DNA Center Intent
+API (auth token + Intent endpoints) backed by live UniFi data, and its
+placement model (AP x,y in metres on a sized floor) maps natively from the
+placement layer. A request logger records every `/dna/*` call Hamina makes
+(read it at `/catalyst/_captured`) so the exact endpoints its version needs are
+observed, not guessed. Set `CATALYST_ENABLED=true` + `CATALYST_USERNAME/PASSWORD`.
+Full walkthrough: [docs/CATALYST.md](docs/CATALYST.md).
+
 ### Neutral REST API — `/api`
 `/api/health`, `/api/sites`, `/api/access-points`, `/api/clients`,
 `/api/summary`, `POST /api/refresh`. Unauthenticated; meant to sit behind your

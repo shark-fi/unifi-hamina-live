@@ -73,6 +73,31 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     app.include_router(meraki_router)
     app.include_router(openintent_router)
 
+    if settings.catalyst_enabled:
+        from collections import deque
+
+        from .catalyst.auth import TokenStore
+        from .catalyst.router import router as catalyst_router
+
+        app.state.catalyst_tokens = TokenStore()
+        app.state.catalyst_captured = deque(maxlen=500)
+        app.include_router(catalyst_router)
+
+        @app.middleware("http")
+        async def _capture_dna(request, call_next):
+            is_dna = request.url.path.startswith("/dna/")
+            response = await call_next(request)
+            if is_dna and settings.catalyst_log_requests:
+                app.state.catalyst_captured.append({
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": request.url.query,
+                    "status": response.status_code,
+                    "implemented": response.status_code != 404,
+                    "authenticated": "X-Auth-Token" in request.headers,
+                })
+            return response
+
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard() -> str:
         return _DASHBOARD

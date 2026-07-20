@@ -113,6 +113,9 @@ generated zip is served at `/openintent/latest.zip`. See
 | `unifi/websocket.py` | experimental WS listener (push updates, off by default) |
 | `meraki/mapping.py` | neutral → Meraki v1 JSON |
 | `meraki/router.py` | Meraki-compatible endpoints + auth |
+| `catalyst/auth.py` | DNA Center token issue/validate + Basic-auth check |
+| `catalyst/mapping.py` | neutral → DNA Center Intent API JSON (sites/floors/devices) |
+| `catalyst/router.py` | DNA Center endpoints + `/dna/*` request capture |
 | `api/router.py` | neutral REST endpoints |
 | `refresh/openintent.py` | scheduled exporter subprocess |
 | `refresh/router.py` | OpenIntent status/download endpoints |

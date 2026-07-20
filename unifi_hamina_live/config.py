@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     meraki_compat_api_key: str = Field(default="")
     meraki_org_name: str = Field(default="UniFi")
 
+    # --- Catalyst Center (DNA Center) compatible facade ------------------
+    # Hamina's "Cisco Catalyst (DNA) Center API" connector takes an Instance
+    # URL + username/password and can disable TLS verification — so, unlike
+    # Meraki, it can be pointed at this bridge. Enable the facade and set the
+    # username/password Hamina will authenticate with.
+    catalyst_enabled: bool = Field(default=False)
+    catalyst_username: str = Field(default="")
+    catalyst_password: str = Field(default="")
+    # Record every /dna/* request (matched or not) so you can see exactly what
+    # Hamina calls and implement to match. Served at /catalyst/_captured.
+    catalyst_log_requests: bool = Field(default=True)
+
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)
     openintent_exporter_path: str = Field(
