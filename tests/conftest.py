@@ -102,12 +102,16 @@ def build_snapshot() -> Snapshot:
 class FakeCollector:
     """Stands in for the real Collector — no network, fixed snapshot."""
 
-    def __init__(self, snapshot: Snapshot) -> None:
+    def __init__(self, snapshot: Snapshot, images: dict | None = None) -> None:
         self._snapshot = snapshot
+        self._images = images or {}
 
     @property
     def snapshot(self) -> Snapshot:
         return self._snapshot
+
+    def floor_image(self, plan_id: str) -> bytes | None:
+        return self._images.get(plan_id)
 
     def start(self) -> None:  # no-op
         pass

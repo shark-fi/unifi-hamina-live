@@ -25,6 +25,9 @@ def _snapshot() -> Snapshot:
                     access_points=[ap], floorplans=[fp])
 
 
+_PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)  # header is enough for ext sniff
+
+
 @pytest.fixture
 def cat_client():
     from fastapi.testclient import TestClient
@@ -32,7 +35,8 @@ def cat_client():
 
     settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
                         catalyst_password="secret")
-    app = create_app(settings=settings, collector=FakeCollector(_snapshot()))
+    app = create_app(settings=settings,
+                     collector=FakeCollector(_snapshot(), images={"p1": _PNG}))
     with TestClient(app) as c:
         yield c
 
@@ -128,6 +132,41 @@ def test_network_devices_and_ap_config(cat_client):
     assert radio["channelNumber"] == 36 and radio["txPowerLevel"] == 20
     # AP placement converted to metres on the floor: 600px*0.05=30, 450*0.05=22.5
     assert cfg[0]["location"] == {"xCoord": 30.0, "yCoord": 22.5, "unit": "meters"}
+
+
+def test_maps_export_async_flow(cat_client):
+    import io
+    import tarfile
+
+    from unifi_hamina_live.catalyst import mapping
+
+    tok = _token(cat_client).json()["Token"]
+    h = {"X-Auth-Token": tok}
+    floor_id = mapping.floor_id_for(_snapshot().floorplans[0])
+
+    # 1. POST export -> async execution handle
+    r = cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["executionId"] and body["executionStatusUrl"].endswith(body["executionId"])
+
+    # 2. GET execution-status -> SUCCESS + download URL
+    st = cat_client.get(body["executionStatusUrl"], headers=h).json()
+    assert st["status"] == "SUCCESS"
+    dl = st["additionalStatusURL"]
+
+    # 3. GET file -> a gzipped tar carrying the maps XML + the floor image
+    arch = cat_client.get(dl, headers=h)
+    assert arch.status_code == 200
+    tar = tarfile.open(fileobj=io.BytesIO(arch.content), mode="r:gz")
+    names = tar.getnames()
+    assert "maps.xml" in names
+    xml = tar.extractfile("maps.xml").read().decode()
+    assert "AP-Lobby" in xml and "Ground" in xml  # AP placed + floor named
+    assert any(n.endswith((".png", ".jpg")) for n in names)  # image embedded
+
+    # unauth is rejected at each step
+    assert cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}").status_code == 401
 
 
 def test_unimplemented_is_captured(cat_client):

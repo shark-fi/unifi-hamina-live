@@ -32,6 +32,14 @@ class Collector:
         # cache of InnerSpace floor-plan image dimensions, keyed by image url,
         # so we fetch each image once and update positions cheaply thereafter.
         self._img_dims: dict[str, tuple[float, float]] = {}
+        # cache of the raw floor-plan image bytes, keyed by plan id, so the
+        # Catalyst maps/export archive can embed the real image without a
+        # re-fetch. Populated alongside the dimension cache.
+        self._img_bytes: dict[str, bytes] = {}
+
+    def floor_image(self, plan_id: str) -> bytes | None:
+        """Raw image bytes for a floor plan id, if the collector has fetched it."""
+        return self._img_bytes.get(plan_id)
 
     def _default_factory(self) -> UniFiClient:
         s = self._settings
@@ -183,6 +191,8 @@ class Collector:
                 size = placement.image_size(blob) if blob else None
                 if size:
                     self._img_dims[url] = (float(size[0]), float(size[1]))
+                if blob:
+                    self._img_bytes[plan_id] = blob
             if url in self._img_dims:
                 dims_by_plan[plan_id] = self._img_dims[url]
 
