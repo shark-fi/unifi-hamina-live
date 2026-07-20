@@ -27,7 +27,7 @@ UNIFI_TO_MERAKI_MODEL: dict[str, str] = {
     "uap-flexhd": "MR44", "uap-ac-mesh": "MR33", "uap-ac-mesh-pro": "MR42",
     "u6-lite": "MR36", "u6-lr": "MR44", "u6-pro": "MR46", "u6-mesh": "MR44",
     "u6-enterprise": "MR57", "u6-iw": "MR36", "u6-extender": "MR36",
-    "u7-pro": "MR57", "u7-pro-max": "MR57",
+    "u7-pro": "MR57", "u7-pro-max": "MR57", "u7-pro-outdoor": "MR86",
 }
 
 BAND_TO_MERAKI = {"2.4": "2.4", "5": "5", "6": "6"}

@@ -21,6 +21,7 @@ UNIFI_MODEL_NAMES: dict[str, str] = {
     "U6M": "u6-mesh", "U6IW": "u6-iw", "U6ENT": "u6-enterprise",
     "U6EXT": "u6-extender",
     "U7PRO": "u7-pro", "U7PROMAX": "u7-pro-max",
+    "UAPA6A6": "u7-pro-outdoor",
 }
 
 # UniFi radio key -> band label (GHz).
