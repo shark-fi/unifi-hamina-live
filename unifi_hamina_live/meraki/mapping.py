@@ -185,6 +185,39 @@ def client_entry(c: Client, snap: Snapshot) -> dict:
     }
 
 
+def floor_plan(fp, snap: Snapshot) -> dict:
+    """`GET /networks/{id}/floorPlans` item.
+
+    Meraki places devices on a floor plan by geo corners; UniFi/OpenIntent use
+    image pixels. We expose the plan's pixel dimensions and list the devices on
+    it with their pixel x,y under `unifiPlacement` (non-standard) so a consumer
+    gets live positions without a geo round-trip. Geo corners are null.
+    """
+    devices = []
+    for ap in snap.aps_for_site(fp.site_id):
+        if ap.floorplan_id == fp.id:
+            devices.append(
+                {"serial": ap.serial, "x": ap.x, "y": ap.y, "unit": "pixels"}
+            )
+    return {
+        "floorPlanId": fp.id,
+        "networkId": network_id(fp.site_id),
+        "name": fp.name,
+        "width": fp.width_px,
+        "height": fp.height_px,
+        "imageUrl": None,
+        "imageExtension": None,
+        "center": None,
+        "bottomLeftCorner": None,
+        "bottomRightCorner": None,
+        "topLeftCorner": None,
+        "topRightCorner": None,
+        "devices": [d["serial"] for d in devices],
+        "unifiMetersPerPixel": fp.meters_per_px,
+        "unifiPlacement": devices,
+    }
+
+
 def _iso(epoch: float) -> str:
     """RFC3339/ISO8601 UTC without importing datetime.now (epoch is provided)."""
     import datetime

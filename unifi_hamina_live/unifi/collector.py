@@ -8,8 +8,8 @@ import logging
 import time
 
 from ..config import Settings
-from ..models import Site, Snapshot
-from . import normalize
+from ..models import AccessPoint, FloorPlan, Site, Snapshot
+from . import normalize, placement
 from .client import UniFiClient, UniFiError
 
 log = logging.getLogger("unifi_hamina_live.collector")
@@ -29,6 +29,9 @@ class Collector:
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        # cache of InnerSpace floor-plan image dimensions, keyed by image url,
+        # so we fetch each image once and update positions cheaply thereafter.
+        self._img_dims: dict[str, tuple[float, float]] = {}
 
     def _default_factory(self) -> UniFiClient:
         s = self._settings
@@ -99,8 +102,10 @@ class Collector:
         sites_raw = await client.sites()
 
         sites: list[Site] = []
-        aps = []
+        aps: list[AccessPoint] = []
         clients = []
+        floorplans: list[FloorPlan] = []
+        ap_by_mac: dict[str, AccessPoint] = {}
         for site in sites_raw:
             site_id = site.get("name")
             if not site_id or (wanted and site_id not in wanted):
@@ -122,22 +127,74 @@ class Collector:
 
             aps.extend(site_aps)
             clients.extend(site_clients)
+            for a in site_aps:
+                ap_by_mac.setdefault(a.mac, a)
             sites.append(
-                Site(
-                    id=site_id,
-                    name=desc,
-                    num_aps=len(site_aps),
-                    num_clients=len(site_clients),
-                )
+                Site(id=site_id, name=desc, num_aps=len(site_aps),
+                     num_clients=len(site_clients))
             )
 
+            # classic Maps placement is site-scoped and comes cheap from data
+            # we already have (device x,y). Best-effort.
+            if self._settings.placement_enabled:
+                try:
+                    fps, positions = placement.legacy_placement(
+                        site_id, await client.maps(site_id), devices
+                    )
+                    floorplans.extend(fps)
+                    self._apply_positions(ap_by_mac, positions)
+                except UniFiError as exc:
+                    log.debug("legacy placement unavailable for %s: %s", site_id, exc)
+
+        # InnerSpace placement is console-global; only consult it for APs not
+        # already placed via classic Maps.
+        if self._settings.placement_enabled:
+            await self._innerspace_placement(client, ap_by_mac, floorplans, sites)
+
+        for fp in floorplans:
+            fp.num_aps = sum(1 for a in aps if a.floorplan_id == fp.id)
+
         return Snapshot(
-            generated_at=time.time(),
-            ok=True,
-            sites=sites,
-            access_points=aps,
-            clients=clients,
+            generated_at=time.time(), ok=True, sites=sites,
+            access_points=aps, clients=clients, floorplans=floorplans,
         )
+
+    @staticmethod
+    def _apply_positions(ap_by_mac, positions) -> None:
+        for mac, pos in positions.items():
+            ap = ap_by_mac.get(mac)
+            if ap and ap.floorplan_id is None:  # don't overwrite an earlier source
+                ap.floorplan_id = pos.floorplan_id
+                ap.x = pos.x
+                ap.y = pos.y
+
+    async def _innerspace_placement(self, client, ap_by_mac, floorplans, sites) -> None:
+        try:
+            project = await client.innerspace_project()
+        except UniFiError:
+            project = None
+        if not project:
+            return
+        # fetch image dimensions once per plan image (cached across polls)
+        dims_by_plan: dict[str, tuple[float, float]] = {}
+        for plan_id, url in placement.innerspace_image_urls(project).items():
+            if url not in self._img_dims:
+                blob = await client.get_bytes(url)
+                size = placement.image_size(blob) if blob else None
+                if size:
+                    self._img_dims[url] = (float(size[0]), float(size[1]))
+            if url in self._img_dims:
+                dims_by_plan[plan_id] = self._img_dims[url]
+
+        fps, positions = placement.innerspace_placement("", project, dims_by_plan)
+        self._apply_positions(ap_by_mac, positions)
+        # assign each InnerSpace plan to the site of an AP placed on it
+        default_site = sites[0].id if sites else ""
+        for fp in fps:
+            owner = next((a for a in ap_by_mac.values() if a.floorplan_id == fp.id), None)
+            fp.site_id = owner.site_id if owner else default_site
+            if not any(existing.id == fp.id for existing in floorplans):
+                floorplans.append(fp)
 
     # -- lifecycle ---------------------------------------------------------
     async def _loop(self) -> None:

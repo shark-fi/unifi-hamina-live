@@ -65,6 +65,20 @@ class Client(BaseModel):
     is_guest: bool = False
 
 
+class FloorPlan(BaseModel):
+    """A floor plan an AP can be placed on. Pixel dimensions match the image
+    that was imported into Hamina, so live x,y line up with the import."""
+
+    id: str
+    site_id: str
+    name: str
+    source: str = Field(description="'legacy' (classic Maps) or 'innerspace'.")
+    width_px: float | None = None
+    height_px: float | None = None
+    meters_per_px: float | None = None
+    num_aps: int = 0
+
+
 class Site(BaseModel):
     id: str = Field(description="UniFi internal site name (stable id).")
     name: str = Field(description="Human site description.")
@@ -81,6 +95,10 @@ class Snapshot(BaseModel):
     sites: list[Site] = Field(default_factory=list)
     access_points: list[AccessPoint] = Field(default_factory=list)
     clients: list[Client] = Field(default_factory=list)
+    floorplans: list[FloorPlan] = Field(default_factory=list)
+
+    def floorplans_for_site(self, site_id: str) -> list[FloorPlan]:
+        return [f for f in self.floorplans if f.site_id == site_id]
 
     def aps_for_site(self, site_id: str) -> list[AccessPoint]:
         return [a for a in self.access_points if a.site_id == site_id]

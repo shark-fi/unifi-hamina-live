@@ -95,14 +95,20 @@ class OpenIntentRefresher:
         return self.last_run
 
     async def _loop(self) -> None:
+        interval = self._s.openintent_refresh_seconds
+        # Initial import: always generate once at startup.
+        await self.run_once()
+        if interval <= 0:
+            log.info("openintent: initial-import-only mode (positions flow live)")
+            return
         while not self._stop.is_set():
-            await self.run_once()
             try:
-                await asyncio.wait_for(
-                    self._stop.wait(), timeout=self._s.openintent_refresh_seconds
-                )
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
+            if self._stop.is_set():
+                break
+            await self.run_once()
 
     def start(self) -> None:
         if self._task is None:

@@ -129,11 +129,11 @@ def list_network_devices(
 
 @router.get("/networks/{network_id}/floorPlans")
 def list_floor_plans(network_id: str, snap: Snapshot = Depends(snapshot)):
-    # Placement/floor-plan geometry is not part of the live poll in this
-    # version. The scheduled OpenIntent refresh carries floor plans instead;
-    # see docs/HAMINA.md. Return an empty (valid) list rather than 404.
-    _site_for_network(network_id, snap)
-    return []
+    # Floor plans + live AP x,y come from the placement layer (classic Maps /
+    # InnerSpace). Floor-plan *images* still ride in the OpenIntent zip for the
+    # initial import; positions here update live. See docs/ARCHITECTURE.md.
+    site_id = _site_for_network(network_id, snap)
+    return [mapping.floor_plan(fp, snap) for fp in snap.floorplans_for_site(site_id)]
 
 
 @router.get("/networks/{network_id}/clients")

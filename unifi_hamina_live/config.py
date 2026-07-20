@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     )
     poll_interval_seconds: float = Field(default=30.0, ge=2.0)
 
+    # Collect AP floor-plan placement (x,y) live from classic Maps / InnerSpace,
+    # so an AP move flows through the live API instead of needing a full
+    # OpenIntent rebuild. The OpenIntent zip then only carries the initial
+    # import (floor-plan images + geometry).
+    placement_enabled: bool = Field(default=True)
+
     # Experimental: subscribe to the controller's WebSocket event stream for
     # push updates (client connect/disconnect/roam, AP up/down). The periodic
     # poll stays on as the authoritative reconciler. Undocumented UniFi API.
@@ -37,7 +43,9 @@ class Settings(BaseSettings):
         default="../unifi-hamina-export/unifi_export.py"
     )
     openintent_mode: str = Field(default="innerspace")
-    openintent_refresh_seconds: float = Field(default=900.0, ge=30.0)
+    # >0: regenerate the zip on that interval. 0: generate once at startup only
+    # (initial import) — AP positions then flow live via the placement layer.
+    openintent_refresh_seconds: float = Field(default=900.0, ge=0.0)
     openintent_output_dir: str = Field(default="./exports")
 
     # --- Server -----------------------------------------------------------

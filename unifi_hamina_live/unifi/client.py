@@ -145,6 +145,37 @@ class UniFiClient:
         """Active wireless/wired stations (stat/sta)."""
         return self._data(await self._get(f"{self._net}/s/{site}/stat/sta"))
 
+    # -- placement sources -------------------------------------------------
+    async def maps(self, site: str) -> dict:
+        """Classic Maps floor plans, keyed by _id. {} on Network versions that
+        dropped classic Maps. The collection name varies by version."""
+        for coll in ("rest/map", "list/map", "stat/map"):
+            try:
+                data = self._data(await self._get(f"{self._net}/s/{site}/{coll}"))
+            except UniFiError:
+                continue
+            if data:
+                return {m["_id"]: m for m in data if m.get("_id")}
+        return {}
+
+    async def innerspace_project(self) -> dict | None:
+        """The full InnerSpace project (floor plans + AP placement), or None if
+        InnerSpace is not present on this console."""
+        try:
+            body = await self._get("/proxy/innerspace/api/project?mode=2D")
+        except UniFiError:
+            return None
+        data = body.get("data") if isinstance(body, dict) else None
+        return data if isinstance(data, dict) and "shapes" in data else None
+
+    async def get_bytes(self, path: str) -> bytes | None:
+        """Fetch raw bytes (e.g. a floor-plan image). Path may be absolute-on-host."""
+        try:
+            resp = await self._client.get(path)
+        except httpx.HTTPError:
+            return None
+        return resp.content if resp.status_code < 400 else None
+
     # -- websocket event stream (experimental, undocumented) ---------------
     def events_ws_url(self, site: str) -> str:
         """wss:// URL for the controller event stream of a site."""

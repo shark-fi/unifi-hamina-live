@@ -57,19 +57,28 @@ transports — they are deliberately decoupled:
 | Layer | Source | Transport | Consumed as |
 |---|---|---|---|
 | **Telemetry** (clients, radio channel/power, AP up/down) | `stat/device`, `stat/sta` | poll + optional WebSocket push | live API / dashboard |
-| **Placement** (floor plans, AP x,y) | InnerSpace / Maps | *(not collected live yet)* | Meraki `floorPlans` + device `floorPlanId`/coords |
-| **Import bundle** (floor-plan images + geometry + config) | the OpenIntent exporter | scheduled subprocess | OpenIntent zip |
+| **Placement** (floor plans, AP x,y) | classic Maps (`stat/device`) or InnerSpace | poll (`unifi/placement.py`) | `/api/floorplans`, AP `x`/`y`, Meraki `floorPlans` |
+| **Import bundle** (floor-plan images + geometry) | the OpenIntent exporter | subprocess, once or scheduled | OpenIntent zip |
 
 Why this matters: **telemetry never touches OpenIntent**, and the WebSocket only
 accelerates the telemetry layer — so live client/radio churn never triggers a
-zip rebuild. **Placement is its own layer.** The model already carries
-`floorplan_id`/`x`/`y` and the Meraki `device` maps `floorPlanId`, so positions
-can be served through the live API the moment a *placement collector* populates
-them — meaning an AP move becomes a snapshot update a live consumer sees
-instantly, rather than a full OpenIntent regeneration. Today placement still
-rides in the periodic zip (the exporter owns all InnerSpace parsing, kept in one
-place); adding the live placement collector is the planned next step to fully
-separate "an AP moved" from "rebuild the import bundle".
+zip rebuild.
+
+**Placement is now its own live layer.** Each poll the collector reads AP
+positions — for free from `stat/device` (`map_id`, `x`, `y`) on classic Maps, or
+from the InnerSpace project (converted with the exporter's exact
+`scene_to_pixels` math; image dimensions are fetched once and cached). Positions
+land on `AccessPoint.floorplan_id`/`x`/`y` and floor plans in
+`Snapshot.floorplans`, exposed via the neutral API and the Meraki `floorPlans`
+endpoint. So **an AP move is a snapshot update a live consumer sees on the next
+poll** — no OpenIntent regeneration.
+
+The **OpenIntent zip is now only needed for the initial import** (the
+floor-plan *images* + geometry, which Hamina can't get from the placement feed).
+Set `OPENINTENT_REFRESH_SECONDS=0` to generate it once at startup and then rely
+on live positions. Floor-plan *images* still come from the exporter, so its
+InnerSpace/image parsing stays the single source of truth there; the bridge
+duplicates only the lightweight coordinate math it needs for live positions.
 
 ## The OpenIntent refresher
 
@@ -88,6 +97,7 @@ generated zip is served at `/openintent/latest.zip`. See
 | `unifi/client.py` | async UniFi HTTP client (login/CSRF/TLS, GET helpers, WS URL/auth) |
 | `unifi/normalize.py` | raw UniFi payload → neutral models |
 | `unifi/collector.py` | poll loop + snapshot ownership + WS event application |
+| `unifi/placement.py` | pure AP-position transforms (classic Maps + InnerSpace, tested) |
 | `unifi/events.py` | pure WebSocket-event → snapshot mutations (tested) |
 | `unifi/websocket.py` | experimental WS listener (push updates, off by default) |
 | `meraki/mapping.py` | neutral → Meraki v1 JSON |

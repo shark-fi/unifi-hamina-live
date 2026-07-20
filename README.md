@@ -94,6 +94,7 @@ controller) and reads, per site:
 | Access points | `…/stat/device` | model, MAC, IP, state, uptime, firmware, per-radio **channel / width / TX power / client count / channel utilization** |
 | Clients | `…/stat/sta` | per client: associated **AP**, SSID, band, channel, RSSI/signal, TX/RX rates and bytes, uptime |
 | Sites | `…/self/sites` | site inventory + rollup counts |
+| Placement | classic Maps (`stat/device` x,y) or InnerSpace | floor plans + **live AP x,y** — so an AP move flows through the API without an OpenIntent rebuild |
 
 All reads are GETs; the only write is the login POST. Poll failures are logged
 and the last good snapshot is kept — the server never falls over because the
@@ -119,12 +120,22 @@ client needs, backed by live UniFi data. Auth via `X-Cisco-Meraki-API-Key` or
 `/api/summary`, `POST /api/refresh`. Unauthenticated; meant to sit behind your
 own network and power the dashboard.
 
+### Live AP placement — `/api/floorplans`
+Floor plans and per-AP `x`/`y` are collected every poll from classic Maps or
+InnerSpace (`unifi/placement.py`), in the **same pixel space the OpenIntent
+exporter uses**, so live positions line up with what Hamina imported. Positions
+live on each access point (`/api/access-points`, `/api/summary`) and on the
+Meraki `floorPlans` endpoint. Because positions flow live, **an AP move no
+longer needs an OpenIntent rebuild** — set `OPENINTENT_REFRESH_SECONDS=0` to
+generate the zip once for the initial import and rely on live positions after.
+
 ### Scheduled OpenIntent refresh — `/openintent`
 Set `OPENINTENT_REFRESH_ENABLED=true` and point `OPENINTENT_EXPORTER_PATH` at
-`unifi_export.py` from the companion repo. It re-runs the exporter every
-`OPENINTENT_REFRESH_SECONDS` and serves the newest zip at
-`/openintent/latest.zip` for re-import into Hamina Planner. This is the only
-path that works with Hamina **today** — see [docs/HAMINA.md](docs/HAMINA.md).
+`unifi_export.py` from the companion repo. With `OPENINTENT_REFRESH_SECONDS>0`
+it re-runs the exporter on that interval; with `=0` it generates once at startup
+(**initial import** — floor-plan images + geometry) and then leaves positions to
+the live placement layer. The newest zip is served at `/openintent/latest.zip`
+for import into Hamina Planner — see [docs/HAMINA.md](docs/HAMINA.md).
 
 ## Configuration
 

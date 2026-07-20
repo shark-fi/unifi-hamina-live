@@ -11,7 +11,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..deps import collector, snapshot
-from ..models import AccessPoint, Client, Site, Snapshot
+from ..models import AccessPoint, Client, FloorPlan, Site, Snapshot
 from ..unifi.collector import Collector
 
 router = APIRouter(prefix="/api", tags=["neutral"])
@@ -54,6 +54,18 @@ def access_point(serial: str, snap: Snapshot = Depends(snapshot)):
     return ap
 
 
+@router.get("/floorplans", response_model=list[FloorPlan])
+def floorplans(
+    site: str | None = Query(default=None, description="Filter by UniFi site id."),
+    snap: Snapshot = Depends(snapshot),
+):
+    """Floor plans discovered from classic Maps / InnerSpace. AP positions
+    (floorplan_id, x, y) live on each access point — see /api/access-points."""
+    if site:
+        return snap.floorplans_for_site(site)
+    return snap.floorplans
+
+
 @router.get("/clients", response_model=list[Client])
 def clients(
     site: str | None = Query(default=None),
@@ -82,6 +94,9 @@ def summary(snap: Snapshot = Depends(snapshot)):
                 "model": ap.model,
                 "online": ap.online,
                 "num_clients": ap.num_clients,
+                "floorplan_id": ap.floorplan_id,
+                "x": ap.x,
+                "y": ap.y,
                 "radios": [
                     {
                         "band": r.band,
