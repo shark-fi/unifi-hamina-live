@@ -13,11 +13,17 @@
 #   --start           start the service after installing (implies --systemd)
 #   --no-openintent   skip fetching the OpenIntent exporter (live API only)
 #   --exporter-dir P  where to place the exporter        (default: sibling of --dir)
+#   -y | --non-interactive  never prompt; leave .env values as-is
+#   --interactive     force prompts even when piped (reads from /dev/tty)
 #   -h | --help       show this help
 #
 # By default the installer also fetches the companion OpenIntent exporter
 # (unifi-hamina-export) and enables the scheduled refresh, wiring up the full
 # Hamina integration: live Meraki-compatible API + near-live OpenIntent zip.
+#
+# When run on a terminal it prompts for any UniFi .env values that are still
+# empty or at their example defaults (host / username / password), and it
+# generates a random MERAKI_COMPAT_API_KEY. Use --non-interactive to skip.
 #
 set -euo pipefail
 
@@ -32,6 +38,7 @@ EXPORTER_URL="${EXPORTER_URL:-https://github.com/shark-fi/unifi-hamina-export.gi
 EXPORTER_BRANCH="${EXPORTER_BRANCH:-main}"
 EXPORTER_DIR="${EXPORTER_DIR:-}"
 WITH_OPENINTENT=1
+INTERACTIVE=auto   # auto | yes | no
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -52,14 +59,53 @@ clone_or_update() {
   fi
 }
 
-# set_env KEY VALUE FILE — replace an existing KEY= line or append it.
+# set_env KEY VALUE FILE — replace an existing KEY= line or append it. Avoids
+# sed so the value may contain any character (slashes, &, |, quotes in passwords).
 set_env() {
-  local key="$1" val="$2" file="$3"
-  if grep -qE "^${key}=" "$file"; then
-    sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+  local key="$1" val="$2" file="$3" tmp
+  tmp="$(mktemp)"
+  grep -vE "^${key}=" "$file" > "$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  cat "$tmp" > "$file"
+  rm -f "$tmp"
+}
+
+# env_get KEY — current value of KEY in ./.env ("" if unset).
+env_get() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-; }
+
+# is_placeholder KEY — true when the value is empty or the example default.
+is_placeholder() {
+  case "$1=$(env_get "$1")" in
+    "$1=") return 0 ;;
+    UNIFI_HOST=https://192.168.1.1) return 0 ;;
+    UNIFI_USERNAME=local-admin) return 0 ;;
+    UNIFI_PASSWORD=change-me) return 0 ;;
+    MERAKI_COMPAT_API_KEY=replace-with-a-long-random-token) return 0 ;;
+  esac
+  return 1
+}
+
+# gen_token — a long random hex string for the Meraki facade key.
+gen_token() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 24
   else
-    printf '%s=%s\n' "$key" "$val" >> "$file"
+    LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | head -c 48
   fi
+}
+
+# ask_env KEY LABEL SECRET — prompt on the tty; Enter keeps the current value.
+ask_env() {
+  local key="$1" label="$2" secret="${3:-0}" current ans
+  current="$(env_get "$key")"
+  if [ "$secret" = "1" ]; then
+    printf '  %s [Enter=keep current]: ' "$label" > "$TTY"
+    read -rs ans < "$TTY"; printf '\n' > "$TTY"
+  else
+    printf '  %s [%s]: ' "$label" "$current" > "$TTY"
+    read -r ans < "$TTY"
+  fi
+  [ -n "$ans" ] && set_env "$key" "$ans" .env
 }
 
 while [ $# -gt 0 ]; do
@@ -73,6 +119,8 @@ while [ $# -gt 0 ]; do
     --openintent)     WITH_OPENINTENT=1; shift ;;
     --exporter-dir)   EXPORTER_DIR="$2"; shift 2 ;;
     --exporter-branch) EXPORTER_BRANCH="$2"; shift 2 ;;
+    -y|--non-interactive) INTERACTIVE=no; shift ;;
+    --interactive)    INTERACTIVE=yes; shift ;;
     -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -134,9 +182,40 @@ FRESH_ENV=0
 if [ ! -f .env ]; then
   cp .env.example .env
   FRESH_ENV=1
-  warn "created .env from .env.example — EDIT IT (UNIFI_HOST / UNIFI_USERNAME / UNIFI_PASSWORD)"
+  log "created .env from .env.example"
 else
-  log ".env already present — leaving it untouched"
+  log ".env already present — keeping your values"
+fi
+
+# Decide whether we can prompt: need a readable tty, unless forced off.
+TTY=""
+[ -r /dev/tty ] && TTY=/dev/tty
+DO_PROMPT=0
+case "$INTERACTIVE" in
+  yes) DO_PROMPT=1; [ -n "$TTY" ] || die "--interactive given but no /dev/tty available" ;;
+  no)  DO_PROMPT=0 ;;
+  auto) [ -n "$TTY" ] && DO_PROMPT=1 ;;
+esac
+
+# Prompt only for the UniFi values that are still empty / at example defaults.
+if [ "$DO_PROMPT" -eq 1 ]; then
+  if is_placeholder UNIFI_HOST || is_placeholder UNIFI_USERNAME || is_placeholder UNIFI_PASSWORD; then
+    log "let's fill in the UniFi connection ($INSTALL_DIR/.env):"
+    is_placeholder UNIFI_HOST     && ask_env UNIFI_HOST     "UniFi console URL"       0
+    is_placeholder UNIFI_USERNAME && ask_env UNIFI_USERNAME "UniFi local-admin user"  0
+    is_placeholder UNIFI_PASSWORD && ask_env UNIFI_PASSWORD "UniFi password"          1
+  fi
+else
+  if is_placeholder UNIFI_HOST || is_placeholder UNIFI_USERNAME || is_placeholder UNIFI_PASSWORD; then
+    warn "UniFi values in $INSTALL_DIR/.env are unset — edit UNIFI_HOST / UNIFI_USERNAME / UNIFI_PASSWORD before starting"
+  fi
+fi
+
+# Always ensure the Meraki facade has a real key (generate if still the default).
+if is_placeholder MERAKI_COMPAT_API_KEY; then
+  _key="$(gen_token)"
+  set_env MERAKI_COMPAT_API_KEY "$_key" .env
+  log "generated MERAKI_COMPAT_API_KEY: $_key"
 fi
 
 # --- OpenIntent exporter (full Hamina integration) ------------------------
@@ -197,7 +276,7 @@ cat <<EOF
 $(printf '\033[1;32m✓ installed\033[0m')  unifi-hamina-live in $INSTALL_DIR
 
 Next steps:
-  1. Edit $INSTALL_DIR/.env  (UNIFI_HOST / UNIFI_USERNAME / UNIFI_PASSWORD)
+  1. Review $INSTALL_DIR/.env  (UNIFI_HOST / UNIFI_USERNAME / UNIFI_PASSWORD)
 EOF
 if [ "$DO_SYSTEMD" -eq 1 ]; then
   cat <<EOF

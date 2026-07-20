@@ -47,10 +47,17 @@ By default the exporter lands next to the install dir and the installer writes
 `OPENINTENT_EXPORTER_PATH` + `OPENINTENT_REFRESH_ENABLED=true` into a fresh
 `.env`. The fresh import zip is then served at `/openintent/latest.zip`.
 
-Then edit the `.env` it created and restart. Installer flags: `--dir PATH`,
-`--branch NAME`, `--systemd`, `--user NAME`, `--start`, `--no-openintent`
-(live API only), `--exporter-dir PATH` (`./install.sh --help`). Running it as a
-service is covered under [Run as a systemd service](#run-as-a-systemd-service).
+On a terminal the installer **prompts** for any UniFi `.env` values still empty
+or at their example defaults (host / username / password) and **generates a
+random `MERAKI_COMPAT_API_KEY`** — so a fresh install is ready to run without
+hand-editing `.env`. Piped installs (`curl | bash`) prompt too, reading from
+`/dev/tty`; pass `--non-interactive` (`-y`) to skip prompting and leave `.env`
+as-is, or `--interactive` to force it.
+
+Installer flags: `--dir PATH`, `--branch NAME`, `--systemd`, `--user NAME`,
+`--start`, `--no-openintent` (live API only), `--exporter-dir PATH`,
+`--non-interactive`/`-y`, `--interactive` (`./install.sh --help`). Running it as
+a service is covered under [Run as a systemd service](#run-as-a-systemd-service).
 
 ## Quick start (manual)
 
