@@ -1,0 +1,22 @@
+# Full-stack override: live API + dashboard, Catalyst facade + Cloudflare tunnel,
+# and the scheduled OpenIntent refresh (companion exporter mounted in).
+#
+# Usage:
+#   git clone https://github.com/shark-fi/unifi-hamina-live.git
+#   git clone https://github.com/shark-fi/unifi-hamina-export.git   # sibling dir
+#   cd unifi-hamina-live
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   cp .env.example .env      # fill it in (see the runbook)
+#   docker compose --profile tunnel up -d --build
+#
+# Compose auto-merges docker-compose.override.yml over docker-compose.yml.
+services:
+  unifi-hamina-live:
+    volumes:
+      # the companion exporter (stdlib-only) — read-only mount
+      - ../unifi-hamina-export:/exporter:ro
+      # persist generated OpenIntent zips / CSVs on the host
+      - ./exports:/app/exports
+    environment:
+      # must match the mount path above
+      OPENINTENT_EXPORTER_PATH: /exporter/unifi_export.py
