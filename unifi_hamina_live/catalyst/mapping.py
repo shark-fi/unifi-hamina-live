@@ -58,10 +58,13 @@ def wrap(data) -> dict:
 def _site(*, id, name, name_path, id_path, parent_id, location_attrs, extra_ns=None) -> dict:
     info = list(extra_ns or [])
     info.append({"nameSpace": "Location", "attributes": location_attrs})
+    # Field set + order matches a real DNA Center GetSite object exactly
+    # (verified against a recorded appliance response). Every field a strict
+    # client might read must be present, or it NPEs on the first site.
     return {
         "parentId": parent_id,
-        "systemGroup": False,       # real DNA Center sites always have this;
-                                    # a client unboxing a missing Boolean NPEs.
+        "systemGroup": False,
+        "groupTypeList": ["SITE"],
         "additionalInfo": info,
         "name": name,
         "instanceTenantId": _TENANT,
