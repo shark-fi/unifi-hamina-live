@@ -171,7 +171,11 @@ def get_task(task_id: str, request: Request):
     job = request.app.state.catalyst_maps.by_task(task_id)
     if job is None:
         return _dna_404(f"No task {task_id}")
-    body, done = maps.task_response(job, _cfg(request).catalyst_export_delay_ms)
+    cfg = _cfg(request)
+    if cfg.catalyst_maps_export_error:
+        log.info("catalyst maps/export task %s poll -> FAILED (skip image)", task_id)
+        return maps.task_error_response(job)
+    body, done = maps.task_response(job, cfg.catalyst_export_delay_ms)
     log.info("catalyst maps/export task %s poll -> %s", task_id, "DONE" if done else "running")
     return body
 

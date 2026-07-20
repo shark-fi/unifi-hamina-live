@@ -35,7 +35,8 @@ def cat_client():
 
     settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
                         catalyst_password="secret", catalyst_export_delay_ms=0,
-                        catalyst_advertise_floor_maps=True)
+                        catalyst_advertise_floor_maps=True,
+                        catalyst_maps_export_error=False)
     app = create_app(settings=settings,
                      collector=FakeCollector(_snapshot(), images={"p1": _PNG}))
     with TestClient(app) as c:
@@ -194,6 +195,26 @@ def test_unimplemented_is_captured(cat_client):
     # a matched endpoint is recorded as implemented
     assert any(p[1] == "/dna/intent/api/v1/network-device" or p[2] for p in paths) or True
     assert any(x["path"] == "/dna/system/api/v1/auth/token" for x in cap["requests"])
+
+
+def test_maps_export_error_mode_is_default():
+    """Default: the export task reports failure so Hamina skips the image and
+    proceeds to the device sync instead of waiting for an undeliverable map."""
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret")  # export_error defaults True
+    app = create_app(settings=settings, collector=FakeCollector(_snapshot()))
+    with TestClient(app) as c:
+        tok = _token(c).json()["Token"]
+        h = {"X-Auth-Token": tok}
+        floor_id = mapping.floor_id_for(_snapshot().floorplans[0])
+        tid = c.post(f"/dna/intent/api/v1/maps/export/{floor_id}",
+                     headers=h).json()["response"]["taskId"]
+        task = c.get(f"/dna/intent/api/v1/task/{tid}", headers=h).json()["response"]
+        assert task["isError"] is True and "failureReason" in task
 
 
 def test_floors_omit_map_by_default():

@@ -97,6 +97,31 @@ def submit_response(job: dict) -> dict:
     }
 
 
+def task_error_response(job: dict) -> dict:
+    """Report the maps/export task as FAILED, so Hamina stops waiting for a
+    download it can't complete and (ideally) skips the image, continuing to the
+    device sync. Shaped like a real failed DNAC task (isError + failureReason)."""
+    ts = job["ts_ms"]
+    end = ts + 250
+    msg = "NCMPFRA10024: Unable to export maps. No exportable map for this floor."
+    return {
+        "response": {
+            "version": end,
+            "endTime": end,
+            "startTime": ts,
+            "lastUpdate": end,
+            "serviceType": "Maps Service",
+            "username": "admin",
+            "isError": True,
+            "failureReason": msg,
+            "progress": msg,
+            "instanceTenantId": mapping._TENANT,
+            "id": job["task_id"],
+        },
+        "version": "1.0",
+    }
+
+
 def task_response(job: dict, delay_ms: int = 0) -> tuple[dict, bool]:
     """A DNAC file task, matched field-for-field to a real appliance (verified
     against a Command Runner task on the sandbox). Returns (body, done).

@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     # advertised WITHOUT a map: the floor + live AP data import cleanly and the
     # floor image is added once by hand. Flip to True if maps/export is fixed.
     catalyst_advertise_floor_maps: bool = Field(default=False)
+    # Hamina exports every synced floor's map regardless of the flag above, and
+    # the archive download can't be completed against the facade — so the export
+    # task times out and the whole vendor sync stalls before reaching the device
+    # (AP) data. Report the export task as FAILED instead: a real Catalyst map
+    # export can fail, and a well-behaved sync then skips the image and proceeds
+    # to the device sync. Set False to go back to reporting success (waits for a
+    # download that never happens).
+    catalyst_maps_export_error: bool = Field(default=True)
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)
