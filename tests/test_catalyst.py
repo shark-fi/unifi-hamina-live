@@ -72,8 +72,9 @@ def test_site_hierarchy_shape(cat_client):
     # ids are real UUIDs, and siteHierarchy is a 3-segment UUID path
     _uuid.UUID(floor["id"])
     assert len(floor["siteHierarchy"].split("/")) == 3
-    # parentId of Global is null
-    assert next(s for s in sites if s["name"] == "Global")["parentId"] is None
+    # every site carries systemGroup; root parentId is "" (not null)
+    assert all("systemGroup" in s for s in sites)
+    assert next(s for s in sites if s["name"] == "Global")["parentId"] == ""
     geo = next(a["attributes"] for a in floor["additionalInfo"] if a["nameSpace"] == "mapGeometry")
     # 1000px * 0.05 m/px = 50 m wide, 800 * 0.05 = 40 m long
     assert geo["width"] == "50.0" and geo["length"] == "40.0"

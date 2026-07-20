@@ -60,6 +60,8 @@ def _site(*, id, name, name_path, id_path, parent_id, location_attrs, extra_ns=N
     info.append({"nameSpace": "Location", "attributes": location_attrs})
     return {
         "parentId": parent_id,
+        "systemGroup": False,       # real DNA Center sites always have this;
+                                    # a client unboxing a missing Boolean NPEs.
         "additionalInfo": info,
         "name": name,
         "instanceTenantId": _TENANT,
@@ -71,8 +73,8 @@ def _site(*, id, name, name_path, id_path, parent_id, location_attrs, extra_ns=N
 
 def site_hierarchy(snap: Snapshot) -> list[dict]:
     sites = [_site(id=GLOBAL_ID, name="Global", name_path="Global",
-                   id_path=GLOBAL_ID, parent_id=None,
-                   location_attrs={"type": "area"})]
+                   id_path=GLOBAL_ID, parent_id="",   # root parentId is "" not null
+                   location_attrs={"addressInheritedFrom": GLOBAL_ID, "type": "area"})]
     for site in snap.sites:
         bid = building_id(site.id)
         sites.append(_site(
