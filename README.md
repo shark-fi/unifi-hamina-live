@@ -23,7 +23,27 @@ at it. Ships three surfaces over one live poll:
 Companion to [**unifi-hamina-export**](https://github.com/shark-fi/unifi-hamina-export)
 (the static OpenIntent exporter). This repo is the *live* side.
 
-## Quick start
+## Install
+
+**One command** (clones to `/opt/unifi-hamina-live`, builds a venv, installs, seeds `.env`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shark-fi/unifi-hamina-live/main/install.sh | bash
+```
+
+Or from a checkout — and install it as a service in the same step:
+
+```bash
+git clone https://github.com/shark-fi/unifi-hamina-live.git
+cd unifi-hamina-live
+./install.sh --systemd --start        # enable + start a systemd unit (needs root/sudo)
+```
+
+Then edit the `.env` it created and restart. Installer flags: `--dir PATH`,
+`--branch NAME`, `--systemd`, `--user NAME`, `--start` (`./install.sh --help`).
+Running it as a service is covered under [Run as a systemd service](#run-as-a-systemd-service).
+
+## Quick start (manual)
 
 ```bash
 cp .env.example .env      # then edit UNIFI_HOST / UNIFI_USERNAME / UNIFI_PASSWORD
@@ -88,6 +108,29 @@ path that works with Hamina **today** — see [docs/HAMINA.md](docs/HAMINA.md).
 All via environment / `.env` — see [`.env.example`](.env.example) for the full
 annotated list (UniFi connection, poll interval, Meraki facade key, OpenIntent
 refresh, host/port).
+
+## Run as a systemd service
+
+`./install.sh --systemd` renders [`deploy/unifi-hamina-live.service`](deploy/unifi-hamina-live.service)
+with your install path and user, drops it in `/etc/systemd/system/`, and enables
+it. To do it by hand instead:
+
+```bash
+sudo cp deploy/unifi-hamina-live.service /etc/systemd/system/
+sudo sed -i "s#__INSTALL_DIR__#$PWD#g; s#__USER__#$(id -un)#g" \
+  /etc/systemd/system/unifi-hamina-live.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now unifi-hamina-live
+```
+
+The unit runs `.venv/bin/python -m unifi_hamina_live`, reads config from
+`.env` via `EnvironmentFile`, and restarts on failure. Manage it with:
+
+```bash
+sudo systemctl status unifi-hamina-live
+sudo journalctl -u unifi-hamina-live -f      # live logs
+sudo systemctl restart unifi-hamina-live     # after editing .env
+```
 
 ## Run with Docker
 
