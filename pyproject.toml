@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unifi-hamina-live"
+version = "0.1.0"
+description = "Live UniFi Wi-Fi telemetry served in a Meraki-Dashboard-API-compatible shape for Hamina Live, plus scheduled OpenIntent refresh."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SharkFi" }]
+keywords = ["unifi", "hamina", "meraki", "wifi", "wireless", "heatmap", "openintent"]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.26",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+unifi-hamina-live = "unifi_hamina_live.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/shark-fi/unifi-hamina-live"
+"Companion exporter" = "https://github.com/shark-fi/unifi-hamina-export"
+
+[tool.setuptools.packages.find]
+include = ["unifi_hamina_live*"]
+
+[tool.setuptools.package-data]
+unifi_hamina_live = ["web/*.html"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

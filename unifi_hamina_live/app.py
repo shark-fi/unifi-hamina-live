@@ -1,0 +1,75 @@
+"""FastAPI application factory.
+
+Wires the UniFi collector (background poll loop) and, when enabled, the
+scheduled OpenIntent refresher into the app lifespan, and mounts:
+
+  * ``/``          live dashboard
+  * ``/api``       vendor-neutral REST API
+  * ``/api/v1``    Meraki Dashboard API v1 compatible facade
+  * ``/openintent``scheduled OpenIntent artifact (when enabled)
+  * ``/docs``      OpenAPI docs
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+
+from .api.router import router as neutral_router
+from .config import Settings, get_settings
+from .meraki.router import router as meraki_router
+from .refresh.openintent import OpenIntentRefresher
+from .refresh.router import router as openintent_router
+from .unifi.collector import Collector
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
+
+_DASHBOARD = (Path(__file__).parent / "web" / "dashboard.html").read_text(encoding="utf-8")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings: Settings = app.state.settings
+    collector: Collector = app.state.collector
+    collector.start()
+    if settings.openintent_refresh_enabled:
+        app.state.refresher = OpenIntentRefresher(settings)
+        app.state.refresher.start()
+    try:
+        yield
+    finally:
+        await collector.stop()
+        refresher = getattr(app.state, "refresher", None)
+        if refresher is not None:
+            await refresher.stop()
+
+
+def create_app(settings: Settings | None = None, collector: Collector | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    app = FastAPI(
+        title="unifi-hamina-live",
+        version="0.1.0",
+        summary="Live UniFi Wi-Fi telemetry in a Meraki-compatible shape for Hamina Live.",
+        lifespan=lifespan,
+    )
+    app.state.settings = settings
+    app.state.collector = collector or Collector(settings)
+
+    app.include_router(neutral_router)
+    app.include_router(meraki_router)
+    app.include_router(openintent_router)
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def dashboard() -> str:
+        return _DASHBOARD
+
+    return app
+
+
+app = create_app()

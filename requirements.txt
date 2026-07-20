@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.26
+pydantic>=2.5
+pydantic-settings>=2.1

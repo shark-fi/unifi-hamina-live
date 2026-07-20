@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UniFi Live — Hamina bridge</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --line: #232a3a; --text: #e6e9ef;
+    --muted: #8b93a7; --accent: #4c9aff; --ok: #35c46b; --off: #e5533c;
+    --chip: #1b2130;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f7fb; --panel: #ffffff; --line: #e3e7ef; --text: #1b2130;
+      --muted: #5b6478; --accent: #2563eb; --ok: #12904a; --off: #c0341d;
+      --chip: #eef1f7;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 18px 22px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .status { margin-left: auto; display: flex; gap: 16px; align-items: center;
+    color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+    margin-right: 6px; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--off); }
+  main { padding: 18px 22px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; }
+  .card .n { font-size: 26px; font-weight: 680; }
+  .card .l { color: var(--muted); font-size: 12px; text-transform: uppercase;
+    letter-spacing: .04em; }
+  .table-wrap { overflow-x: auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; min-width: 760px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line);
+    white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .03em; position: sticky; top: 0;
+    background: var(--panel); }
+  tr:last-child td { border-bottom: none; }
+  .name { font-weight: 600; }
+  .muted { color: var(--muted); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--chip); font-size: 12px; }
+  .pill.on { color: var(--ok); } .pill.off { color: var(--off); }
+  .radio { display: inline-block; margin-right: 6px; padding: 1px 7px;
+    border-radius: 6px; background: var(--chip); font-size: 12px; }
+  .clients { font-variant-numeric: tabular-nums; font-weight: 650; }
+  footer { padding: 14px 22px; color: var(--muted); font-size: 12px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>UniFi Live</h1>
+  <span class="sub">access points &amp; connected clients, straight from the console</span>
+  <div class="status">
+    <span id="conn"><span class="dot" id="dot"></span><span id="connText">connecting…</span></span>
+    <span id="age">—</span>
+  </div>
+</header>
+<main>
+  <div class="cards">
+    <div class="card"><div class="n" id="cSites">—</div><div class="l">Sites</div></div>
+    <div class="card"><div class="n" id="cAps">—</div><div class="l">Access points</div></div>
+    <div class="card"><div class="n" id="cOnline">—</div><div class="l">APs online</div></div>
+    <div class="card"><div class="n" id="cClients">—</div><div class="l">Clients</div></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Access point</th><th>Model</th><th>Site</th><th>Status</th>
+            <th>Radios (band · ch · dBm · clients)</th><th>Clients</th></tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<footer>
+  Meraki-compatible API at <code>/api/v1</code> · neutral API at <code>/api</code> ·
+  OpenAPI docs at <a href="/docs">/docs</a>. Auto-refreshes every 5s.
+</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+
+function setConn(ok, text) {
+  const dot = $("dot");
+  dot.className = "dot " + (ok ? "ok" : "bad");
+  $("connText").textContent = text;
+}
+
+function radios(rs) {
+  if (!rs || !rs.length) return '<span class="muted">—</span>';
+  return rs.map(r => {
+    const ch = r.channel ?? "–";
+    const pw = r.tx_power_dbm ?? "–";
+    return `<span class="radio">${r.band}G · ch ${ch} · ${pw}dBm · ${r.num_clients}</span>`;
+  }).join("");
+}
+
+async function tick() {
+  try {
+    const [h, s] = await Promise.all([
+      fetch("/api/health").then(r => r.json()),
+      fetch("/api/summary").then(r => r.json()),
+    ]);
+    setConn(h.ok, h.ok ? "live" : ("error: " + (h.error || "unknown")));
+    $("age").textContent = h.age_seconds != null ? `updated ${h.age_seconds}s ago` : "—";
+    $("cSites").textContent = h.sites;
+    $("cAps").textContent = h.access_points;
+    $("cClients").textContent = h.clients;
+
+    const aps = (s.access_points || []).slice().sort((a, b) => b.num_clients - a.num_clients);
+    $("cOnline").textContent = aps.filter(a => a.online).length;
+    $("rows").innerHTML = aps.length ? aps.map(a => `
+      <tr>
+        <td class="name">${esc(a.name)}<div class="muted">${a.mac}</div></td>
+        <td>${esc(a.model)}</td>
+        <td class="muted">${esc(a.site_id)}</td>
+        <td><span class="pill ${a.online ? "on" : "off"}">${a.online ? "online" : "offline"}</span></td>
+        <td>${radios(a.radios)}</td>
+        <td class="clients">${a.num_clients}</td>
+      </tr>`).join("")
+      : `<tr><td colspan="6" class="muted">No access points reported yet.</td></tr>`;
+  } catch (e) {
+    setConn(false, "bridge unreachable");
+  }
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

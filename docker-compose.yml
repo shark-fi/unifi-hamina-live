@@ -1,0 +1,15 @@
+services:
+  unifi-hamina-live:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
+    # For the scheduled OpenIntent refresh, mount the companion exporter and
+    # point OPENINTENT_EXPORTER_PATH at it, and persist the output:
+    # volumes:
+    #   - ../unifi-hamina-export:/exporter:ro
+    #   - ./exports:/app/exports
+    # environment:
+    #   OPENINTENT_EXPORTER_PATH: /exporter/unifi_export.py
