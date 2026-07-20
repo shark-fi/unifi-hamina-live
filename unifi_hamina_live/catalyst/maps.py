@@ -121,11 +121,17 @@ def task_response(job: dict, delay_ms: int = 0) -> tuple[dict, bool]:
         "id": job["task_id"],
     }
     if done:
+        fid = job["file_id"]
         resp.update({
             "version": end,
             "endTime": end,
             "lastUpdate": end,
-            "progress": json.dumps({"fileId": job["file_id"]}, separators=(",", ":")),
+            # Convey the download pointer BOTH ways: fileId in progress (Command
+            # Runner style) AND additionalStatusURL (the generic file-task style)
+            # — Hamina ignored progress-only, so maps/export likely wants the URL.
+            "progress": json.dumps({"fileId": fid}, separators=(",", ":")),
+            "data": fid,
+            "additionalStatusURL": f"/dna/intent/api/v1/file/{fid}",
         })
     else:
         resp.update({

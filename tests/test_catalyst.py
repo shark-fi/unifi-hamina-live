@@ -156,15 +156,17 @@ def test_maps_export_task_flow_and_archive(cat_client):
     #    JSON, no additionalStatusURL) exactly like a real appliance
     task = cat_client.get(url, headers=h).json()["response"]
     assert task["isError"] is False and task["endTime"] == task["version"]
-    assert "additionalStatusURL" not in task
+    # download pointer offered both ways: compact fileId in progress AND a
+    # full additionalStatusURL, so either client convention resolves
     assert '{"fileId":"' in task["progress"]        # compact, no space
     file_id = json.loads(task["progress"])["fileId"]
+    assert task["additionalStatusURL"] == f"/dna/intent/api/v1/file/{file_id}"
 
     # a completed task is immutable: a second poll is byte-identical
     assert cat_client.get(url, headers=h).json()["response"] == task
 
-    # 3. client builds /file/{fileId} itself and downloads the archive
-    arch = cat_client.get(f"/dna/intent/api/v1/file/{file_id}", headers=h)
+    # 3. download the archive via the advertised URL
+    arch = cat_client.get(task["additionalStatusURL"], headers=h)
     assert arch.status_code == 200 and arch.headers["content-type"] == "application/octet-stream"
     tar = tarfile.open(fileobj=io.BytesIO(arch.content), mode="r:gz")
     names = tar.getnames()

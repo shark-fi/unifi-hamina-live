@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # client polling the task sees it "running" before it goes "done". Simulate
     # that window (ms) — an instant-done task can trip a client that waits for
     # the running->done transition. 0 = complete immediately (used in tests).
-    catalyst_export_delay_ms: int = Field(default=4000, ge=0)
+    catalyst_export_delay_ms: int = Field(default=1000, ge=0)
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)
