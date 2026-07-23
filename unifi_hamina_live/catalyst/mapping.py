@@ -267,32 +267,24 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
     }
 
 
-def _assurance_radios(ap: AccessPoint) -> list[dict]:
-    out = []
-    for i, r in enumerate(ap.radios):
-        out.append({
-            "slotId": i,
-            "radioBand": r.band,
-            "channel": r.channel,
-            "txPower": int(r.tx_power_dbm) if r.tx_power_dbm is not None else None,
-            "clientCount": float(r.num_clients),
-        })
-    return out
-
-
 def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
     """One entry in the Assurance networkDevices `data` list, wrapped in
     `{"values": {...}}` as on a real appliance. `uuid` matches the
     network-device / accessPointPositions id so Hamina correlates the AP to its
-    placement; `floorId` ties it to the floor. Health values default to good."""
+    placement; `floorId` ties it to the floor. The full field set (with sane
+    defaults) mirrors a real appliance so nothing required is missing; `radios`
+    and `neighbors` are type-safe empty arrays (Hamina gets radio data from
+    accessPointPositions, so their exact shape here is not needed)."""
     fp = _ap_floor(ap, snap)
     floor_id = floor_id_for(fp) if fp else ""
     score = 10.0 if ap.online else 1.0
+    mac = ap.mac
     return {"values": {
         "uuid": ap_uuid(ap),
         "name": ap.name,
-        "deviceMacAddress": ap.mac,
-        "macAddress": ap.mac,
+        "deviceMacAddress": mac,
+        "macAddress": mac,
+        "owningEntityId": mac,
         "deviceFamily": "Unified AP",
         "deviceModel": ap.model,
         "deviceSeries": ap.model,
@@ -300,23 +292,68 @@ def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
         "deviceRole": "ACCESS",
         "collectionStatus": "Managed",
         "manageabilityState": "Managed",
+        "maintenanceMode": False,
         "communicationState": "UP" if ap.online else "DOWN",
         "reachabilityStatus": "REACHABLE" if ap.online else "UNREACHABLE",
+        "isDeleted": False,
         "softwareVersion": ap.firmware or "",
         "osVersion": ap.firmware or "",
         "serialNumber": ap.serial,
         "apMode": "Local",
+        "apProtocol": 4.0,
+        "protocol": "4",
+        "opState": "4",
         "floorId": floor_id,
         "siteUUID": floor_id,
-        "isDeleted": False,
-        "maintenanceMode": False,
+        "siteHierarchyGraphId": f"/{floor_id}/" if floor_id else "/",
+        "siteHierarchy": "",
+        "buildingId": "",
+        "areaId": "",
+        "ancestorSiteId": "",
+        "parentSiteId": "",
+        "deviceGroupHierarchyId": "/",
+        "clCount": float(ap.num_clients),
+        "cpu": 0.0,
+        "memory": 0.0,
         "overallScore": score,
+        "systemScore": score,
         "utilizationScore": score,
         "interferenceScore": score,
         "channelAirQualityScore": score,
-        "clCount": float(ap.num_clients),
+        "errorScore": score,
+        "dpScore": score,
+        "cpScore": -1.0,
         "healthScore": [{"healthType": "OVERALL", "reason": "", "score": score}],
-        "radios": _assurance_radios(ap),
+        "powerStatus": "PoE / Full Power",
+        "powerMode": "HIGH_POWER",
+        "powerType": "PoE+",
+        "powerSaveMode": 1.0,
+        "wifi6Status": 2.0,
+        "homeApEnabled": "false",
+        "ledFlashEnabled": False,
+        "ledFlashSeconds": 0,
+        "ringStatus": False,
+        "stackType": "NA",
+        "subMode": "None",
+        "resetReason": "--",
+        "ulComplianceState": "Not Applicable",
+        "ulRequired": False,
+        "apMisconfigReason": "None",
+        "groupUUID": "",
+        "rfTagName": "",
+        "siteTagName": "",
+        "policyTagName": "",
+        "switchName": "",
+        "switchPort": "",
+        "connectedWlcName": "",
+        "connectedTime": "",
+        "bootTime": 0.0,
+        "tagIdList": [],
+        "ethernetInterfaces": [
+            {"apInterfaceName": "GigabitEthernet0", "speed": "1000000000",
+             "errorPercent": 0.0}
+        ],
+        "radios": [],
         "neighbors": [],
     }}
 
