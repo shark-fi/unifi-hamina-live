@@ -183,13 +183,17 @@ def build_maps_xml(snap: Snapshot, fp: FloorPlan, image_name: str,
                    image_type: str, created_ms: int) -> str:
     building = _building_name(snap, fp)
     w_m, l_m = mapping._metres_dims(fp)
+    # The root <Site> is "Global" — the Catalyst hierarchy invariant. A real
+    # Hamina/Catalyst archive always names it "Global" (verified against a real
+    # export); using the area name here made Hamina's map importer fail to match
+    # the archive to the discovered hierarchy ("Floor plan import failed for Map").
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<ns0:CiscoUnifiedInterchange xmlns:ns0="http://importexport.cisco.com/1.0"'
         ' ver="1.0" source="UniFi" angleUnits="DEGREE" distUnits="FEET"'
         f' ssUnits="dBm" createdOn="{created_ms}" lastUpdated="{created_ms}">\n'
         '  <ns0:Maps>\n'
-        f'    <ns0:Site name={quoteattr(mapping._AREA_NAME)}>\n'
+        '    <ns0:Site name="Global">\n'
         f'      <ns0:Building name={quoteattr(building)}>\n'
         f'        <ns0:Floor name={quoteattr(fp.name)} level="1">\n'
         f'          <ns0:Dimension width="{_ft(w_m)}" length="{_ft(l_m)}"'

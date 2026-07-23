@@ -177,6 +177,9 @@ def test_maps_export_task_flow_and_archive(cat_client):
     assert "xmlDir/MapsImportExport.xml" in names and f"images/{floor_id}.png" in names
     xml = tar.extractfile("xmlDir/MapsImportExport.xml").read().decode()
     assert 'xmlns:ns0="http://importexport.cisco.com/1.0"' in xml
+    # root Site is "Global" (Catalyst hierarchy invariant) so Hamina's map
+    # importer matches the archive to the discovered hierarchy
+    assert '<ns0:Site name="Global">' in xml
     assert 'distUnits="FEET"' in xml and '<ns0:Floor name="Ground" level="1">' in xml
     assert 'width="164.041995"' in xml and 'imageType="PNG"' in xml  # 1000px*0.05m -> 164.04ft
 
