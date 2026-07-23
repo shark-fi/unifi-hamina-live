@@ -185,6 +185,26 @@ def test_maps_export_task_flow_and_archive(cat_client):
     assert cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}").status_code == 401
 
 
+def test_v2_floors_geometry_and_ap_positions(cat_client):
+    from unifi_hamina_live.catalyst import mapping
+
+    tok = _token(cat_client).json()["Token"]
+    h = {"X-Auth-Token": tok}
+    floor_id = mapping.floor_id_for(_snapshot().floorplans[0])
+
+    # floor geometry in feet: 1000px*0.05=50 m -> 164.04 ft wide
+    fl = cat_client.get(f"/dna/intent/api/v2/floors/{floor_id}",
+                        params={"_unitsOfMeasure": "feet"}, headers=h).json()["response"]
+    assert fl["id"] == floor_id and fl["type"] == "floor"
+    assert fl["unitsOfMeasure"] == "feet" and abs(fl["width"] - 164.042) < 0.01
+
+    # AP positions on the floor (feet): AP at 600px*0.05=30 m -> 98.425 ft
+    pos = cat_client.get(f"/dna/intent/api/v2/floors/{floor_id}/accessPointPositions",
+                         headers=h).json()["response"]
+    assert pos and pos[0]["macAddress"] == "aa:bb:cc:00:11:22"
+    assert abs(pos[0]["position"]["x"] - 98.425) < 0.01
+
+
 def test_unimplemented_is_captured(cat_client):
     tok = _token(cat_client).json()["Token"]
     h = {"X-Auth-Token": tok}

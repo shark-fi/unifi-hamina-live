@@ -258,6 +258,70 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
     }
 
 
+# --- v2 floors API (called after the map archive is downloaded) -----------
+# After importing the map, Hamina fetches the floor geometry and the AP
+# placements via the newer /dna/intent/api/v2/floors endpoints. Shapes here are
+# a best effort pending a real-appliance capture (issue #1); dimensions and
+# positions are in the requested unit (feet by default, matching the archive).
+_M_TO_FT = 3.280839895
+
+
+def _unit_conv(units: str) -> tuple[float, str]:
+    if (units or "feet").lower().startswith("m"):
+        return 1.0, "meters"
+    return _M_TO_FT, "feet"
+
+
+def _floor_by_id(snap: Snapshot, floor_id: str) -> FloorPlan | None:
+    return next((f for f in snap.floorplans if floor_id_for(f) == floor_id), None)
+
+
+def floor_v2(snap: Snapshot, floor_id: str, units: str = "feet") -> dict | None:
+    fp = _floor_by_id(snap, floor_id)
+    if fp is None:
+        return None
+    conv, unit_name = _unit_conv(units)
+    w_m, l_m = _metres_dims(fp)
+    return {
+        "parentId": building_id(fp.site_id),
+        "name": fp.name,
+        "floorNumber": 1,
+        "rfModel": "Cubes And Walled Offices",
+        "width": round((w_m or 0) * conv, 3),
+        "length": round((l_m or 0) * conv, 3),
+        "height": round(3.0 * conv, 3),
+        "unitsOfMeasure": unit_name,
+        "type": "floor",
+        "id": floor_id,
+    }
+
+
+def ap_positions(snap: Snapshot, floor_id: str, units: str = "feet") -> list[dict]:
+    fp = _floor_by_id(snap, floor_id)
+    if fp is None:
+        return []
+    conv, _ = _unit_conv(units)
+    out = []
+    for ap in snap.access_points:
+        if ap.floorplan_id != fp.id:
+            continue
+        x_m, y_m = _ap_metres(ap, fp)
+        out.append({
+            "id": ap.serial,
+            "instanceUuid": ap.serial,
+            "name": ap.name,
+            "macAddress": ap.mac,
+            "type": "AP",
+            "model": ap.model,
+            "position": {
+                "x": round((x_m or 0) * conv, 3),
+                "y": round((y_m or 0) * conv, 3),
+                "z": 0.0,
+            },
+        })
+    return out
+
+
 # --- helpers --------------------------------------------------------------
 def _metres_dims(fp: FloorPlan):
     if fp.width_px and fp.height_px and fp.meters_per_px:

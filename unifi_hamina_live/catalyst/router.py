@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from ..config import Settings
@@ -141,6 +141,28 @@ def get_ap_configuration(request: Request, key: str = ""):
     mac = normalize_mac(key)
     aps = [a for a in snap.access_points if not key or a.mac == mac]
     return mapping.wrap([mapping.ap_configuration(a, snap) for a in aps])
+
+
+# --- v2 floors (called after the map archive is downloaded) ---------------
+@router.get("/dna/intent/api/v2/floors/{floor_id}/accessPointPositions")
+def get_floor_ap_positions(floor_id: str, request: Request,
+                           limit: int = 500, offset: int = 1):
+    """AP placements on a floor (x,y in the floor's units)."""
+    if not _require_token(request):
+        return _unauthorized()
+    return mapping.wrap(mapping.ap_positions(_snap(request), floor_id))
+
+
+@router.get("/dna/intent/api/v2/floors/{floor_id}")
+def get_floor_v2(floor_id: str, request: Request,
+                 units: str = Query("feet", alias="_unitsOfMeasure")):
+    """Floor geometry (width/length/height) in the requested unit."""
+    if not _require_token(request):
+        return _unauthorized()
+    fl = mapping.floor_v2(_snap(request), floor_id, units)
+    if fl is None:
+        return _dna_404(f"Floor {floor_id} not found")
+    return mapping.wrap(fl)
 
 
 # --- maps export (task-based async BAPI) ----------------------------------
