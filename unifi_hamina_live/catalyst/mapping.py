@@ -353,7 +353,10 @@ def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
             {"apInterfaceName": "GigabitEthernet0", "speed": "1000000000",
              "errorPercent": 0.0}
         ],
-        "radios": [],
+        # Reuse the accessPointPositions radio shape (id/bands/channel/txPower/
+        # antenna) that Hamina already accepts — the vendor sync needs the radios
+        # populated, and the exact assurance-radios shape couldn't be captured.
+        "radios": _position_radios(ap),
         "neighbors": [],
     }}
 
