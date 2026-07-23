@@ -147,28 +147,30 @@ def test_maps_export_task_flow_and_archive(cat_client):
     h = {"X-Auth-Token": tok}
     floor_id = mapping.floor_id_for(_snapshot().floorplans[0])
 
-    # 1. POST export -> task-based async handle {response:{taskId,url}}
-    r = cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}", headers=h)
-    assert r.status_code == 200
+    # 1. POST export -> 202 with the task handle {response:{taskId,url}}, and
+    #    url uses the real /api/v1/task/ path (a text/plain filename body is
+    #    what a real appliance wants; we accept any body)
+    r = cat_client.post(f"/dna/intent/api/v1/maps/export/{floor_id}",
+                        headers={**h, "Content-Type": "text/plain"}, content="HaminaMapExport")
+    assert r.status_code == 202
     resp = r.json()["response"]
     task_id, url = resp["taskId"], resp["url"]
-    assert url.endswith(task_id)
+    assert url == f"/api/v1/task/{task_id}"
 
-    # 2. GET task -> a completed, immutable task; fileId is in progress (compact
-    #    JSON, no additionalStatusURL) exactly like a real appliance
+    # 2. GET task -> a completed DNA Maps task shaped like the real appliance:
+    #    progress "finished", endTime set, and the download PATH lives in `data`
+    #    as /file/{fileId} (no additionalStatusURL, no fileId in progress)
     task = cat_client.get(url, headers=h).json()["response"]
     assert task["isError"] is False and task["endTime"] == task["version"]
-    # download pointer offered both ways: compact fileId in progress AND a
-    # full additionalStatusURL, so either client convention resolves
-    assert '{"fileId":"' in task["progress"]        # compact, no space
-    file_id = json.loads(task["progress"])["fileId"]
-    assert task["additionalStatusURL"] == f"/dna/intent/api/v1/file/{file_id}"
+    assert task["serviceType"] == "DNA Maps Service" and task["progress"] == "finished"
+    assert "additionalStatusURL" not in task
+    assert task["data"].startswith("/file/")
 
     # a completed task is immutable: a second poll is byte-identical
     assert cat_client.get(url, headers=h).json()["response"] == task
 
-    # 3. download the archive via the advertised URL
-    arch = cat_client.get(task["additionalStatusURL"], headers=h)
+    # 3. download the archive from the path in `data` (served at /file/{id})
+    arch = cat_client.get(task["data"], headers=h)
     assert arch.status_code == 200 and arch.headers["content-type"] == "application/octet-stream"
     tar = tarfile.open(fileobj=io.BytesIO(arch.content), mode="r:gz")
     names = tar.getnames()

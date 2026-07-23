@@ -87,84 +87,76 @@ class MapExportJobs:
 
 
 def submit_response(job: dict) -> dict:
-    """The POST maps/export body: an async task handle (response.taskId + url)."""
+    """The POST maps/export body: the task handle. Verified against a real
+    appliance — `url` uses the `/api/v1/task/` path (not `/dna/intent/...`),
+    and the endpoint answers 202 (set on the Response in the router)."""
     return {
         "response": {
             "taskId": job["task_id"],
-            "url": f"/dna/intent/api/v1/task/{job['task_id']}",
+            "url": f"/api/v1/task/{job['task_id']}",
         },
         "version": "1.0",
     }
 
 
-def task_error_response(job: dict) -> dict:
-    """Report the maps/export task as FAILED, so Hamina stops waiting for a
-    download it can't complete and (ideally) skips the image, continuing to the
-    device sync. Shaped like a real failed DNAC task (isError + failureReason)."""
-    ts = job["ts_ms"]
-    end = ts + 250
-    msg = "NCMPFRA10024: Unable to export maps. No exportable map for this floor."
+# A real DNA Maps export task lifecycle, captured from a live appliance:
+#   running: progress "Export map archive for <floorId>",
+#            data "{\"total\":N,\"processed\":N}", NO endTime.
+#   done:    progress "finished", endTime set, and data BECOMES the download
+#            path "/file/<fileId>". There is no additionalStatusURL / no fileId
+#            in progress. serviceType is "DNA Maps Service" throughout.
+def _task_base(job: dict) -> dict:
     return {
-        "response": {
-            "version": end,
-            "endTime": end,
-            "startTime": ts,
-            "lastUpdate": end,
-            "serviceType": "Maps Service",
-            "username": "admin",
-            "isError": True,
-            "failureReason": msg,
-            "progress": msg,
-            "instanceTenantId": mapping._TENANT,
-            "id": job["task_id"],
-        },
-        "version": "1.0",
-    }
-
-
-def task_response(job: dict, delay_ms: int = 0) -> tuple[dict, bool]:
-    """A DNAC file task, matched field-for-field to a real appliance (verified
-    against a Command Runner task on the sandbox). Returns (body, done).
-
-    For the first ``delay_ms`` after submit the task reports RUNNING (no endTime,
-    no fileId) — a real maps/export takes seconds, and an instant-done task can
-    trip a client that waits for the running->done transition. After that it
-    reports DONE, with the fileId carried ONLY in ``progress`` as COMPACT JSON
-    (``{"fileId":"..."}``); the client regex-extracts it and builds the
-    /file/{fileId} URL itself. endTime/version/lastUpdate are the fixed
-    completion stamp and equal each other, so every poll once done is identical.
-    """
-    start = job["ts_ms"]
-    end = start + max(delay_ms, 250)
-    done = int(time.time() * 1000) - start >= delay_ms
-    resp = {
-        "startTime": start,
-        "serviceType": "Maps Service",
-        "username": "admin",
+        "startTime": job["ts_ms"],
+        "serviceType": "DNA Maps Service",
         "isError": False,
         "instanceTenantId": mapping._TENANT,
         "id": job["task_id"],
     }
-    if done:
-        fid = job["file_id"]
+
+
+def task_error_response(job: dict) -> dict:
+    """A failed DNA Maps export task (isError + errorCode + failureReason;
+    progress "finished", data stays the progress counts)."""
+    end = job["ts_ms"] + 200
+    resp = _task_base(job)
+    resp.update({
+        "data": json.dumps({"total": 1, "processed": 1}, separators=(",", ":")),
+        "progress": "finished",
+        "version": end, "endTime": end, "lastUpdate": end,
+        "isError": True,
+        "errorCode": "NCMP00051: Failed to import/export map archive",
+        "failureReason": "NCFS10055: map export failed",
+    })
+    return {"response": resp, "version": "1.0"}
+
+
+def task_response(job: dict, delay_ms: int = 0) -> tuple[dict, bool]:
+    """A DNA Maps export task, matched to a real appliance. Returns (body, done).
+
+    Running (first ``delay_ms`` after submit): progress counts in ``data``, no
+    ``endTime``. Done: ``progress`` "finished", ``endTime`` set, and ``data``
+    holds the download path ``/file/<fileId>`` — the client fetches that (the
+    facade serves it at /file, /api/v1/file, and /dna/intent/api/v1/file).
+    """
+    start = job["ts_ms"]
+    end = start + max(delay_ms, 200)
+    now = int(time.time() * 1000)
+    done = now - start >= delay_ms
+    resp = _task_base(job)
+    if not done:
         resp.update({
-            "version": end,
-            "endTime": end,
-            "lastUpdate": end,
-            # Convey the download pointer BOTH ways: fileId in progress (Command
-            # Runner style) AND additionalStatusURL (the generic file-task style)
-            # — Hamina ignored progress-only, so maps/export likely wants the URL.
-            "progress": json.dumps({"fileId": fid}, separators=(",", ":")),
-            "data": fid,
-            "additionalStatusURL": f"/dna/intent/api/v1/file/{fid}",
+            "data": json.dumps({"total": 1, "processed": 1}, separators=(",", ":")),
+            "progress": "Export map archive for %s" % job["floor_id"],
+            "version": now, "lastUpdate": now,
         })
-    else:
-        resp.update({
-            "version": start,
-            "lastUpdate": start,
-            "progress": "CREATING MAP ARCHIVE",
-        })
-    return {"response": resp, "version": "1.0"}, done
+        return {"response": resp, "version": "1.0"}, False
+    resp.update({
+        "data": "/file/%s" % job["file_id"],   # download path (real done shape)
+        "progress": "finished",
+        "version": end, "endTime": end, "lastUpdate": end,
+    })
+    return {"response": resp, "version": "1.0"}, True
 
 
 def _ft(metres: float | None) -> str:
