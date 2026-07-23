@@ -158,17 +158,19 @@ def test_maps_export_task_flow_and_archive(cat_client):
     assert url == f"/api/v1/task/{task_id}"
 
     # 2. GET task -> a completed DNA Maps task shaped like the real appliance:
-    #    progress "finished", data is progress counts (NOT a fileId)
+    #    progress "finished", endTime set, and the download PATH lives in `data`
+    #    as /file/{fileId} (no additionalStatusURL, no fileId in progress)
     task = cat_client.get(url, headers=h).json()["response"]
     assert task["isError"] is False and task["endTime"] == task["version"]
     assert task["serviceType"] == "DNA Maps Service" and task["progress"] == "finished"
-    assert json.loads(task["data"]) == {"total": 1, "processed": 1}
+    assert "additionalStatusURL" not in task
+    assert task["data"].startswith("/file/")
 
     # a completed task is immutable: a second poll is byte-identical
     assert cat_client.get(url, headers=h).json()["response"] == task
 
-    # 3. download the archive via the (placeholder) additionalStatusURL
-    arch = cat_client.get(task["additionalStatusURL"], headers=h)
+    # 3. download the archive from the path in `data` (served at /file/{id})
+    arch = cat_client.get(task["data"], headers=h)
     assert arch.status_code == 200 and arch.headers["content-type"] == "application/octet-stream"
     tar = tarfile.open(fileobj=io.BytesIO(arch.content), mode="r:gz")
     names = tar.getnames()

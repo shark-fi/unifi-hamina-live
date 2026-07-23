@@ -99,29 +99,31 @@ def submit_response(job: dict) -> dict:
     }
 
 
-# A real DNA Maps export task, captured from a live appliance:
-#   serviceType "DNA Maps Service", progress "finished" (plain word, NOT a
-#   fileId JSON), data "{\"total\":N,\"processed\":N}" (progress counts, NOT the
-#   fileId). endTime/version/lastUpdate are epoch-ms; startTime is the submit.
-def _task_common(job: dict, end_ms: int) -> dict:
+# A real DNA Maps export task lifecycle, captured from a live appliance:
+#   running: progress "Export map archive for <floorId>",
+#            data "{\"total\":N,\"processed\":N}", NO endTime.
+#   done:    progress "finished", endTime set, and data BECOMES the download
+#            path "/file/<fileId>". There is no additionalStatusURL / no fileId
+#            in progress. serviceType is "DNA Maps Service" throughout.
+def _task_base(job: dict) -> dict:
     return {
-        "data": json.dumps({"total": 1, "processed": 1}, separators=(",", ":")),
-        "progress": "finished",
-        "version": end_ms,
-        "endTime": end_ms,
         "startTime": job["ts_ms"],
-        "lastUpdate": end_ms,
         "serviceType": "DNA Maps Service",
+        "isError": False,
         "instanceTenantId": mapping._TENANT,
         "id": job["task_id"],
     }
 
 
 def task_error_response(job: dict) -> dict:
-    """A failed DNA Maps export task, matching the real appliance's fields
-    (`isError` + `errorCode` + `failureReason`, `progress` still "finished")."""
-    resp = _task_common(job, job["ts_ms"] + 200)
+    """A failed DNA Maps export task (isError + errorCode + failureReason;
+    progress "finished", data stays the progress counts)."""
+    end = job["ts_ms"] + 200
+    resp = _task_base(job)
     resp.update({
+        "data": json.dumps({"total": 1, "processed": 1}, separators=(",", ":")),
+        "progress": "finished",
+        "version": end, "endTime": end, "lastUpdate": end,
         "isError": True,
         "errorCode": "NCMP00051: Failed to import/export map archive",
         "failureReason": "NCFS10055: map export failed",
@@ -130,34 +132,30 @@ def task_error_response(job: dict) -> dict:
 
 
 def task_response(job: dict, delay_ms: int = 0) -> tuple[dict, bool]:
-    """A DNA Maps export task. Returns (body, done). Field-for-field to a real
-    appliance for the confirmed keys.
+    """A DNA Maps export task, matched to a real appliance. Returns (body, done).
 
-    TODO(download): a real *successful* maps task exposes NO fileId in
-    `progress` or `data` (those are "finished" / progress-counts). Where the
-    download pointer lives on success — `additionalStatusURL`, a fileId inside
-    `data`, or a maps file-namespace endpoint — is being captured from a real
-    appliance (see issue #1). Until confirmed, `additionalStatusURL` is a
-    PLACEHOLDER so `GET /file/{id}` still resolves; swap it for the real
-    mechanism once known.
+    Running (first ``delay_ms`` after submit): progress counts in ``data``, no
+    ``endTime``. Done: ``progress`` "finished", ``endTime`` set, and ``data``
+    holds the download path ``/file/<fileId>`` — the client fetches that (the
+    facade serves it at /file, /api/v1/file, and /dna/intent/api/v1/file).
     """
     start = job["ts_ms"]
     end = start + max(delay_ms, 200)
-    done = int(time.time() * 1000) - start >= delay_ms
+    now = int(time.time() * 1000)
+    done = now - start >= delay_ms
+    resp = _task_base(job)
     if not done:
-        return {"response": {
-            "progress": "Exporting maps",
-            "version": start,
-            "startTime": start,
-            "lastUpdate": start,
-            "serviceType": "DNA Maps Service",
-            "isError": False,
-            "instanceTenantId": mapping._TENANT,
-            "id": job["task_id"],
-        }, "version": "1.0"}, False
-    resp = _task_common(job, end)
-    resp["isError"] = False
-    resp["additionalStatusURL"] = f"/api/v1/file/{job['file_id']}"  # PLACEHOLDER (see TODO)
+        resp.update({
+            "data": json.dumps({"total": 1, "processed": 1}, separators=(",", ":")),
+            "progress": "Export map archive for %s" % job["floor_id"],
+            "version": now, "lastUpdate": now,
+        })
+        return {"response": resp, "version": "1.0"}, False
+    resp.update({
+        "data": "/file/%s" % job["file_id"],   # download path (real done shape)
+        "progress": "finished",
+        "version": end, "endTime": end, "lastUpdate": end,
+    })
     return {"response": resp, "version": "1.0"}, True
 
 

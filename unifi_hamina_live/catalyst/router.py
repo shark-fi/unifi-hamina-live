@@ -184,8 +184,11 @@ def get_task(task_id: str, request: Request):
 
 @router.get("/dna/intent/api/v1/file/{file_id}")
 @router.get("/api/v1/file/{file_id}")
+@router.get("/file/{file_id}")
 def get_file(file_id: str, request: Request):
-    """Serve the generated CiscoUnifiedInterchange map archive."""
+    """Serve the generated CiscoUnifiedInterchange map archive. The done task's
+    `data` field points here as `/file/{fileId}`; also served under the /api/v1
+    and /dna/intent/api/v1 prefixes in case the client resolves it that way."""
     if not _require_token(request):
         return _unauthorized()
     job = request.app.state.catalyst_maps.by_file(file_id)
