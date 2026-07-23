@@ -211,6 +211,23 @@ def test_v2_floors_geometry_and_ap_positions(cat_client):
     assert radio["bands"] == [5.0] and radio["channel"] == 36 and radio["txPower"] == 20
 
 
+def test_assurance_network_devices(cat_client):
+    from unifi_hamina_live.catalyst import mapping
+
+    tok = _token(cat_client).json()["Token"]
+    h = {"X-Auth-Token": tok}
+    r = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={"filters": []})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["totalCount"] == 1
+    dev = body["response"][0]
+    # id matches the AP's network-device UUID so Hamina links live data to the AP
+    assert dev["id"] == mapping.ap_uuid(_snapshot().access_points[0])
+    assert dev["macAddress"] == "aa:bb:cc:00:11:22" and dev["reachabilityStatus"] == "REACHABLE"
+    # unauth rejected
+    assert cat_client.post("/api/assurance/v2/networkDevices").status_code == 401
+
+
 def test_unimplemented_is_captured(cat_client):
     tok = _token(cat_client).json()["Token"]
     h = {"X-Auth-Token": tok}

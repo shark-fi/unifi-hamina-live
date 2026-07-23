@@ -267,6 +267,26 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
     }
 
 
+def assurance_device(ap: AccessPoint) -> dict:
+    """A device in the Assurance networkDevices list (live health/state). Best
+    effort pending a real-appliance capture; id matches the network-device UUID
+    so Hamina links it to the placed AP."""
+    return {
+        "id": ap_uuid(ap),
+        "name": ap.name,
+        "managementIpAddress": ap.ip,
+        "macAddress": ap.mac,
+        "deviceFamily": "Unified AP",
+        "deviceType": ap.model,
+        "platformId": ap.model,
+        "deviceModel": ap.model,
+        "serialNumber": ap.serial,
+        "softwareVersion": ap.firmware,
+        "reachabilityStatus": "REACHABLE" if ap.online else "UNREACHABLE",
+        "overallHealth": 10 if ap.online else 1,
+    }
+
+
 # --- v2 floors API (called after the map archive is downloaded) -----------
 # After importing the map, Hamina fetches the floor geometry and the AP
 # placements via the newer /dna/intent/api/v2/floors endpoints. Shapes here are

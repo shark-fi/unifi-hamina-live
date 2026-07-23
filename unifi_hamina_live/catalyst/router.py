@@ -165,6 +165,24 @@ def get_floor_v2(floor_id: str, request: Request,
     return mapping.wrap(fl)
 
 
+# --- assurance (live device health, called after AP placement) ------------
+@router.post("/api/assurance/v2/networkDevices")
+async def assurance_network_devices(request: Request):
+    """Assurance device list for the placed APs. Hamina POSTs a filter body; we
+    log it (to learn the exact query) and return all APs in an assurance shape."""
+    if not _require_token(request):
+        return _unauthorized()
+    try:
+        raw = await request.body()
+        if raw:
+            log.info("catalyst assurance/networkDevices body: %s",
+                     raw[:2000].decode("utf-8", "replace"))
+    except Exception:  # pragma: no cover - defensive
+        pass
+    devs = [mapping.assurance_device(a) for a in _snap(request).access_points]
+    return {"response": devs, "totalCount": len(devs), "version": "1.0"}
+
+
 # --- maps export (task-based async BAPI) ----------------------------------
 def _dna_404(msg: str) -> JSONResponse:
     return JSONResponse(status_code=404,
