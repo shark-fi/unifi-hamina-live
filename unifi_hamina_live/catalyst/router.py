@@ -175,12 +175,14 @@ async def assurance_network_devices(request: Request):
     import json as _json
 
     family = None
+    fields: list[str] = []
     try:
         raw = await request.body()
         if raw:
             log.info("catalyst assurance/networkDevices body: %s",
                      raw[:2000].decode("utf-8", "replace"))
             q = _json.loads(raw).get("query", {})
+            fields = [str(f) for f in (q.get("fields") or [])]
             for f in q.get("filters", []):
                 if f.get("key") == "deviceFamily":
                     family = str(f.get("value") or "")
@@ -191,7 +193,7 @@ async def assurance_network_devices(request: Request):
     if family and "unified ap" not in family.lower():
         data = []
     else:
-        data = [mapping.assurance_device(a, snap) for a in snap.access_points]
+        data = [mapping.assurance_device(a, snap, fields) for a in snap.access_points]
     # Real appliance envelope: {"version":"2.0","data":[{"values":{...}}]}
     return {"version": "2.0", "data": data}
 

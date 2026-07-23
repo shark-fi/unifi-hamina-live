@@ -267,24 +267,25 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
     }
 
 
-def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
+def assurance_device(ap: AccessPoint, snap: Snapshot,
+                     fields: list[str] | None = None) -> dict:
     """One entry in the Assurance networkDevices `data` list, wrapped in
     `{"values": {...}}` as on a real appliance. `uuid` matches the
     network-device / accessPointPositions id so Hamina correlates the AP to its
     placement; `floorId` ties it to the floor. The full field set (with sane
     defaults) mirrors a real appliance so nothing required is missing.
 
-    `radios`/`neighbors` are empty arrays. The accessPointPositions radio shape
-    (id/bands/antenna) is NOT valid here: populating `radios` with it makes
-    Hamina's floor-import parser fail ("An unexpected error occurred"), while an
-    empty array imports cleanly. The real assurance-radios object shape differs
-    and is still pending a clean capture (issue #1) — until then the radio data
-    Hamina places from accessPointPositions is what renders the APs."""
+    `fields` mirrors the real appliance's field-gating: the base object is
+    always returned, and the heavy sub-objects (`radios`, `neighbors`) are
+    added ONLY when the query requests them — exactly what a real box does
+    (fields=["radios"] returns radios but no neighbors, and vice versa). The
+    `radios` shape is captured field-for-field from a real appliance."""
+    want = {f.lower() for f in (fields or [])}
     fp = _ap_floor(ap, snap)
     floor_id = floor_id_for(fp) if fp else ""
     score = 10.0 if ap.online else 1.0
     mac = ap.mac
-    return {"values": {
+    values = {
         "uuid": ap_uuid(ap),
         "name": ap.name,
         "deviceMacAddress": mac,
@@ -358,11 +359,14 @@ def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
             {"apInterfaceName": "GigabitEthernet0", "speed": "1000000000",
              "errorPercent": 0.0}
         ],
-        # Empty: the accessPointPositions radio shape breaks Hamina's floor
-        # import here; the true assurance-radios shape is still uncaptured.
-        "radios": [],
-        "neighbors": [],
-    }}
+    }
+    # Field-gated sub-objects: only present when the query asks for them, as on
+    # a real appliance (matched to captured fields=["radios"]/["neighbors"]).
+    if "radios" in want:
+        values["radios"] = _assurance_radios(ap)
+    if "neighbors" in want:
+        values["neighbors"] = []  # we have no neighbor (RRM) data to report
+    return {"values": values}
 
 
 # --- v2 floors API (called after the map archive is downloaded) -----------
@@ -406,6 +410,62 @@ def floor_v2(snap: Snapshot, floor_id: str, units: str = "feet") -> dict | None:
         "height": round(3.0 * conv, 3),
         "unitsOfMeasure": unit_name,
     }
+
+
+# Assurance radios shape, captured field-for-field from a real appliance's
+# POST /api/assurance/v2/networkDevices (fields=["radios"]) for a Unified AP.
+# This is a DIFFERENT shape from accessPointPositions.radios (which uses
+# id/bands/antenna) — using that shape here breaks Hamina's floor import, so
+# the Assurance radios must follow this schema exactly.
+_BAND_SLOT = {"2.4": 0, "5": 1, "6": 2}
+_BAND_RADIOTYPE = {"2.4": "802.11abgn", "5": "802.11a", "6": "802.11ax"}
+_BAND_RFPROFILE = {"2.4": "Typical_Client_Density_rf_24gh",
+                   "5": "Typical_Client_Density_rf_5gh",
+                   "6": "Typical_Client_Density_rf_6gh"}
+
+
+def _assurance_radios(ap: AccessPoint) -> list[dict]:
+    """The Assurance `radios` array for an AP, matched to a real appliance."""
+    radios = []
+    for r in ap.radios:
+        ch = r.channel
+        up = ch is not None
+        radios.append({
+            "slotId": _BAND_SLOT.get(r.band, 0),
+            "band": r.band,
+            "radioType": _BAND_RADIOTYPE.get(r.band, "802.11a"),
+            "radioProtocol": 4,
+            "radioMode": 1,
+            "radioModeStr": "Local",
+            "radioSubType": "Main",
+            "adminState": 1,
+            "operState": 2 if up else 1,
+            "baseChannel": float(ch) if up else 0.0,
+            "channels": [ch] if up else [],
+            "channelWidth": int(r.channel_width_mhz) if r.channel_width_mhz else 20,
+            "txPower": float(r.tx_power_dbm) if r.tx_power_dbm is not None else 0.0,
+            "clientCount": int(r.num_clients),
+            "channelUtilization": _f(r.channel_utilization_pct),
+            "trafficUtilization": 0.0,
+            "txTrafficUtilization": 0.0,
+            "rxTrafficUtilization": 0.0,
+            "txRateValue": 0.0,
+            "rxRateValue": 0.0,
+            "noise": -92.0,
+            "interference": 0.0,
+            "airQuality": 100.0,
+            "channelAirQualityScore": 100.0,
+            "cleanAirStatus": "Up",
+            "antennaPlatformId": "N/A",
+            "rfProfile": _BAND_RFPROFILE.get(r.band, ""),
+            "xorRadio": 0,
+            "wifi6Status": 2,
+        })
+    return radios
+
+
+def _f(v) -> float:
+    return float(v) if v is not None else 0.0
 
 
 def _position_radios(ap: AccessPoint) -> list[dict]:

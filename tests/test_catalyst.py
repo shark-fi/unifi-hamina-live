@@ -226,6 +226,25 @@ def test_assurance_network_devices(cat_client):
     assert vals["uuid"] == mapping.ap_uuid(_snapshot().access_points[0])
     assert vals["deviceMacAddress"] == "aa:bb:cc:00:11:22"
     assert vals["deviceFamily"] == "Unified AP" and vals["healthScore"][0]["score"] == 10.0
+    # field-gating: with no fields requested, the heavy sub-objects are absent
+    assert "radios" not in vals and "neighbors" not in vals
+
+    # fields=["radios"] adds the real assurance radios shape (NOT the positions
+    # shape) — band string, slotId, txPower float, channels list.
+    rr = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
+        "query": {"fields": ["radios"]}}).json()
+    radio = rr["data"][0]["values"]["radios"][0]
+    assert "neighbors" not in rr["data"][0]["values"]
+    assert radio["band"] == "5" and radio["slotId"] == 1
+    assert radio["baseChannel"] == 36.0 and radio["channels"] == [36]
+    assert radio["txPower"] == 20.0 and radio["channelWidth"] == 80
+    assert radio["radioType"] == "802.11a" and radio["radioProtocol"] == 4
+
+    # fields=["neighbors"] adds neighbors (empty for us) but not radios
+    nn = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
+        "query": {"fields": ["neighbors"]}}).json()
+    assert nn["data"][0]["values"]["neighbors"] == []
+    assert "radios" not in nn["data"][0]["values"]
 
     # a query for a non-AP family returns nothing (we only have APs)
     sw = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
