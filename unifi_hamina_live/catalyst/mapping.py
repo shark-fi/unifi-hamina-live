@@ -267,24 +267,58 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
     }
 
 
-def assurance_device(ap: AccessPoint) -> dict:
-    """A device in the Assurance networkDevices list (live health/state). Best
-    effort pending a real-appliance capture; id matches the network-device UUID
-    so Hamina links it to the placed AP."""
-    return {
-        "id": ap_uuid(ap),
+def _assurance_radios(ap: AccessPoint) -> list[dict]:
+    out = []
+    for i, r in enumerate(ap.radios):
+        out.append({
+            "slotId": i,
+            "radioBand": r.band,
+            "channel": r.channel,
+            "txPower": int(r.tx_power_dbm) if r.tx_power_dbm is not None else None,
+            "clientCount": float(r.num_clients),
+        })
+    return out
+
+
+def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
+    """One entry in the Assurance networkDevices `data` list, wrapped in
+    `{"values": {...}}` as on a real appliance. `uuid` matches the
+    network-device / accessPointPositions id so Hamina correlates the AP to its
+    placement; `floorId` ties it to the floor. Health values default to good."""
+    fp = _ap_floor(ap, snap)
+    floor_id = floor_id_for(fp) if fp else ""
+    score = 10.0 if ap.online else 1.0
+    return {"values": {
+        "uuid": ap_uuid(ap),
         "name": ap.name,
-        "managementIpAddress": ap.ip,
+        "deviceMacAddress": ap.mac,
         "macAddress": ap.mac,
         "deviceFamily": "Unified AP",
-        "deviceType": ap.model,
-        "platformId": ap.model,
         "deviceModel": ap.model,
-        "serialNumber": ap.serial,
-        "softwareVersion": ap.firmware,
+        "deviceSeries": ap.model,
+        "nwDeviceType": ap.model,
+        "deviceRole": "ACCESS",
+        "collectionStatus": "Managed",
+        "manageabilityState": "Managed",
+        "communicationState": "UP" if ap.online else "DOWN",
         "reachabilityStatus": "REACHABLE" if ap.online else "UNREACHABLE",
-        "overallHealth": 10 if ap.online else 1,
-    }
+        "softwareVersion": ap.firmware or "",
+        "osVersion": ap.firmware or "",
+        "serialNumber": ap.serial,
+        "apMode": "Local",
+        "floorId": floor_id,
+        "siteUUID": floor_id,
+        "isDeleted": False,
+        "maintenanceMode": False,
+        "overallScore": score,
+        "utilizationScore": score,
+        "interferenceScore": score,
+        "channelAirQualityScore": score,
+        "clCount": float(ap.num_clients),
+        "healthScore": [{"healthType": "OVERALL", "reason": "", "score": score}],
+        "radios": _assurance_radios(ap),
+        "neighbors": [],
+    }}
 
 
 # --- v2 floors API (called after the map archive is downloaded) -----------

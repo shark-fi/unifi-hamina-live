@@ -187,11 +187,13 @@ async def assurance_network_devices(request: Request):
     except Exception:  # pragma: no cover - defensive
         pass
     # We only have APs; a query for switches/other families returns nothing.
+    snap = _snap(request)
     if family and "unified ap" not in family.lower():
-        devs = []
+        data = []
     else:
-        devs = [mapping.assurance_device(a) for a in _snap(request).access_points]
-    return {"response": devs, "totalCount": len(devs), "version": "1.0"}
+        data = [mapping.assurance_device(a, snap) for a in snap.access_points]
+    # Real appliance envelope: {"version":"2.0","data":[{"values":{...}}]}
+    return {"version": "2.0", "data": data}
 
 
 @router.get("/dna/intent/api/v1/floors/{floor_id}/planned-access-points")

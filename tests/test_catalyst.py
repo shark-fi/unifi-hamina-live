@@ -216,20 +216,22 @@ def test_assurance_network_devices(cat_client):
 
     tok = _token(cat_client).json()["Token"]
     h = {"X-Auth-Token": tok}
-    r = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={"filters": []})
+    r = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={"query": {}})
     assert r.status_code == 200
     body = r.json()
-    assert body["totalCount"] == 1
-    dev = body["response"][0]
-    # id matches the AP's network-device UUID so Hamina links live data to the AP
-    assert dev["id"] == mapping.ap_uuid(_snapshot().access_points[0])
-    assert dev["macAddress"] == "aa:bb:cc:00:11:22" and dev["reachabilityStatus"] == "REACHABLE"
+    # real appliance envelope: {"version":"2.0","data":[{"values":{...}}]}
+    assert body["version"] == "2.0" and len(body["data"]) == 1
+    vals = body["data"][0]["values"]
+    # uuid matches the AP's network-device / position id so Hamina correlates
+    assert vals["uuid"] == mapping.ap_uuid(_snapshot().access_points[0])
+    assert vals["deviceMacAddress"] == "aa:bb:cc:00:11:22"
+    assert vals["deviceFamily"] == "Unified AP" and vals["healthScore"][0]["score"] == 10.0
 
     # a query for a non-AP family returns nothing (we only have APs)
     sw = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
         "query": {"filters": [{"key": "deviceFamily", "operator": "eq",
                                "value": "Switches and Hubs"}]}}).json()
-    assert sw["totalCount"] == 0
+    assert sw["data"] == []
 
     # planned (design) APs: none, ours are all real/positioned
     from unifi_hamina_live.catalyst import mapping
