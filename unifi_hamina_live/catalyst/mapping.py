@@ -275,11 +275,14 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
     placement; `floorId` ties it to the floor. The full field set (with sane
     defaults) mirrors a real appliance so nothing required is missing.
 
-    `fields` mirrors the real appliance's field-gating: the base object is
-    always returned, and the heavy sub-objects (`radios`, `neighbors`) are
-    added ONLY when the query requests them — exactly what a real box does
-    (fields=["radios"] returns radios but no neighbors, and vice versa). The
-    `radios` shape is captured field-for-field from a real appliance."""
+    `radios`/`neighbors` keys are ALWAYS present (empty by default): Hamina's
+    floor-import parser rejects the response if they are missing (import fails
+    with "An unexpected error occurred"), and it also rejects a populated
+    `radios` during the import phase — so the base carries empty arrays and the
+    real `radios` payload is filled in ONLY for the explicit fields=["radios"]
+    query, which Hamina makes AFTER the floor is imported (to render RF/AP
+    data). The `radios` shape is captured field-for-field from a real
+    appliance. We have no neighbor (RRM) telemetry, so `neighbors` stays []."""
     want = {f.lower() for f in (fields or [])}
     fp = _ap_floor(ap, snap)
     floor_id = floor_id_for(fp) if fp else ""
@@ -359,13 +362,15 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
             {"apInterfaceName": "GigabitEthernet0", "speed": "1000000000",
              "errorPercent": 0.0}
         ],
+        # Keys must always be present (empty) or the import parser rejects the
+        # response; see the docstring. We have no neighbor telemetry.
+        "radios": [],
+        "neighbors": [],
     }
-    # Field-gated sub-objects: only present when the query asks for them, as on
-    # a real appliance (matched to captured fields=["radios"]/["neighbors"]).
+    # Only the explicit fields=["radios"] query (post-import render) gets the
+    # real radio payload; a populated radios during import breaks the parser.
     if "radios" in want:
         values["radios"] = _assurance_radios(ap)
-    if "neighbors" in want:
-        values["neighbors"] = []  # we have no neighbor (RRM) data to report
     return {"values": values}
 
 
@@ -454,7 +459,6 @@ def _assurance_radios(ap: AccessPoint) -> list[dict]:
             "noise": -92.0,
             "interference": 0.0,
             "airQuality": 100.0,
-            "channelAirQualityScore": 100.0,
             "cleanAirStatus": "Up",
             "antennaPlatformId": "N/A",
             "rfProfile": _BAND_RFPROFILE.get(r.band, ""),
