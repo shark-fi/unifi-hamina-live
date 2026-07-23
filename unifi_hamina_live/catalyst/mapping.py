@@ -272,9 +272,14 @@ def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
     `{"values": {...}}` as on a real appliance. `uuid` matches the
     network-device / accessPointPositions id so Hamina correlates the AP to its
     placement; `floorId` ties it to the floor. The full field set (with sane
-    defaults) mirrors a real appliance so nothing required is missing; `radios`
-    and `neighbors` are type-safe empty arrays (Hamina gets radio data from
-    accessPointPositions, so their exact shape here is not needed)."""
+    defaults) mirrors a real appliance so nothing required is missing.
+
+    `radios`/`neighbors` are empty arrays. The accessPointPositions radio shape
+    (id/bands/antenna) is NOT valid here: populating `radios` with it makes
+    Hamina's floor-import parser fail ("An unexpected error occurred"), while an
+    empty array imports cleanly. The real assurance-radios object shape differs
+    and is still pending a clean capture (issue #1) — until then the radio data
+    Hamina places from accessPointPositions is what renders the APs."""
     fp = _ap_floor(ap, snap)
     floor_id = floor_id_for(fp) if fp else ""
     score = 10.0 if ap.online else 1.0
@@ -353,10 +358,9 @@ def assurance_device(ap: AccessPoint, snap: Snapshot) -> dict:
             {"apInterfaceName": "GigabitEthernet0", "speed": "1000000000",
              "errorPercent": 0.0}
         ],
-        # Reuse the accessPointPositions radio shape (id/bands/channel/txPower/
-        # antenna) that Hamina already accepts — the vendor sync needs the radios
-        # populated, and the exact assurance-radios shape couldn't be captured.
-        "radios": _position_radios(ap),
+        # Empty: the accessPointPositions radio shape breaks Hamina's floor
+        # import here; the true assurance-radios shape is still uncaptured.
+        "radios": [],
         "neighbors": [],
     }}
 
