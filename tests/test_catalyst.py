@@ -224,6 +224,20 @@ def test_assurance_network_devices(cat_client):
     # id matches the AP's network-device UUID so Hamina links live data to the AP
     assert dev["id"] == mapping.ap_uuid(_snapshot().access_points[0])
     assert dev["macAddress"] == "aa:bb:cc:00:11:22" and dev["reachabilityStatus"] == "REACHABLE"
+
+    # a query for a non-AP family returns nothing (we only have APs)
+    sw = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
+        "query": {"filters": [{"key": "deviceFamily", "operator": "eq",
+                               "value": "Switches and Hubs"}]}}).json()
+    assert sw["totalCount"] == 0
+
+    # planned (design) APs: none, ours are all real/positioned
+    from unifi_hamina_live.catalyst import mapping
+    floor_id = mapping.floor_id_for(_snapshot().floorplans[0])
+    planned = cat_client.get(
+        f"/dna/intent/api/v1/floors/{floor_id}/planned-access-points", headers=h)
+    assert planned.status_code == 200 and planned.json()["response"] == []
+
     # unauth rejected
     assert cat_client.post("/api/assurance/v2/networkDevices").status_code == 401
 

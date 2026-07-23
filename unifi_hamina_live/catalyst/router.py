@@ -172,15 +172,36 @@ async def assurance_network_devices(request: Request):
     log it (to learn the exact query) and return all APs in an assurance shape."""
     if not _require_token(request):
         return _unauthorized()
+    import json as _json
+
+    family = None
     try:
         raw = await request.body()
         if raw:
             log.info("catalyst assurance/networkDevices body: %s",
                      raw[:2000].decode("utf-8", "replace"))
+            q = _json.loads(raw).get("query", {})
+            for f in q.get("filters", []):
+                if f.get("key") == "deviceFamily":
+                    family = str(f.get("value") or "")
     except Exception:  # pragma: no cover - defensive
         pass
-    devs = [mapping.assurance_device(a) for a in _snap(request).access_points]
+    # We only have APs; a query for switches/other families returns nothing.
+    if family and "unified ap" not in family.lower():
+        devs = []
+    else:
+        devs = [mapping.assurance_device(a) for a in _snap(request).access_points]
     return {"response": devs, "totalCount": len(devs), "version": "1.0"}
+
+
+@router.get("/dna/intent/api/v1/floors/{floor_id}/planned-access-points")
+def get_planned_access_points(floor_id: str, request: Request,
+                              limit: int = 500, offset: int = 1):
+    """Planned (design) APs on a floor. Ours are all real/positioned APs
+    (delivered via accessPointPositions), so there are no planned ones."""
+    if not _require_token(request):
+        return _unauthorized()
+    return mapping.wrap([])
 
 
 # --- maps export (task-based async BAPI) ----------------------------------
