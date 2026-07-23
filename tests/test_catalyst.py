@@ -197,12 +197,18 @@ def test_v2_floors_geometry_and_ap_positions(cat_client):
                         params={"_unitsOfMeasure": "feet"}, headers=h).json()["response"]
     assert fl["id"] == floor_id and fl["type"] == "floor"
     assert fl["unitsOfMeasure"] == "feet" and abs(fl["width"] - 164.042) < 0.01
+    assert fl["nameHierarchy"] == "Global/UniFi/HQ/Ground"  # real appliance has this
 
     # AP positions on the floor (feet): AP at 600px*0.05=30 m -> 98.425 ft
+    import uuid as _uuid
     pos = cat_client.get(f"/dna/intent/api/v2/floors/{floor_id}/accessPointPositions",
                          headers=h).json()["response"]
     assert pos and pos[0]["macAddress"] == "aa:bb:cc:00:11:22"
     assert abs(pos[0]["position"]["x"] - 98.425) < 0.01
+    _uuid.UUID(pos[0]["id"])                 # id is the AP's network-device UUID
+    assert pos[0]["id"] == mapping.ap_uuid(_snapshot().access_points[0])
+    radio = pos[0]["radios"][0]              # RF data present, band as float array
+    assert radio["bands"] == [5.0] and radio["channel"] == 36 and radio["txPower"] == 20
 
 
 def test_unimplemented_is_captured(cat_client):

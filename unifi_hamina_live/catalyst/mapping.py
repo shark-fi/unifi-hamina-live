@@ -51,6 +51,13 @@ def _as_uuid(value) -> str:
         return str(uuid.uuid5(_NS, "floor:" + str(value)))
 
 
+def ap_uuid(ap: AccessPoint) -> str:
+    """Stable UUID for an AP, used as its network-device id everywhere (a real
+    appliance identifies APs by UUID, and accessPointPositions must use the same
+    id the device inventory does so Hamina can correlate)."""
+    return str(uuid.uuid5(_NS, "ap:" + ap.mac))
+
+
 def wrap(data) -> dict:
     """Standard Intent API envelope."""
     return {"response": data, "version": "1.0"}
@@ -190,8 +197,9 @@ def aps_for_site_id(snap: Snapshot, site_id: str) -> list[AccessPoint]:
 # --- devices --------------------------------------------------------------
 def network_device(ap: AccessPoint) -> dict:
     return {
-        "id": ap.serial,
-        "instanceUuid": ap.serial,
+        "id": ap_uuid(ap),
+        "instanceUuid": ap_uuid(ap),
+        "serialNumber": ap.serial,
         "hostname": ap.name,
         "managementIpAddress": ap.ip,
         "macAddress": ap.mac,
@@ -217,7 +225,8 @@ def device_detail(ap: AccessPoint, snap: Snapshot) -> dict:
         "nwDeviceName": ap.name,
         "macAddress": ap.mac,
         "platformId": ap.model,
-        "nwDeviceId": ap.serial,
+        "nwDeviceId": ap_uuid(ap),
+        "serialNumber": ap.serial,
         "family": "Unified AP",
         "reachabilityStatus": "Reachable" if ap.online else "Unreachable",
         "managementIpAddr": ap.ip,
@@ -246,7 +255,7 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
             "adminStatus": "Enabled" if r.channel is not None else "Disabled",
         })
     return {
-        "instanceUuid": ap.serial,
+        "instanceUuid": ap_uuid(ap),
         "apName": ap.name,
         "macAddress": ap.mac,
         "ethMac": ap.mac,
@@ -277,13 +286,20 @@ def _floor_by_id(snap: Snapshot, floor_id: str) -> FloorPlan | None:
 
 
 def floor_v2(snap: Snapshot, floor_id: str, units: str = "feet") -> dict | None:
+    """Get-floor v2, matched to a real appliance: id/parentId/nameHierarchy/
+    type/name/floorNumber/rfModel/width/length/height/unitsOfMeasure."""
     fp = _floor_by_id(snap, floor_id)
     if fp is None:
         return None
     conv, unit_name = _unit_conv(units)
     w_m, l_m = _metres_dims(fp)
+    site = next((s for s in snap.sites if s.id == fp.site_id), None)
+    site_name = site.name if site else fp.site_id
     return {
+        "id": floor_id,
         "parentId": building_id(fp.site_id),
+        "nameHierarchy": f"Global/{_AREA_NAME}/{site_name}/{fp.name}",
+        "type": "floor",
         "name": fp.name,
         "floorNumber": 1,
         "rfModel": "Cubes And Walled Offices",
@@ -291,12 +307,29 @@ def floor_v2(snap: Snapshot, floor_id: str, units: str = "feet") -> dict | None:
         "length": round((l_m or 0) * conv, 3),
         "height": round(3.0 * conv, 3),
         "unitsOfMeasure": unit_name,
-        "type": "floor",
-        "id": floor_id,
     }
 
 
+def _position_radios(ap: AccessPoint) -> list[dict]:
+    radios = []
+    for r in ap.radios:
+        try:
+            band = float(r.band)
+        except (TypeError, ValueError):
+            band = 0.0
+        radios.append({
+            "id": str(uuid.uuid5(_NS, f"radio:{ap.mac}:{r.band}")),
+            "bands": [band],
+            "channel": r.channel,
+            "txPower": int(r.tx_power_dbm) if r.tx_power_dbm is not None else None,
+            "antenna": {"elevation": 0, "name": "Internal", "azimuth": 0},
+        })
+    return radios
+
+
 def ap_positions(snap: Snapshot, floor_id: str, units: str = "feet") -> list[dict]:
+    """accessPointPositions, matched to a real appliance: each AP is
+    id (the network-device UUID) + name/macAddress/type/model/position/radios."""
     fp = _floor_by_id(snap, floor_id)
     if fp is None:
         return []
@@ -307,17 +340,17 @@ def ap_positions(snap: Snapshot, floor_id: str, units: str = "feet") -> list[dic
             continue
         x_m, y_m = _ap_metres(ap, fp)
         out.append({
-            "id": ap.serial,
-            "instanceUuid": ap.serial,
+            "id": ap_uuid(ap),
             "name": ap.name,
             "macAddress": ap.mac,
-            "type": "AP",
+            "type": ap.model_code or ap.model,
             "model": ap.model,
             "position": {
                 "x": round((x_m or 0) * conv, 3),
                 "y": round((y_m or 0) * conv, 3),
-                "z": 0.0,
+                "z": round(3.0 * conv, 3),
             },
+            "radios": _position_radios(ap),
         })
     return out
 

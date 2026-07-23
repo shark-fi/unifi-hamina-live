@@ -125,7 +125,7 @@ def get_device_detail(request: Request, identifier: str = "", searchBy: str = ""
     key = normalize_mac(searchBy) if "mac" in identifier.lower() else searchBy
     ap = next(
         (a for a in snap.access_points
-         if searchBy in (a.serial, a.mac, a.name) or a.mac == key),
+         if searchBy in (a.serial, a.mac, a.name, mapping.ap_uuid(a)) or a.mac == key),
         None,
     )
     if ap is None:
