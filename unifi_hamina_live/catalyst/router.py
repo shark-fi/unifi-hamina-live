@@ -151,15 +151,17 @@ def _dna_404(msg: str) -> JSONResponse:
 
 @router.post("/dna/intent/api/v1/maps/export/{floor_id}")
 def maps_export(floor_id: str, request: Request):
-    """Submit a floor map export. Returns the task-based async handle
-    (response.taskId + url); the client polls the task then downloads the file."""
+    """Submit a floor map export. A real appliance takes `Content-Type:
+    text/plain` with the archive filename as the body, and answers 202 with the
+    task handle (response.taskId + url); the client polls the task then downloads
+    the file. We accept any body and generate the archive ourselves."""
     if not _require_token(request):
         return _unauthorized()
     floor = maps._floor(_snap(request), floor_id)
     if floor is None:
         return _dna_404(f"Floor {floor_id} not found")
     job = request.app.state.catalyst_maps.create(floor_id)
-    return maps.submit_response(job)
+    return JSONResponse(status_code=202, content=maps.submit_response(job))
 
 
 @router.get("/dna/intent/api/v1/task/{task_id}")

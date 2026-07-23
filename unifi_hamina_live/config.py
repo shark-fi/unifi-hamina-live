@@ -56,7 +56,9 @@ class Settings(BaseSettings):
     # client polling the task sees it "running" before it goes "done". Simulate
     # that window (ms) — an instant-done task can trip a client that waits for
     # the running->done transition. 0 = complete immediately (used in tests).
-    catalyst_export_delay_ms: int = Field(default=1000, ge=0)
+    # A real appliance's maps/export finished effectively instantly (the first
+    # task poll was already terminal), so default to no simulated running phase.
+    catalyst_export_delay_ms: int = Field(default=0, ge=0)
     # Advertise floors WITH a map (mapGeometry/mapsSummary), which makes Hamina
     # attempt the maps/export image download on import. That auto-import can't
     # be completed against the facade yet (see docs/CATALYST.md), and Hamina
