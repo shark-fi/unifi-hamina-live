@@ -270,104 +270,143 @@ def ap_configuration(ap: AccessPoint, snap: Snapshot) -> dict:
 def assurance_device(ap: AccessPoint, snap: Snapshot,
                      fields: list[str] | None = None) -> dict:
     """One entry in the Assurance networkDevices `data` list, wrapped in
-    `{"values": {...}}` as on a real appliance. `uuid` matches the
-    network-device / accessPointPositions id so Hamina correlates the AP to its
-    placement; `floorId` ties it to the floor. Every key here is one that a
-    real appliance returns — NO extra keys: Hamina parses the Assurance response
-    with a strict fail-on-unknown parser (same as the site hierarchy), so an
-    unrecognized field makes the whole floor import fail with "An unexpected
-    error occurred". The real key set is from a live capture (issue #1).
+    `{"values": {...}}`. The base object is matched FIELD-FOR-FIELD (every key,
+    correct type) to a real Catalyst appliance's fields=["radios"] response
+    (live capture, issue #1). Hamina parses this with a strict fail-on-unknown
+    parser, so both extra and missing keys fail the vendor-data sync — hence the
+    exact match.
 
-    `radios`/`neighbors` keys are ALWAYS present (empty by default): Hamina's
-    floor-import parser rejects the response if they are missing (import fails
-    with "An unexpected error occurred"), and it also rejects a populated
-    `radios` during the import phase — so the base carries empty arrays and the
-    real `radios` payload is filled in ONLY for the explicit fields=["radios"]
-    query, which Hamina makes AFTER the floor is imported (to render RF/AP
-    data). The `radios` shape is captured field-for-field from a real
-    appliance. We have no neighbor (RRM) telemetry, so `neighbors` stays []."""
+    The heavy sub-objects are FIELD-GATED exactly as a real appliance does: the
+    base never carries them, and each is added only when its query asks for it —
+    fields=["radios"] -> `radios`, ["neighbors"] -> `neighbors`,
+    ["connectedNetworkDevice"] -> `connectedNetworkDevice`. (Always-injecting
+    radios/neighbors made them extra keys on the connectedNetworkDevice/Switches
+    queries and broke the sync.)"""
     want = {f.lower() for f in (fields or [])}
     fp = _ap_floor(ap, snap)
     floor_id = floor_id_for(fp) if fp else ""
     score = 10.0 if ap.online else 1.0
+    up = ap.online
     mac = ap.mac
     values = {
-        "uuid": ap_uuid(ap),
-        "name": ap.name,
-        "deviceMacAddress": mac,
-        "owningEntityId": mac,
-        "deviceFamily": "Unified AP",
-        "deviceModel": ap.model,
-        "deviceSeries": ap.model,
-        "nwDeviceType": ap.model,
-        "deviceRole": "ACCESS",
-        "collectionStatus": "Managed",
-        "manageabilityState": "Managed",
-        "maintenanceMode": False,
-        "communicationState": "UP" if ap.online else "DOWN",
-        "isDeleted": False,
-        "softwareVersion": ap.firmware or "",
-        "osVersion": ap.firmware or "",
-        "serialNumber": ap.serial,
+        "adminState": "1",
+        # device-config threshold string; a real appliance's default, carried verbatim
+        "allThresholds": ("MEM=I_90::CPU=I_90::ITF=I_50,I_20,I_20::"
+                          "NE=I_-81,I_-83,I_-83::UTIL=I_70,I_70,I_70::"
+                          "AQ=I_60,I_75,I_75::LE=I_1"),
+        "ancestorSiteId": "",
+        "apLastDisconnectTime": "0",
         "apMode": "Local",
         "apProtocol": 4.0,
-        "protocol": "4",
-        "opState": "4",
-        "floorId": floor_id,
-        "siteUUID": floor_id,
-        "siteHierarchyGraphId": f"/{floor_id}/" if floor_id else "/",
-        "siteHierarchy": "",
-        "buildingId": "",
+        "apSlotCount": float(len(ap.radios)),
+        "apType": "Standard",
         "areaId": "",
-        "ancestorSiteId": "",
-        "parentSiteId": "",
-        "deviceGroupHierarchyId": "/",
-        "clCount": float(ap.num_clients),
-        "cpu": 0.0,
-        "memory": 0.0,
-        "overallScore": score,
-        "systemScore": score,
-        "utilizationScore": score,
-        "interferenceScore": score,
+        "bootTime": 0.0,
+        "buildingId": "",
+        "category": "6",
         "channelAirQualityScore": score,
-        "errorScore": score,
-        "dpScore": score,
+        "channelNoiseScore": score,
+        "clCount": float(ap.num_clients),
+        "collectionStatus": "Managed",
+        "communicationState": "UP" if up else "DOWN",
+        "connectedTime": "",
+        "connectedToWlcUuid": "",
+        "connectedWlcName": "",
+        "connectedWlcUuid": "",
+        "connectivityStatus": 100 if up else 0,
         "cpScore": -1.0,
-        "healthScore": [{"healthType": "OVERALL", "reason": "", "score": score}],
-        "powerStatus": "PoE / Full Power",
-        "powerMode": "HIGH_POWER",
-        "powerType": "PoE+",
-        "powerSaveMode": 1.0,
-        "wifi6Status": 2.0,
+        "cpu": 0.0,
+        "cpuScore": score,
+        "deviceFamily": "Unified AP",
+        "deviceGroupHierarchyId": "/",
+        "deviceMacAddress": mac,
+        "deviceModel": ap.model,
+        "deviceRole": "ACCESS",
+        "deviceSeries": ap.model,
+        "dpScore": score,
+        "errorScore": score,
+        "ethernetInterfaces": [
+            {"apInterfaceName": "GigabitEthernet0", "errorPercent": 0.0,
+             "speed": "1000000000"}
+        ],
+        "ethernetMac": mac,
+        "flexGroup": "",
+        "floorId": floor_id,
+        "groupUUID": "",
+        "healthScore": [
+            {"healthType": "OVERALL", "reason": "", "score": score},
+            {"healthType": "SYSTEMHEALTH", "reason": "", "score": -1.0},
+            {"healthType": "CPHEALTH", "reason": "", "score": -1.0},
+            {"healthType": "DPHEALTH", "reason": "", "score": -1.0},
+        ],
         "homeApEnabled": "false",
+        "icapCapability": "0",
+        "interferenceScore": score,
+        "isDeleted": False,
+        "issueCount": 0,
+        "lastBootTime": 0.0,
         "ledFlashEnabled": False,
         "ledFlashSeconds": 0,
+        "location": "",
+        "maintenanceMode": False,
+        "manageabilityState": "Managed",
+        "managementIpAddress": ap.ip or "",
+        "memory": 0.0,
+        "memoryScore": score,
+        "name": ap.name,
+        "nwDeviceType": ap.model,
+        "opState": "4",
+        "osVersion": ap.firmware or "",
+        "overallScore": score,
+        "owningEntityId": mac,
+        "parentSiteId": "",
+        "platformId": ap.model,
+        "policyTagName": "",
+        "powerCalendarProfile": "",
+        "powerMode": "HIGH_POWER",
+        "powerProfile": "",
+        "powerSaveMode": 1.0,
+        "powerSaveModeCapable": 2.0,
+        "powerStatus": "PoE / Full Power",
+        "powerType": "PoE+",
+        "protocol": "4",
+        "reachability": "UP" if up else "DOWN",
+        "regulatoryDomain": "",
+        "resetReason": "--",
+        "rfTagName": "",
         "ringStatus": False,
+        "serialNumber": ap.serial,
+        "siteHierarchy": "",
+        "siteHierarchyGraphId": f"/{floor_id}/" if floor_id else "/",
+        "siteTagName": "",
+        "siteUUID": floor_id,
+        "softwareVersion": ap.firmware or "",
         "stackType": "NA",
         "subMode": "None",
-        "resetReason": "--",
-        "groupUUID": "",
-        "rfTagName": "",
-        "siteTagName": "",
-        "policyTagName": "",
         "switchName": "",
         "switchPort": "",
-        "connectedWlcName": "",
-        "bootTime": 0.0,
+        "switchUUID": "",
+        "systemScore": score,
         "tagIdList": [],
-        "ethernetInterfaces": [
-            {"apInterfaceName": "GigabitEthernet0", "speed": "1000000000",
-             "errorPercent": 0.0}
-        ],
-        # Keys must always be present (empty) or the import parser rejects the
-        # response; see the docstring. We have no neighbor telemetry.
-        "radios": [],
-        "neighbors": [],
+        "upTime": "",
+        "utilizationScore": score,
+        "uuid": ap_uuid(ap),
+        "wifi6Status": 2.0,
+        "wifi6eStatus": -1.0,
+        "wifi7Status": 1.0,
     }
-    # Only the explicit fields=["radios"] query (post-import render) gets the
-    # real radio payload; a populated radios during import breaks the parser.
+    # Field-gated sub-objects — present ONLY when the query requests them, as on
+    # a real appliance (captured fields=["radios"]/["neighbors"]/["connectedNetworkDevice"]).
     if "radios" in want:
         values["radios"] = _assurance_radios(ap)
+    if "neighbors" in want:
+        values["neighbors"] = []  # no RRM neighbor telemetry available
+    if "connectednetworkdevice" in want:
+        values["connectedNetworkDevice"] = {
+            "deviceIp": "", "apPort": "GigabitEthernet0", "devicePort": "",
+            "deviceModel": "", "deviceFamily": "Switches and Hubs",
+            "deviceName": "", "deviceUUID": "",
+        }
     return {"values": values}
 
 

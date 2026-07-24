@@ -229,17 +229,25 @@ def test_assurance_network_devices(cat_client):
     assert vals["uuid"] == mapping.ap_uuid(_snapshot().access_points[0])
     assert vals["deviceMacAddress"] == "aa:bb:cc:00:11:22"
     assert vals["deviceFamily"] == "Unified AP" and vals["healthScore"][0]["score"] == 10.0
-    # radios/neighbors keys are ALWAYS present (empty) — the import parser needs
-    # them, and a populated radios during import breaks it, so default is empty.
-    assert vals["radios"] == [] and vals["neighbors"] == []
+    # base object matches the real appliance field-for-field; the heavy sub-objects
+    # are GATED (absent unless the query asks), exactly as a real box does.
+    assert "radios" not in vals and "neighbors" not in vals
+    assert "connectedNetworkDevice" not in vals
+    assert vals["reachability"] in ("UP", "DOWN")
+    assert vals["wifi7Status"] == 1.0 and vals["apSlotCount"] == 1.0  # 1 radio in the fixture
 
-    # fields=["radios"] fills in the real assurance radios shape (NOT the
-    # positions shape) — band string, slotId, txPower float, channels list.
-    # neighbors stays [] (no RRM telemetry).
+    # fields=["connectedNetworkDevice"] adds that object (uplink switch), gated
+    cnd = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
+        "query": {"fields": ["connectedNetworkDevice"]}}).json()["data"][0]["values"]
+    assert cnd["connectedNetworkDevice"]["deviceFamily"] == "Switches and Hubs"
+    assert "radios" not in cnd
+
+    # fields=["radios"] adds the real assurance radios shape (NOT the positions
+    # shape); neighbors/connectedNetworkDevice stay absent.
     rr = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
         "query": {"fields": ["radios"]}}).json()
     rvals = rr["data"][0]["values"]
-    assert rvals["neighbors"] == []
+    assert "neighbors" not in rvals and "connectedNetworkDevice" not in rvals
     radio = rvals["radios"][0]
     assert radio["band"] == "5" and radio["slotId"] == 1
     assert radio["baseChannel"] == 36.0 and radio["channels"] == [36]
