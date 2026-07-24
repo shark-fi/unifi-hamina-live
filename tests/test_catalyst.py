@@ -236,11 +236,11 @@ def test_assurance_network_devices(cat_client):
     assert vals["reachability"] in ("UP", "DOWN")
     assert vals["wifi7Status"] == 1.0 and vals["apSlotCount"] == 1.0  # 1 radio in the fixture
 
-    # fields=["connectedNetworkDevice"] adds that object (uplink switch), gated
+    # connectedNetworkDevice is intentionally omitted (no modeled uplink switch;
+    # a phantom reference fails the vendor sync). radios also absent here.
     cnd = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
         "query": {"fields": ["connectedNetworkDevice"]}}).json()["data"][0]["values"]
-    assert cnd["connectedNetworkDevice"]["deviceFamily"] == "Switches and Hubs"
-    assert "radios" not in cnd
+    assert "connectedNetworkDevice" not in cnd and "radios" not in cnd
 
     # fields=["radios"] adds the real assurance radios shape (NOT the positions
     # shape); neighbors/connectedNetworkDevice stay absent.

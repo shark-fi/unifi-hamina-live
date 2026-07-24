@@ -401,12 +401,11 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
         values["radios"] = _assurance_radios(ap)
     if "neighbors" in want:
         values["neighbors"] = []  # no RRM neighbor telemetry available
-    if "connectednetworkdevice" in want:
-        values["connectedNetworkDevice"] = {
-            "deviceIp": "", "apPort": "GigabitEthernet0", "devicePort": "",
-            "deviceModel": "", "deviceFamily": "Switches and Hubs",
-            "deviceName": "", "deviceUUID": "",
-        }
+    # connectedNetworkDevice (the AP's uplink switch) is intentionally OMITTED:
+    # we don't model the UniFi switch/port an AP uplinks to, and a synthesized
+    # blank switch references a device that is absent from the Switches
+    # inventory (which we also return empty) — that dangling cross-reference
+    # fails the vendor sync. An AP with no known uplink switch is a valid state.
     return {"values": values}
 
 
