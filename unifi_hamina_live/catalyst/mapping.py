@@ -272,8 +272,11 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
     """One entry in the Assurance networkDevices `data` list, wrapped in
     `{"values": {...}}` as on a real appliance. `uuid` matches the
     network-device / accessPointPositions id so Hamina correlates the AP to its
-    placement; `floorId` ties it to the floor. The full field set (with sane
-    defaults) mirrors a real appliance so nothing required is missing.
+    placement; `floorId` ties it to the floor. Every key here is one that a
+    real appliance returns — NO extra keys: Hamina parses the Assurance response
+    with a strict fail-on-unknown parser (same as the site hierarchy), so an
+    unrecognized field makes the whole floor import fail with "An unexpected
+    error occurred". The real key set is from a live capture (issue #1).
 
     `radios`/`neighbors` keys are ALWAYS present (empty by default): Hamina's
     floor-import parser rejects the response if they are missing (import fails
@@ -292,7 +295,6 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
         "uuid": ap_uuid(ap),
         "name": ap.name,
         "deviceMacAddress": mac,
-        "macAddress": mac,
         "owningEntityId": mac,
         "deviceFamily": "Unified AP",
         "deviceModel": ap.model,
@@ -303,7 +305,6 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
         "manageabilityState": "Managed",
         "maintenanceMode": False,
         "communicationState": "UP" if ap.online else "DOWN",
-        "reachabilityStatus": "REACHABLE" if ap.online else "UNREACHABLE",
         "isDeleted": False,
         "softwareVersion": ap.firmware or "",
         "osVersion": ap.firmware or "",
@@ -345,9 +346,6 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
         "stackType": "NA",
         "subMode": "None",
         "resetReason": "--",
-        "ulComplianceState": "Not Applicable",
-        "ulRequired": False,
-        "apMisconfigReason": "None",
         "groupUUID": "",
         "rfTagName": "",
         "siteTagName": "",
@@ -355,7 +353,6 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
         "switchName": "",
         "switchPort": "",
         "connectedWlcName": "",
-        "connectedTime": "",
         "bootTime": 0.0,
         "tagIdList": [],
         "ethernetInterfaces": [
