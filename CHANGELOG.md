@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project
 follows semantic versioning.
 
+## [0.3.0] — Catalyst maps/export + Assurance layer; Live vendor sync ruled out
+
+Pushed the Catalyst facade all the way through the vendor-sync gate, matching a
+real appliance field-for-field — and established, honestly, that the final
+Live-sync step is not reproducible with a UniFi-backed facade.
+
+### Added / fixed
+
+- **`maps/export` archive flow** — real task-based BAPI: `POST` with
+  `Content-Type: text/plain` (filename body) → **202** `{response:{taskId,url}}`;
+  the done task carries the download path in **`data:"/file/{fileId}"`**; archive
+  served under `/file`, `/api/v1/file`, `/dna/intent/api/v1/file`. Captured from a
+  real appliance. Hamina downloads the archive.
+- **v2 floors + `accessPointPositions`** — matched field-for-field (`nameHierarchy`,
+  UUID ids, `radios` = `id/bands/antenna`).
+- **Assurance `networkDevices`** — the complete **94-field `values`** object and
+  **28-field `radios`** object matched exactly to a live capture; sub-objects
+  (`radios`/`neighbors`/`connectedNetworkDevice`) **field-gated per query** as a
+  real box does; response **scoped to the queried floor** via the `sites` filter so
+  assurance and `accessPointPositions` agree on device counts.
+
+### Known limitation
+
+- **Catalyst *Live* vendor sync does not complete** even with every response
+  matched field-for-field, floor-scoped, and returning HTTP 200. It depends on a
+  fuller Catalyst topology (WLC, uplink switches, cross-family device graph) a
+  facade can't reproduce. See issue #1 (closed, not planned).
+- **Use the OpenIntent path** (`unifi-hamina-export` → Hamina Simulation) for the
+  working UniFi → Hamina pipeline. Recommended: `CATALYST_ADVERTISE_FLOOR_MAPS=false`.
+
 ## [0.2.0] — Cisco Catalyst (DNA) Center facade
 
 This release adds a **Cisco Catalyst Center (DNA Center) Intent-API facade** — a
