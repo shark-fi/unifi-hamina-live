@@ -176,6 +176,7 @@ async def assurance_network_devices(request: Request):
 
     family = None
     fields: list[str] = []
+    site_ids: list[str] = []
     try:
         raw = await request.body()
         if raw:
@@ -186,6 +187,9 @@ async def assurance_network_devices(request: Request):
             for f in q.get("filters", []):
                 if f.get("key") == "deviceFamily":
                     family = str(f.get("value") or "")
+                elif f.get("key") == "sites":
+                    v = f.get("value")
+                    site_ids = list(v) if isinstance(v, list) else ([v] if v else [])
     except Exception:  # pragma: no cover - defensive
         pass
     # We only have APs; a query for switches/other families returns nothing.
@@ -193,7 +197,20 @@ async def assurance_network_devices(request: Request):
     if family and "unified ap" not in family.lower():
         data = []
     else:
-        data = [mapping.assurance_device(a, snap, fields) for a in snap.access_points]
+        # Honor the `sites` filter: return ONLY the APs on the requested
+        # floor/site, matching accessPointPositions. Returning the whole
+        # inventory for a floor-scoped query gives Hamina devices whose floorId
+        # differs from the one it asked about, which fails the vendor sync.
+        if site_ids:
+            aps, seen = [], set()
+            for sid in site_ids:
+                for a in mapping.aps_for_site_id(snap, sid):
+                    if a.mac not in seen:
+                        seen.add(a.mac)
+                        aps.append(a)
+        else:
+            aps = snap.access_points
+        data = [mapping.assurance_device(a, snap, fields) for a in aps]
     # Real appliance envelope: {"version":"2.0","data":[{"values":{...}}]}
     return {"version": "2.0", "data": data}
 

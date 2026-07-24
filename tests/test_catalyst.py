@@ -263,6 +263,19 @@ def test_assurance_network_devices(cat_client):
         "cleanAirStatus", "antennaPlatformId", "rfProfile", "xorRadio",
         "wifi6Status"}
 
+    # the `sites` filter is honored: a floor-scoped query returns only that
+    # floor's APs (matching accessPointPositions); an unknown floor returns none.
+    floor = mapping.floor_id_for(_snapshot().floorplans[0])
+    on_floor = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
+        "query": {"filters": [{"key": "sites", "operator": "in", "value": [floor]},
+                              {"key": "deviceFamily", "operator": "eq", "value": "Unified AP"}]}}).json()
+    assert len(on_floor["data"]) == 1
+    none_floor = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
+        "query": {"filters": [{"key": "sites", "operator": "in",
+                               "value": ["00000000-0000-0000-0000-000000000000"]},
+                              {"key": "deviceFamily", "operator": "eq", "value": "Unified AP"}]}}).json()
+    assert none_floor["data"] == []
+
     # a query for a non-AP family returns nothing (we only have APs)
     sw = cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={
         "query": {"filters": [{"key": "deviceFamily", "operator": "eq",
