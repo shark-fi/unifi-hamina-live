@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  body { width: 300px; margin: 0; padding: 14px;
+    font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #131722; color: #e6e9ef; }
+  h1 { font-size: 14px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 12px; color: #8b93a7; font-size: 12px; }
+  label { display: block; margin: 10px 0 4px; color: #8b93a7; font-size: 12px; }
+  input { width: 100%; box-sizing: border-box; padding: 7px 9px; border-radius: 7px;
+    border: 1px solid #232a3a; background: #0b0e14; color: #e6e9ef; font: inherit; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  button { flex: 1; padding: 8px; border-radius: 7px; border: 1px solid #232a3a;
+    background: #1b2130; color: #e6e9ef; font: inherit; cursor: pointer; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  #status { margin-top: 10px; font-size: 12px; color: #8b93a7; min-height: 16px; }
+</style>
+</head>
+<body>
+  <h1>UniFi Live for InnerSpace</h1>
+  <p class="sub">Overlays live clients &amp; AP telemetry onto the InnerSpace floor
+    plan. Read-only; runs only on the console you specify.</p>
+
+  <label for="origin">Console URL</label>
+  <input id="origin" type="text" placeholder="https://192.168.1.1" />
+
+  <label for="site">Network site id (optional)</label>
+  <input id="site" type="text" placeholder="default" />
+
+  <div class="row">
+    <button id="enable" class="primary">Enable</button>
+    <button id="disable">Disable</button>
+  </div>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
