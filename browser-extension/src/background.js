@@ -8,7 +8,11 @@
 const SCRIPT_ID = "unifi-innerspace";
 
 async function registerForOrigin(origin) {
-  const matches = [origin + "/innerspace/*"];
+  // The console is an SPA; InnerSpace lives at nested paths like
+  // /network/<site>/innerspace/<plan> (local) or
+  // /consoles/<id>/network/<site>/innerspace/<plan> (remote). Register for the
+  // whole origin and let the content script guard on the path.
+  const matches = [origin + "/*"];
   try {
     const existing = await chrome.scripting.getRegisteredContentScripts({
       ids: [SCRIPT_ID],

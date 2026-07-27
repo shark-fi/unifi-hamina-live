@@ -36,13 +36,18 @@ render the **live client map inside the console** — effectively the bridge's n
 client-map view, injected into InnerSpace and fed straight from the console.
 InnerSpace natively shows *no* live clients, so this adds exactly what's missing.
 
-### In-map overlay vs. our own card — decided by the DOM capture
-- If InnerSpace draws the map as **SVG**, we inject `<circle>`s into its
-  coordinate space and they pan/zoom *for free* → pixel-true overlay.
-- If it's **canvas/WebGL**, we can't inject into it → we render our **own** map
-  card (floor image is same-origin, so it loads directly) with the live dots.
-
-The **one DOM snapshot** requested below tells us which, *and* where to anchor.
+### In-map overlay — RESOLVED by the DOM capture
+The InnerSpace map is a WebGL **`<canvas data-engine="three.js">`** (can't inject
+into it) — but each AP label is a DOM `<section data-testid="stats-tooltip-*">`
+(with `data-testid="title"`/`model`) whose CSS `transform` InnerSpace **keeps in
+sync with the canvas through pan/zoom**. So we get a **pixel-true overlay for
+free**: read each marker's live screen rect (`getBoundingClientRect`) and pin
+client bubbles to it on `requestAnimationFrame`. No WebGL hooking, no scene→pixel
+math, no floor-image fetch. AP positions come from the DOM; client counts from
+the Network API, joined by name. Real path is
+`/network/<site>/innerspace/<plan>` (local) or
+`/consoles/<id>/network/<site>/innerspace/<plan>` (unifi.ui.com); API base/site
+are derived from the URL.
 
 ## Coordinate transform (InnerSpace → pixels)
 

@@ -1,241 +1,224 @@
 /* UniFi Live for InnerSpace — content script (same-origin, read-only).
  *
- * Runs on the UniFi console. Reads the InnerSpace project (floor image + AP
- * positions) and the Network API (live APs + clients), joins them by AP MAC, and
- * renders a live client map in an injected shadow-DOM card. Everything is a GET
- * against the console's own origin, using the logged-in session cookies — no
- * bridge, no CORS, no CSRF.
- *
- * SCAFFOLD: the card floats bottom-right (anchor TBD once we have the InnerSpace
- * DOM). Verified logic: API paths, MAC join, scene->pixel transform, rendering.
- * Not yet run against a live console — expect small field-name tweaks.
+ * Overlays live UniFi clients onto the InnerSpace floor plan. InnerSpace draws
+ * the map on a WebGL <canvas>, but it also renders each AP's label as a DOM
+ * <section data-testid="stats-tooltip-*"> whose CSS transform it keeps in sync
+ * with the canvas as you pan/zoom. We read those live screen positions straight
+ * from the DOM (no coordinate math, auto-tracks pan/zoom) and pin client bubbles
+ * to them. Client counts come from the console's own Network API (same origin,
+ * logged-in session, GETs only) joined to APs by name.
  */
 (() => {
-  if (window.__unifiLiveInnerspace) return; // guard against double injection
+  if (window.__unifiLiveInnerspace) return;
   window.__unifiLiveInnerspace = true;
 
-  const IS = "/proxy/innerspace/api";
-  const NET = "/proxy/network/api";
-  const SVGNS = "http://www.w3.org/2000/svg";
   const REFRESH_MS = 5000;
-  const state = { site: "", selPlan: null, selAp: null, aps: [], imgFor: undefined };
+  const MAX_DOTS = 12;
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const macNorm = (m) => String(m || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
 
-  const normMac = (m) => String(m || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  // --- API base + site derived from the URL (works local and on unifi.ui.com)
+  function apiCtx() {
+    const p = location.pathname;
+    const i = p.indexOf("/network/");
+    if (i < 0) return null;
+    const prefix = p.slice(0, i); // "" locally, "/consoles/<id>" on unifi.ui.com
+    const site = p.slice(i + 9).split("/")[0] || "default";
+    return { base: `${location.origin}${prefix}/proxy/network/api`, site };
+  }
 
-  async function getJson(path) {
-    const r = await fetch(path, { credentials: "include", headers: { Accept: "application/json" } });
-    if (!r.ok) throw new Error(`${path} -> HTTP ${r.status}`);
+  async function getJson(url) {
+    const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+    if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
     return r.json();
   }
 
-  async function resolveSite() {
-    if (state.site) return state.site;
-    const stored = await chrome.storage.local.get("site");
-    if (stored.site) return (state.site = stored.site);
-    const sites = (await getJson(`${NET}/self/sites`)).data || [];
-    return (state.site = (sites[0] && sites[0].name) || "default");
-  }
+  // name(lower) -> { online, clients:[{mac,hostname,band,signal,guest}] }
+  let apByName = {};
+  let lastErr = null;
 
-  function sceneToPx(pt, map, W, H) {
-    const mp = (map.position && map.position[0]) || { x: 0, y: 0 };
-    const sx = (map.scale && map.scale.x) || 1;
-    const sy = (map.scale && map.scale.y) || 1;
-    return { x: (pt.x - mp.x) / sx + W / 2, y: H / 2 - (pt.y - mp.y) / sy };
-  }
-
-  function imageSize(url) {
-    return new Promise((resolve) => {
-      const im = new Image();
-      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-      im.onerror = () => resolve(null);
-      im.src = url;
-    });
-  }
-
-  // ---- data ------------------------------------------------------------
-  async function loadModel() {
-    const site = await resolveSite();
-    const [proj, devWrap, staWrap] = await Promise.all([
-      getJson(`${IS}/project?mode=2D`),
-      getJson(`${NET}/s/${site}/stat/device`),
-      getJson(`${NET}/s/${site}/stat/sta`),
-    ]);
-    const data = proj.data || proj;
-    const shapes = data.shapes || [];
-    const plans = (data.plans || []).map((p) => ({ id: p.id, name: p.title || p.id }));
-    const mapByPlan = {}, devByPlan = {};
-    for (const s of shapes) {
-      if (s.type === "map" && s.planId) mapByPlan[s.planId] = s;
-      else if (s.type === "device" && s.planId) (devByPlan[s.planId] ||= []).push(s);
+  async function refreshData() {
+    const ctx = apiCtx();
+    if (!ctx) return;
+    try {
+      const [dev, sta] = await Promise.all([
+        getJson(`${ctx.base}/s/${ctx.site}/stat/device`),
+        getJson(`${ctx.base}/s/${ctx.site}/stat/sta`),
+      ]);
+      const byMac = {}; // AP mac -> {name, online}
+      for (const d of dev.data || []) {
+        if (d.type && d.type !== "uap") continue; // APs only
+        byMac[macNorm(d.mac)] = { name: d.name || d.mac, online: d.state === 1 };
+      }
+      const cliByMac = {};
+      for (const c of sta.data || []) {
+        if (c.is_wired) continue;
+        const ap = macNorm(c.ap_mac);
+        if (!ap) continue;
+        (cliByMac[ap] ||= []).push({
+          mac: macNorm(c.mac),
+          hostname: c.hostname || c.name || null,
+          band: c.radio === "na" ? "5" : c.radio === "ng" ? "2.4" : c.radio === "6e" ? "6" : null,
+          signal: c.signal ?? null,
+          guest: !!c.is_guest,
+        });
+      }
+      const next = {};
+      for (const [mac, ap] of Object.entries(byMac)) {
+        next[norm(ap.name)] = { online: ap.online, clients: cliByMac[mac] || [] };
+      }
+      apByName = next;
+      lastErr = null;
+    } catch (e) {
+      lastErr = e.message;
     }
-    // live joins
-    const devLive = {};
-    for (const d of devWrap.data || []) devLive[normMac(d.mac)] = d;
-    const cliByAp = {};
-    for (const c of staWrap.data || []) {
-      if (c.is_wired) continue;
-      const ap = normMac(c.ap_mac);
-      if (!ap) continue;
-      (cliByAp[ap] ||= []).push({
-        mac: normMac(c.mac),
-        hostname: c.hostname || c.name || null,
-        band: c.radio === "na" ? "5" : c.radio === "ng" ? "2.4" : c.radio === "6e" ? "6" : null,
-        signal_dbm: c.signal ?? null,
-        is_guest: !!c.is_guest,
-      });
-    }
-    return { plans, mapByPlan, devByPlan, devLive, cliByAp };
+    updateStatus();
   }
 
-  async function buildPlan(model, planId) {
-    const map = model.mapByPlan[planId];
-    const url = map && map.urlImage ? map.urlImage : null;
-    const dim = url ? await imageSize(url) : null;
-    const W = dim ? dim.w : 1000, H = dim ? dim.h : 600;
-    const aps = (model.devByPlan[planId] || []).map((s) => {
-      const mac = normMac(s.meta && s.meta.mac);
-      const px = sceneToPx((s.position && s.position[0]) || { x: 0, y: 0 }, map || {}, W, H);
-      const live = model.devLive[mac];
-      const clients = model.cliByAp[mac] || [];
-      return {
-        mac, name: s.title || (live && live.name) || mac,
-        online: live ? live.state === 1 : false,
-        x: px.x, y: px.y, clients,
-      };
+  // --- overlay ----------------------------------------------------------
+  const NS = "unifi-live";
+  let overlay, statusEl;
+  const groups = new Map(); // apNameLower -> {el, sig}
+
+  function ensureOverlay() {
+    if (overlay && document.body.contains(overlay)) return;
+    overlay = document.createElement("div");
+    overlay.id = NS + "-overlay";
+    Object.assign(overlay.style, {
+      position: "fixed", inset: "0", pointerEvents: "none", zIndex: "2147483000",
     });
-    return { id: planId, name: (model.plans.find((p) => p.id === planId) || {}).name, url, W, H, aps };
+    const style = document.createElement("style");
+    style.textContent = `
+      #${NS}-overlay .grp { position: fixed; transform: translate(-50%, -50%);
+        will-change: left, top; }
+      #${NS}-overlay .badge { position: absolute; left: 12px; top: -14px;
+        min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px;
+        background: #35c46b; color: #04140a; font: 700 11px/16px system-ui, sans-serif;
+        text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+      #${NS}-overlay .dot { position: absolute; width: 9px; height: 9px;
+        margin: -4.5px; border-radius: 50%; background: #2b6cff;
+        border: 1.5px solid #fff; box-shadow: 0 1px 2px rgba(0,0,0,.4);
+        transition: left .7s ease, top .7s ease; }
+      #${NS}-overlay .dot.guest { background: #e0a83c; }
+      #${NS}-status { position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
+        background: #131722ee; color: #e6e9ef; font: 12px/1.4 system-ui, sans-serif;
+        padding: 7px 11px; border-radius: 8px; border: 1px solid #2a3346;
+        pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+      #${NS}-status b { color: #4c9aff; }`;
+    overlay.appendChild(style);
+    document.body.appendChild(overlay);
+    statusEl = document.createElement("div");
+    statusEl.id = NS + "-status";
+    statusEl.textContent = "UniFi Live: starting…";
+    document.body.appendChild(statusEl);
   }
 
-  // ---- render ----------------------------------------------------------
-  function clientPositions(ap, R) {
-    const k = ap.clients.length, per = 8, out = [];
-    for (let i = 0; i < k; i++) {
+  function ringPositions(n) {
+    const out = [], per = 8;
+    for (let i = 0; i < n; i++) {
       const ring = Math.floor(i / per), inRing = i - ring * per;
-      const cnt = Math.min(per, k - ring * per);
+      const cnt = Math.min(per, n - ring * per);
       const ang = (inRing / cnt) * 2 * Math.PI - Math.PI / 2;
-      const rad = R * 2.1 + ring * R * 1.3;
-      out.push({ ...ap.clients[i], apName: ap.name, cx: ap.x + rad * Math.cos(ang), cy: ap.y + rad * Math.sin(ang) });
+      const rad = 20 + ring * 14;
+      out.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
     }
     return out;
   }
 
-  function renderPlan(root, plan) {
-    const svg = root.getElementById("map"), img = root.getElementById("mapImg");
-    svg.setAttribute("viewBox", `0 0 ${plan.W} ${plan.H}`);
-    img.setAttribute("width", plan.W); img.setAttribute("height", plan.H);
-    if (state.imgFor !== plan.id) { img.setAttribute("href", plan.url || ""); state.imgFor = plan.id; }
-    state.aps = plan.aps;
-    const total = plan.aps.reduce((n, a) => n + a.clients.length, 0);
-    root.getElementById("hint").textContent =
-      `${plan.aps.length} AP${plan.aps.length === 1 ? "" : "s"} · ${total} client${total === 1 ? "" : "s"}`;
-    const R = Math.min(Math.max(Math.max(plan.W, plan.H) * 0.012, 9), 26);
-
-    root.getElementById("apLayer").innerHTML = plan.aps.map((a) => {
-      const badge = a.clients.length
-        ? `<circle class="badge" cx="${a.x + R}" cy="${a.y - R}" r="${R * 0.72}"></circle>
-           <text class="badge-t" x="${a.x + R}" y="${a.y - R + R * 0.3}" font-size="${R * 0.9}">${a.clients.length}</text>` : "";
-      return `<g class="ap" data-mac="${a.mac}">
-        <circle class="core ${a.online ? "on" : "off"}${a.mac === state.selAp ? " sel" : ""}" cx="${a.x}" cy="${a.y}" r="${R}"></circle>
-        <text class="lbl" x="${a.x}" y="${a.y + R * 2.1}" font-size="${R * 1.05}" text-anchor="middle">${esc(a.name)}</text>
-        ${badge}</g>`;
-    }).join("");
-    root.querySelectorAll("#apLayer .ap").forEach((g) =>
-      g.addEventListener("click", () => selectAp(root, g.dataset.mac)));
-
-    const targets = {};
-    plan.aps.forEach((a) => clientPositions(a, R).forEach((c) => { targets[c.mac] = c; }));
-    const layer = root.getElementById("cliLayer"), have = {};
-    layer.querySelectorAll("circle").forEach((el) => { have[el.dataset.mac] = el; });
-    Object.keys(have).forEach((m) => { if (!targets[m]) have[m].remove(); });
-    Object.values(targets).forEach((c) => {
-      let el = have[c.mac];
-      if (!el) { el = document.createElementNS(SVGNS, "circle"); el.setAttribute("class", "cli" + (c.is_guest ? " guest" : "")); el.dataset.mac = c.mac; layer.appendChild(el); }
-      el.setAttribute("r", R * 0.42); el.setAttribute("cx", c.cx); el.setAttribute("cy", c.cy);
-    });
-    if (state.selAp) selectAp(root, state.selAp, true);
-  }
-
-  function selectAp(root, mac) {
-    state.selAp = mac;
-    const a = state.aps.find((x) => x.mac === mac);
-    root.querySelectorAll("#apLayer .core").forEach((el) =>
-      el.classList.toggle("sel", el.closest(".ap").dataset.mac === mac));
-    root.getElementById("sideT").textContent = a ? a.name : "Access point";
-    root.getElementById("side").innerHTML = a && a.clients.length
-      ? a.clients.map((c) => `<div class="cli-row"><b>${esc(c.hostname || c.mac)}</b>
-          <span>${esc(c.mac)}${c.band ? " · " + c.band + "G" : ""}${c.signal_dbm != null ? " · " + c.signal_dbm + " dBm" : ""}${c.is_guest ? " · guest" : ""}</span></div>`).join("")
-      : `<div class="muted">${a ? "No clients on this AP." : "Click an AP to list its clients."}</div>`;
-  }
-
-  function esc(s) {
-    return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  }
-
-  // ---- shell + loop ----------------------------------------------------
-  async function refresh(root) {
-    try {
-      const model = await loadModel();
-      const sel = root.getElementById("planSel");
-      const opts = model.plans.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
-      if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; }
-      if (!state.selPlan && model.plans[0]) state.selPlan = model.plans[0].id;
-      if (state.selPlan) sel.value = state.selPlan;
-      root.getElementById("conn").textContent = "live";
-      if (state.selPlan) renderPlan(root, await buildPlan(model, state.selPlan));
-    } catch (e) {
-      root.getElementById("conn").textContent = "error: " + e.message;
+  function groupFor(name) {
+    let g = groups.get(name);
+    if (!g) {
+      const el = document.createElement("div");
+      el.className = "grp";
+      overlay.appendChild(el);
+      g = { el, sig: "" };
+      groups.set(name, g);
     }
+    return g;
   }
 
-  const CSS = `
-    :host { all: initial; }
-    .card { position: fixed; right: 16px; bottom: 16px; width: 420px; z-index: 2147483647;
-      background: #131722; color: #e6e9ef; border: 1px solid #232a3a; border-radius: 12px;
-      font: 12px/1.4 system-ui, sans-serif; box-shadow: 0 12px 40px rgba(0,0,0,.5); overflow: hidden; }
-    .hd { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #232a3a; }
-    .hd b { font-size: 13px; } .hd .sp { margin-left: auto; }
-    select { background: #1b2130; color: #e6e9ef; border: 1px solid #232a3a; border-radius: 6px; padding: 3px 6px; font: inherit; }
-    .conn { color: #8b93a7; } .muted { color: #8b93a7; }
-    .stage { padding: 8px; } svg#map { width: 100%; height: auto; display: block; background: #0b0e14; border-radius: 6px; }
-    .core.on { fill: #3b82f6; stroke: #fff; stroke-width: 2; } .core.off { fill: #e5533c; stroke: #fff; stroke-width: 2; }
-    .core.sel { stroke: #35c46b; stroke-width: 3; } .ap { cursor: pointer; }
-    .lbl { fill: #e6e9ef; paint-order: stroke; stroke: #131722; stroke-width: 3px; stroke-linejoin: round; font-weight: 600; }
-    .badge { fill: #35c46b; } .badge-t { fill: #04140a; font-weight: 700; text-anchor: middle; }
-    .cli { fill: #4c9aff; stroke: #131722; stroke-width: 1; transition: cx .8s ease, cy .8s ease; }
-    .cli.guest { fill: #e0a83c; }
-    .side { max-height: 130px; overflow: auto; padding: 6px 12px 10px; border-top: 1px solid #232a3a; }
-    .cli-row { padding: 4px 0; border-bottom: 1px solid #1b2130; display: flex; flex-direction: column; }
-    .cli-row span { color: #8b93a7; } .foot { padding: 6px 12px; color: #8b93a7; border-top: 1px solid #232a3a; }`;
+  function renderDots(g, clients) {
+    const shown = clients.slice(0, MAX_DOTS);
+    const extra = clients.length - shown.length;
+    const sig = clients.length + ":" + shown.map((c) => c.mac + c.guest).join(",");
+    if (g.sig === sig) return;
+    g.sig = sig;
+    const pos = ringPositions(shown.length);
+    g.el.innerHTML =
+      `<span class="badge">${clients.length}${extra > 0 ? "" : ""}</span>` +
+      shown.map((c, i) => {
+        const [dx, dy] = pos[i];
+        const t = `${c.hostname || c.mac}${c.band ? " · " + c.band + "G" : ""}${c.signal != null ? " · " + c.signal + " dBm" : ""}${c.guest ? " · guest" : ""}`;
+        return `<span class="dot${c.guest ? " guest" : ""}" style="left:${dx}px;top:${dy}px" title="${t.replace(/"/g, "&quot;")}"></span>`;
+      }).join("");
+  }
 
-  const HTML = `
-    <div class="card">
-      <div class="hd"><b>UniFi Live</b><span class="conn" id="conn">connecting…</span>
-        <span class="sp"></span><select id="planSel"></select></div>
-      <div class="stage">
-        <svg id="map" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet">
-          <image id="mapImg" x="0" y="0" width="1000" height="600" href="" />
-          <g id="apLayer"></g><g id="cliLayer"></g>
-        </svg>
-      </div>
-      <div class="side"><div id="sideT" style="font-weight:600;margin-bottom:4px">Access point</div>
-        <div id="side"><div class="muted">Click an AP to list its clients.</div></div></div>
-      <div class="foot"><span id="hint">—</span> · live from this console</div>
-    </div>`;
-
-  function mount() {
-    const host = document.createElement("div");
-    host.id = "unifi-live-innerspace-host";
-    const root = host.attachShadow({ mode: "open" });
-    const style = document.createElement("style"); style.textContent = CSS; root.appendChild(style);
-    const wrap = document.createElement("div"); wrap.innerHTML = HTML; root.appendChild(wrap);
-    document.body.appendChild(host);
-    root.getElementById("planSel").addEventListener("change", (e) => {
-      state.selPlan = e.target.value; state.selAp = null; refresh(root);
+  let raf = 0;
+  function tickPositions() {
+    raf = 0;
+    const canvas = document.querySelector('[data-testid="editor-canvas"]');
+    if (!overlay || !canvas) return;
+    const clip = canvas.getBoundingClientRect();
+    const seen = new Set();
+    document.querySelectorAll('section[data-testid^="stats-tooltip-"]').forEach((sec) => {
+      const title = sec.querySelector('[data-testid="title"]');
+      if (!title) return;
+      const name = norm(title.textContent);
+      const ap = apByName[name];
+      if (!ap || !ap.clients.length) return; // only APs with clients
+      const r = sec.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top; // marker anchor (label sits under the dot)
+      if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) return;
+      seen.add(name);
+      const g = groupFor(name);
+      g.el.style.left = x + "px";
+      g.el.style.top = y + "px";
+      g.el.style.display = "block";
+      renderDots(g, ap.clients);
     });
-    refresh(root);
-    setInterval(() => refresh(root), REFRESH_MS);
+    for (const [name, g] of groups) if (!seen.has(name)) g.el.style.display = "none";
+    schedule();
   }
 
-  if (document.body) mount();
-  else window.addEventListener("DOMContentLoaded", mount);
+  function schedule() {
+    if (!raf) raf = requestAnimationFrame(tickPositions);
+  }
+
+  function updateStatus() {
+    if (!statusEl) return;
+    if (lastErr) { statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${lastErr}`; return; }
+    const aps = Object.values(apByName).filter((a) => a.clients.length);
+    const total = aps.reduce((n, a) => n + a.clients.length, 0);
+    statusEl.innerHTML = `UniFi Live: <b>${total}</b> client${total === 1 ? "" : "s"} on <b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}`;
+  }
+
+  // --- lifecycle: mount on InnerSpace, react to SPA route changes --------
+  let mounted = false, dataTimer = 0;
+  function onInnerspace() {
+    return location.pathname.includes("/innerspace") &&
+      document.querySelector('[data-testid="editor-canvas"]');
+  }
+  function mount() {
+    if (mounted) return;
+    mounted = true;
+    ensureOverlay();
+    refreshData();
+    dataTimer = setInterval(refreshData, REFRESH_MS);
+    schedule();
+  }
+  function unmount() {
+    if (!mounted) return;
+    mounted = false;
+    clearInterval(dataTimer);
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    overlay?.remove(); statusEl?.remove();
+    overlay = statusEl = null; groups.clear();
+  }
+  function check() {
+    if (onInnerspace()) mount();
+    else unmount();
+  }
+  new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+  setInterval(check, 1500);
+  check();
 })();
