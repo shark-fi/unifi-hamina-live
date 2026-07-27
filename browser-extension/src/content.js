@@ -19,6 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
+  const BUILD = "b8";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -223,17 +224,20 @@
   };
 
   let lastCtx = null;
+  function resetConsoleState() {
+    apiBase = null; savedBase = null; savedLoaded = false;
+    fpMap = null; fpTried = false; fpFrom = null;
+    apByName = {}; lastErr = null; lastTriedBase = null; lastCtx = null;
+    failedUrls.clear();
+    for (const [, g] of groups) { g.sig = ""; g.el.style.display = "none"; }
+  }
+
   async function refreshData() {
     const site = siteId();
     // switching console (or site) changes the API prefix entirely — drop any
     // base/icon state learned for the previous one instead of reusing it
     const ctx = location.origin + (location.pathname.split("/network/")[0] || "") + "|" + site;
-    if (ctx !== lastCtx) {
-      lastCtx = ctx;
-      apiBase = null; savedBase = null; savedLoaded = false;
-      fpMap = null; fpTried = false; fpFrom = null;
-      apByName = {}; lastErr = null; lastTriedBase = null;
-    }
+    if (ctx !== lastCtx) { resetConsoleState(); lastCtx = ctx; }
     try {
       const base = await resolveBase(site);
       loadFingerprints(base, site);   // fire-and-forget; icons appear once ready
@@ -765,8 +769,7 @@
       if (!mismatchSince) mismatchSince = performance.now();
       else if (performance.now() - mismatchSince > 2000) {
         mismatchSince = 0;
-        lastCtx = null; apiBase = null; apByName = {};
-        for (const [, g] of groups) { g.el.style.display = "none"; g.sig = ""; }
+        resetConsoleState();
         refreshData();
       }
     } else mismatchSince = 0;
@@ -780,7 +783,7 @@
     if (lastErr) {
       const where = lastTriedBase ? lastTriedBase.replace(location.origin, "") : "no path found";
       statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · last tried ` +
-        `<b>${esc(where)}</b>`;
+        `<b>${esc(where)}</b> <span style="opacity:.5">${BUILD}</span>`;
       return;
     }
     if (renderErr) {
@@ -795,7 +798,8 @@
     const icons = fpMap == null ? "" :
       (Object.keys(fpMap).length ? ` · icons <b>${Object.keys(fpMap).length}</b>` : " · icons <b>none</b>");
     statusEl.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
-      `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}`;
+      `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
+      ` <span style="opacity:.5">${BUILD}</span>`;
   }
 
   // --- lifecycle --------------------------------------------------------
@@ -819,11 +823,25 @@
     hoveredAp = null;
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     closeCard();
+    resetConsoleState();
     overlay?.remove(); statusEl?.remove(); tip?.remove();
     overlay = statusEl = tip = null;
     groups.clear(); filters.clear();
   }
-  const check = () => onInnerspace() ? mount() : unmount();
+  let lastHref = location.href;
+  function check() {
+    if (location.href !== lastHref) {
+      const before = lastHref.split("/network/")[0];
+      lastHref = location.href;
+      // moved to a different console/site: forget its data at once so the
+      // overlay can never paint the previous console's clients
+      if (before !== location.href.split("/network/")[0]) {
+        resetConsoleState();
+        if (mounted) refreshData();
+      }
+    }
+    return onInnerspace() ? mount() : unmount();
+  }
   new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
   setInterval(check, 1500);
   check();
