@@ -95,7 +95,7 @@
    * loads icons from there, so the page CSP allows it). The payload's shape
    * varies by Network version, so walk it generically for {id: icon-uuid}. */
   const ICON_URL = (id) => `https://static.ui.com/fingerprint/ui/icons/${id}_101x101.png`;
-  let fpMap = null, fpTried = false;
+  let fpMap = null, fpTried = false, fpFrom = null;
 
   function extractIcons(node, out = {}, depth = 0) {
     if (!node || typeof node !== "object" || depth > 4) return out;
@@ -108,19 +108,33 @@
     return out;
   }
 
+  // URLs the console itself fetched that look like a fingerprint database —
+  // far more reliable than guessing the endpoint per Network version.
+  function fpUrlsFromPerf() {
+    try {
+      return performance.getEntriesByType("resource")
+        .map((e) => e.name)
+        .filter((n) => /fingerprint/i.test(n) && !/static\.ui\.com/i.test(n)
+          && !ourFetches.has(n));
+    } catch (_e) { return []; }
+  }
+
   async function loadFingerprints(base, site) {
     if (fpMap || fpTried) return fpMap;
     fpTried = true;
     const v2 = base.replace(/\/api$/, "/v2/api");
-    for (const u of [`${v2}/fingerprint_devices/0`,
+    for (const u of [...fpUrlsFromPerf(),
+                     `${v2}/fingerprint_devices/0`,
                      `${v2}/site/${site}/fingerprint_devices/0`,
+                     `${v2}/site/${site}/fingerprint_devices`,
                      `${base}/s/${site}/stat/fingerprint_devices`]) {
       try {
         const m = extractIcons(await getJson(u));
-        if (Object.keys(m).length) { fpMap = m; return m; }
+        if (Object.keys(m).length) { fpMap = m; fpFrom = u; updateStatus(); return m; }
       } catch (_e) { /* try the next shape */ }
     }
     fpMap = {};
+    updateStatus();
     return fpMap;
   }
 
@@ -130,6 +144,38 @@
     const id = c.devId != null && fpMap ? fpMap[String(c.devId)] : null;
     return id ? ICON_URL(id) : null;
   };
+
+  /* Per-radio channel state, so we can reproduce UniFi's own channel chips
+   * (and their Utilization / TX Retries panel) on remote access, where the
+   * console renders the model there instead. Field names match the ones the
+   * bridge's normalizer uses against real payloads. */
+  const RADIO_BAND = { ng: "2.4", na: "5", "6e": "6", ad: "6" };
+  const HT_WIDTHS = [20, 40, 80, 160, 320];
+  function radiosOf(d) {
+    const stats = {};
+    for (const st of d.radio_table_stats || []) stats[st.radio] = st;
+    const table = (d.radio_table || []).length
+      ? d.radio_table : Object.keys(stats).map((r) => ({ radio: r }));
+    const out = [];
+    for (const rt of table) {
+      const st = stats[rt.radio] || {};
+      const band = RADIO_BAND[rt.radio || st.radio];
+      if (!band) continue;
+      const ch = Number.isInteger(st.channel) ? st.channel
+        : (Number.isInteger(rt.channel) ? rt.channel : null);
+      const ht = parseInt(rt.ht, 10);
+      const util = typeof st.cu_total === "number" ? st.cu_total
+        : (typeof st.channel_utilization === "number" ? st.channel_utilization : null);
+      out.push({
+        band, channel: ch,
+        width: HT_WIDTHS.includes(ht) ? ht : null,
+        util,
+        retries: typeof st.tx_retries_pct === "number" ? st.tx_retries_pct : null,
+      });
+    }
+    return out.filter((r) => r.channel != null)
+      .sort((a, b) => BANDS.indexOf(a.band) - BANDS.indexOf(b.band));
+  }
 
   const kbps = (v) => v == null ? null : (v >= 1000 ? (v / 1000).toFixed(1) + " Mbps" : v + " Kbps");
   const bytes = (v) => {
@@ -156,7 +202,7 @@
       const byMac = {};
       for (const d of dev.data || []) {
         if (d.type && d.type !== "uap") continue;
-        byMac[macNorm(d.mac)] = { name: d.name || d.mac, online: d.state === 1 };
+        byMac[macNorm(d.mac)] = { name: d.name || d.mac, online: d.state === 1, radios: radiosOf(d) };
       }
       const cliByMac = {};
       for (const c of sta.data || []) {
@@ -190,7 +236,7 @@
         const list = (cliByMac[mac] || []).sort(
           (a, b) => BANDS.indexOf(bandOf(a)) - BANDS.indexOf(bandOf(b)) ||
                     (b.signal ?? -999) - (a.signal ?? -999));
-        next[norm(ap.name)] = { online: ap.online, clients: list };
+        next[norm(ap.name)] = { online: ap.online, clients: list, radios: ap.radios || [] };
       }
       apByName = next;
       lastErr = null;
@@ -246,17 +292,26 @@
     const style = document.createElement("style");
     style.textContent = `
       #${NS}-overlay .grp { position: fixed; transform: translate(-50%, -50%); will-change: left, top; }
-      /* chips mirror UniFi's own marker chips: dark pill, subtle shadow */
-      #${NS}-overlay .badges { position: absolute; left: 50%; top: -38px;
+      /* chips mirror UniFi's channel chips: dark pill + band-coloured underline.
+         client counts sit ABOVE the marker; our channel chips below the labels. */
+      #${NS}-overlay .badges { position: absolute; left: 50%;
         transform: translateX(-50%); display: flex; gap: 4px; white-space: nowrap;
         pointer-events: auto; }
-      #${NS}-overlay .badge { display: flex; align-items: center; gap: 5px;
-        height: 20px; padding: 0 7px; border-radius: 6px; background: #24272c;
-        color: #fff; font: 600 11px/20px system-ui, sans-serif;
-        box-shadow: 0 2px 6px rgba(0,0,0,.45); cursor: pointer; }
-      #${NS}-overlay .badge .d { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-      #${NS}-overlay .badge.on { background: #006fff; }
-      #${NS}-overlay .badge.dim { opacity: .45; }
+
+      #${NS}-overlay .chip { position: relative; display: inline-flex;
+        align-items: center; justify-content: center; min-width: 24px; height: 20px;
+        padding: 0 6px 3px; border-radius: 6px; background: #24272c; color: #fff;
+        font: 600 11px/17px system-ui, sans-serif; overflow: hidden;
+        box-shadow: 0 2px 6px rgba(0,0,0,.45); }
+      #${NS}-overlay .chip.cl { cursor: pointer; }
+      #${NS}-overlay .chip .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; }
+      #${NS}-overlay .chip.on { background: #006fff; }
+      #${NS}-overlay .chip.dim { opacity: .45; }
+      /* stay out of the way of UniFi's own marker tooltips */
+      #${NS}-overlay .grp.fade { opacity: .12; }
+      #${NS}-overlay .grp.fade .chip,
+      #${NS}-overlay .grp.fade .cli,
+      #${NS}-overlay .grp.fade .more { pointer-events: none; }
       #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
         border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
         box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
@@ -281,8 +336,8 @@
         border-radius: 50%; background: #131722; border: 2px dashed #55607a; color: #cfd6e4;
         font: 700 9px/20px system-ui, sans-serif; text-align: center;
         pointer-events: auto; cursor: default; }
-      #${NS}-overlay .d.b24 { background: #e0a83c; } #${NS}-overlay .d.b5 { background: #2b6cff; }
-      #${NS}-overlay .d.b6  { background: #a855f7; } #${NS}-overlay .d.bx { background: #8b93a7; }
+      #${NS}-overlay .bar.b24 { background: #e0a83c; } #${NS}-overlay .bar.b5 { background: #2b6cff; }
+      #${NS}-overlay .bar.b6  { background: #a855f7; } #${NS}-overlay .bar.bx { background: #8b93a7; }
       /* hover panel, matching UniFi's chip tooltip */
       #${NS}-tip { position: fixed; z-index: 2147483003; background: #24272c; color: #fff;
         border-radius: 10px; padding: 11px 13px; min-width: 176px; max-width: 260px;
@@ -331,22 +386,38 @@
     document.body.appendChild(tip);
 
     overlay.addEventListener("mouseover", (e) => {
-      const chip = e.target.closest?.(".badge");
+      const chip = e.target.closest?.(".chip");
       const cli = e.target.closest?.(".cli");
       const grp = e.target.closest?.(".grp");
       if (!grp) return;
       const apName = [...groups].find(([, g]) => g.el === grp)?.[0];
       if (!apName) return;
-      if (chip) showTip(chipTip(apName, chip.dataset.band), chip);
+      if (chip) showTip(chip.classList.contains("ch")
+        ? chanTip(apName, chip.dataset.band) : chipTip(apName, chip.dataset.band), chip);
       else if (cli) showTip(clientTip(apName, cli.dataset.mac), cli);
     });
     overlay.addEventListener("mouseout", (e) => {
-      if (e.target.closest?.(".badge, .cli")) hideTip();
+      if (e.target.closest?.(".chip, .cli")) hideTip();
     });
+
+    document.addEventListener("mouseover", onDocHover, true);
+    document.addEventListener("mouseout", onDocHover, true);
 
     document.addEventListener("mousedown", (e) => {
       if (card && !card.contains(e.target) && !e.target.closest?.(`#${NS}-overlay .cli`)) closeCard();
     }, true);
+  }
+
+  // While the pointer is over UniFi's own AP marker we fade our overlay for
+  // that AP, so its channel tooltip is never covered by our chips/icons.
+  let hoveredAp = null;
+  function onDocHover(e) {
+    const sec = e.target.closest?.('section[data-testid^="stats-tooltip-"]');
+    const name = sec ? norm(sec.querySelector('[data-testid="title"]')?.textContent) : null;
+    const next = e.type === "mouseout" && !sec ? null : (name || null);
+    if (next === hoveredAp) return;
+    hoveredAp = next;
+    if (hoveredAp) hideTip();
   }
 
   // --- hover panel ------------------------------------------------------
@@ -365,6 +436,14 @@
       ["Guests", guests || null],
       ["", filters.get(apName) === band ? "click to clear filter" : "click to filter"],
     ]);
+  }
+
+  function chanTip(apName, band) {
+    const r = (apByName[apName]?.radios || []).find((x) => x.band === band);
+    if (!r) return "";
+    const pct = (v) => v == null ? null : (Math.round(v * 10) / 10) + "%";
+    return `<div class="t">Ch. ${r.channel} (${band} GHz${r.width ? ", " + r.width + " MHz" : ""})</div>` +
+      rows([["Utilization", pct(r.util)], ["TX Retries", pct(r.retries)]]);
   }
 
   function clientTip(apName, mac) {
@@ -401,7 +480,7 @@
   // grows with the number of icons so they never collide.
   const RING_R = 100;        // base radius (px) from the AP marker
   const RING_STEP = 36;      // extra radius per additional ring
-  const BOTTOM_GAP = 62 * Math.PI / 180;  // half-width of the clear wedge below
+  const BOTTOM_GAP = 70 * Math.PI / 180;  // half-width of the clear wedge below
   function ringPositions(n) {
     const out = [], per = 10;
     for (let i = 0; i < n; i++) {
@@ -422,7 +501,7 @@
       const el = document.createElement("div");
       el.className = "grp";
       el.addEventListener("click", (ev) => {
-        const b = ev.target.closest(".badge");
+        const b = ev.target.closest(".chip.cl");
         if (b) {
           const band = b.dataset.band;
           filters.set(name, filters.get(name) === band ? null : band);
@@ -439,13 +518,23 @@
     return g;
   }
 
-  /* Note: the numeric chips UniFi draws under an AP on a local console are the
-   * per-radio CHANNELS (hovering one shows "Ch. N (band, width) / Utilization /
-   * TX Retries") — not client counts. So our per-band client chips don't
-   * duplicate anything; they're styled to match UniFi's chips and sit above the
-   * marker, with the same hover-panel treatment. */
-  function renderGroup(g, apName, clients) {
-    const counts = bandCounts(clients);
+  /* The numeric chips UniFi draws under an AP on a local console are the
+   * per-radio CHANNELS (hovering shows "Ch. N (band, width) / Utilization / TX
+   * Retries") — not client counts. Remote access shows the model there instead,
+   * so we render equivalent channel chips ourselves only when UniFi doesn't. */
+  function hasNativeChannels(sec) {
+    const title = sec.querySelector('[data-testid="title"]');
+    const model = sec.querySelector('[data-testid="model"]');
+    for (const el of sec.querySelectorAll("span, div")) {
+      if (el.children.length) continue;                 // leaves only
+      if (title?.contains(el) || model?.contains(el)) continue;
+      if (/^\d{1,4}$/.test((el.textContent || "").trim())) return true;
+    }
+    return false;
+  }
+
+  function renderGroup(g, apName, ap, nativeCh, below) {
+    const clients = ap.clients, counts = bandCounts(clients);
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
     // when there is overflow, reserve the last ring slot for the "+N more" chip
@@ -453,15 +542,22 @@
     const shown = list.slice(0, over ? MAX_ICONS - 1 : MAX_ICONS);
     const extra = list.length - shown.length;
     const withNames = shown.length <= NAME_LIMIT;
-    const sig = [filter, BANDS.map((b) => counts[b]).join("/"),
+    const chans = nativeCh ? [] : (ap.radios || []);
+    const sig = [filter, nativeCh ? "n" : "", below, BANDS.map((b) => counts[b]).join("/"),
+      chans.map((r) => r.band + r.channel).join(","),
       shown.map((c) => c.mac + bandOf(c) + (selected?.mac === c.mac ? "*" : "")).join(",")].join("|");
     if (g.sig === sig) return;
     g.sig = sig;
 
-    // UniFi-style chips: dark pill, band dot + count, highlighted when filtering
+    // client counts — same pill as UniFi's channel chips, with a band-coloured
+    // underline, sitting ABOVE the AP so they never cover the marker art
     const badges = BANDS.filter((b) => counts[b]).map((b) =>
-      `<span class="badge${filter === b ? " on" : ""}${filter && filter !== b ? " dim" : ""}"
-         data-band="${b}"><i class="d ${BAND_CLS[b]}"></i>${counts[b]}</span>`).join("");
+      `<span class="chip cl${filter === b ? " on" : ""}${filter && filter !== b ? " dim" : ""}"
+         data-band="${b}">${counts[b]}<i class="bar ${BAND_CLS[b]}"></i></span>`).join("");
+    // channel chips, reproducing UniFi's when the console doesn't draw them
+    const chanChips = chans.map((r) =>
+      `<span class="chip ch" data-band="${r.band}">${r.channel}<i class="bar ${BAND_CLS[r.band]}"></i></span>`
+    ).join("");
 
     const pos = ringPositions(shown.length + (extra > 0 ? 1 : 0));
     const icons = shown.map((c, i) => {
@@ -482,7 +578,12 @@
     const more = extra > 0
       ? (([mx, my]) => `<span class="more" style="left:${mx}px;top:${my}px">+${extra}</span>`)(pos[pos.length - 1])
       : "";
-    g.el.innerHTML = `<span class="badges">${badges}</span>${icons}${more}`;
+    // both chip rows sit BELOW the AP name/model, mirroring UniFi's own chips:
+    // our channel chips (remote only) first, then the client counts under them
+    g.el.innerHTML =
+      (chanChips ? `<span class="badges ch" style="top:${below}px">${chanChips}</span>` : "") +
+      `<span class="badges cl" style="top:${below + (chanChips ? 26 : 0)}px">${badges}</span>` +
+      `${icons}${more}`;
     // inline handlers are blocked by the page CSP, so bind the fallback here:
     // a fingerprint icon that 404s reverts the chip to its glyph/initial.
     g.el.querySelectorAll("img.ci").forEach((img) => {
@@ -595,7 +696,10 @@
       g.el.style.left = x + "px";
       g.el.style.top = y + "px";
       g.el.style.display = "block";
-      renderGroup(g, name, ap.clients);
+      g.el.classList.toggle("fade", hoveredAp === name);
+      // marker height varies (title+model, or title+native channel chips), so
+      // measure it and drop our rows just beneath whatever UniFi drew
+      renderGroup(g, name, ap, hasNativeChannels(sec), Math.round(r.height + 34));
       if (selected && selected.ap === name) {
         const el = g.el.querySelector(`.cli[data-mac="${selected.mac}"]`);
         if (el) positionCard(el);
@@ -622,8 +726,10 @@
     const n = bandCounts(all);
     const per = BANDS.filter((b) => n[b])
       .map((b) => `<i class="${BAND_CLS[b]}"></i>${b === "?" ? "?" : b}G <b>${n[b]}</b>`).join(" · ");
+    const icons = fpMap == null ? "" :
+      (Object.keys(fpMap).length ? ` · icons <b>${Object.keys(fpMap).length}</b>` : " · icons <b>none</b>");
     statusEl.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
-      `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}`;
+      `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}`;
   }
 
   // --- lifecycle --------------------------------------------------------
@@ -642,6 +748,9 @@
     if (!mounted) return;
     mounted = false;
     clearInterval(dataTimer);
+    document.removeEventListener("mouseover", onDocHover, true);
+    document.removeEventListener("mouseout", onDocHover, true);
+    hoveredAp = null;
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     closeCard();
     overlay?.remove(); statusEl?.remove(); tip?.remove();
