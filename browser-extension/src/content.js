@@ -86,6 +86,47 @@
     throw new Error(lastE);
   }
 
+  /* UniFi's own client icons: the console ships a fingerprint database mapping a
+   * device id to an icon uuid, served from static.ui.com (the console already
+   * loads icons from there, so the page CSP allows it). The payload's shape
+   * varies by Network version, so walk it generically for {id: icon-uuid}. */
+  const ICON_URL = (id) => `https://static.ui.com/fingerprint/ui/icons/${id}_101x101.png`;
+  let fpMap = null, fpTried = false;
+
+  function extractIcons(node, out = {}, depth = 0) {
+    if (!node || typeof node !== "object" || depth > 4) return out;
+    for (const [k, v] of Object.entries(node)) {
+      if (!v || typeof v !== "object") continue;
+      const icon = v.icon_filename || v.iconFilename || v.icon;
+      if (typeof icon === "string" && /^[0-9a-f][0-9a-f-]{15,}$/i.test(icon)) out[k] = icon;
+      extractIcons(v, out, depth + 1);
+    }
+    return out;
+  }
+
+  async function loadFingerprints(base, site) {
+    if (fpMap || fpTried) return fpMap;
+    fpTried = true;
+    const v2 = base.replace(/\/api$/, "/v2/api");
+    for (const u of [`${v2}/fingerprint_devices/0`,
+                     `${v2}/site/${site}/fingerprint_devices/0`,
+                     `${base}/s/${site}/stat/fingerprint_devices`]) {
+      try {
+        const m = extractIcons(await getJson(u));
+        if (Object.keys(m).length) { fpMap = m; return m; }
+      } catch (_e) { /* try the next shape */ }
+    }
+    fpMap = {};
+    return fpMap;
+  }
+
+  const devIdOf = (c) => c.dev_id_override ?? c.dev_id ??
+    c.fingerprint?.computed_dev_id ?? c.fingerprint?.dev_id ?? null;
+  const uiIconFor = (c) => {
+    const id = c.devId != null && fpMap ? fpMap[String(c.devId)] : null;
+    return id ? ICON_URL(id) : null;
+  };
+
   const kbps = (v) => v == null ? null : (v >= 1000 ? (v / 1000).toFixed(1) + " Mbps" : v + " Kbps");
   const bytes = (v) => {
     if (v == null) return null;
@@ -103,6 +144,7 @@
     const site = siteId();
     try {
       const base = await resolveBase(site);
+      loadFingerprints(base, site);   // fire-and-forget; icons appear once ready
       const [dev, sta] = await Promise.all([
         getJson(`${base}/s/${site}/stat/device`),
         getJson(`${base}/s/${site}/stat/sta`),
@@ -133,6 +175,7 @@
           rxb: c.rx_bytes ?? null,
           uptime: c.uptime ?? null,
           guest: !!c.is_guest,
+          devId: devIdOf(c),
           oui: c.oui || null,
           vendor: c.dev_vendor || null,
           note: c.note || null,
@@ -225,6 +268,8 @@
       #${NS}-overlay .cli.b6  { border-color: #a855f7; }
       #${NS}-overlay .cli.bx  { border-color: #8b93a7; }
       #${NS}-overlay .cli .g { font-size: 12px; line-height: 1; }
+      #${NS}-overlay .cli img.ci { width: 16px; height: 16px; display: block;
+        border-radius: 3px; object-fit: contain; }
       #${NS}-overlay .nm { position: absolute; transform: translate(-50%, 0);
         margin-top: 12px; max-width: 82px; overflow: hidden; text-overflow: ellipsis;
         white-space: nowrap; text-align: center; font: 600 10px/1.3 system-ui, sans-serif;
@@ -421,15 +466,28 @@
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
       const nm = withNames
         ? `<span class="nm" style="left:${dx}px;top:${dy}px">${esc(labelFor(c))}</span>` : "";
+      // prefer UniFi's own fingerprint icon; fall back to our glyph / initial
+      const fb = glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c));
+      const url = uiIconFor(c);
+      const inner = url
+        ? `<img class="ci" src="${esc(url)}" crossorigin="anonymous" alt="">` : fb;
       return `<span class="cli ${BAND_CLS[band]}${c.guest ? " guest" : ""}${sel}"
-          data-mac="${c.mac}" style="left:${dx}px;top:${dy}px"
-        >${glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c))}</span>${nm}`;
+          data-mac="${c.mac}" data-fb="${esc(fb)}" style="left:${dx}px;top:${dy}px"
+        >${inner}</span>${nm}`;
     }).join("");
 
     const more = extra > 0
       ? (([mx, my]) => `<span class="more" style="left:${mx}px;top:${my}px">+${extra}</span>`)(pos[pos.length - 1])
       : "";
     g.el.innerHTML = `<span class="badges">${badges}</span>${icons}${more}`;
+    // inline handlers are blocked by the page CSP, so bind the fallback here:
+    // a fingerprint icon that 404s reverts the chip to its glyph/initial.
+    g.el.querySelectorAll("img.ci").forEach((img) => {
+      img.addEventListener("error", () => {
+        const chip = img.parentElement;
+        if (chip) chip.innerHTML = chip.dataset.fb || "?";
+      }, { once: true });
+    });
   }
 
   // --- details card -----------------------------------------------------
@@ -463,11 +521,13 @@
     if (!card || !selected) return;
     const c = findClient(selected.ap, selected.mac);
     if (!c) return;
-    const band = bandOf(c), glyph = iconFor(c) || initialFor(c);
+    const band = bandOf(c), glyph = iconFor(c) || initialFor(c), url = uiIconFor(c);
     const snr = (c.signal != null && c.noise != null) ? (c.signal - c.noise) + " dB" : null;
     card.innerHTML = `
       <div class="hd">
-        <span style="font-size:14px">${glyph}</span>
+        ${url ? `<img class="ci" src="${esc(url)}" crossorigin="anonymous" alt=""
+                  style="width:18px;height:18px;object-fit:contain">`
+              : `<span style="font-size:14px">${glyph}</span>`}
         <span class="t">${esc(labelFor(c))}</span>
         <span class="pill ${BAND_CLS[band]}" style="background:${
           band === "2.4" ? "#e0a83c;color:#1a1206" : band === "5" ? "#2b6cff;color:#fff"
