@@ -707,7 +707,7 @@
   }
 
   // --- position loop ----------------------------------------------------
-  let raf = 0, renderErr = null;
+  let raf = 0, renderErr = null, mismatchSince = 0;
   function tickPositions() {
     raf = 0;
     // Never let a render error kill the loop permanently: report it in the
@@ -722,11 +722,12 @@
     const canvas = document.querySelector('[data-testid="editor-canvas"]');
     if (!overlay || !canvas) return;
     const clip = canvas.getBoundingClientRect();
-    const seen = new Set();
+    const seen = new Set(), domNames = new Set();
     document.querySelectorAll('section[data-testid^="stats-tooltip-"]').forEach((sec) => {
       const title = sec.querySelector('[data-testid="title"]');
       if (!title) return;
       const name = norm(title.textContent);
+      domNames.add(name);
       const ap = apByName[name];
       if (!ap || !ap.clients.length) return;
       const r = sec.getBoundingClientRect();
@@ -755,6 +756,21 @@
       }
     });
     for (const [name, g] of groups) if (!seen.has(name)) g.el.style.display = "none";
+
+    /* Self-heal a console switch: if none of the APs on screen appear in our
+     * dataset, we're holding another console's data (its API prefix differs).
+     * Drop it and re-resolve rather than showing stale numbers indefinitely. */
+    const known = Object.keys(apByName);
+    if (domNames.size && known.length && !known.some((n) => domNames.has(n))) {
+      if (!mismatchSince) mismatchSince = performance.now();
+      else if (performance.now() - mismatchSince > 2000) {
+        mismatchSince = 0;
+        lastCtx = null; apiBase = null; apByName = {};
+        for (const [, g] of groups) { g.el.style.display = "none"; g.sig = ""; }
+        refreshData();
+      }
+    } else mismatchSince = 0;
+
     renderErr = null;
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(tickPositions); }
