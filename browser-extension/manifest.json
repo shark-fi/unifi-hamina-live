@@ -5,8 +5,7 @@
   "description": "Overlay live UniFi Network clients and AP telemetry onto the InnerSpace floor plan. Same-origin and read-only (GETs only).",
   "permissions": [
     "storage",
-    "scripting",
-    "webRequest"
+    "scripting"
   ],
   "optional_host_permissions": [
     "https://*/*"

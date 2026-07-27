@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b12";        // shown in the status chip; bump on every change
+  const BUILD = "b13";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -62,6 +62,10 @@
     if (i > 0) perfBases.splice(i, 1);
     perfBases.unshift(base);
   }
+  // src/probe.js runs in the page's own context and reports every API URL the
+  // app requests — the only vantage point that survives buffer eviction and
+  // also covers websockets.
+  window.addEventListener("unifi-live-api", (e) => notePerfUrl(e.detail));
   try { performance.setResourceTimingBufferSize?.(3000); } catch (_e) { /* ignore */ }
   try {
     new PerformanceObserver((list) => {
@@ -128,22 +132,14 @@
     try { chrome.storage.local.set({ [BASE_KEY()]: b }); } catch (_e) { /* ignore */ }
   }
 
-  async function basesFromWorker() {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: "bases" });
-      return Array.isArray(r?.bases) ? r.bases : [];
-    } catch (_e) { return []; }
-  }
-
   let lastTriedBase = null, workerBases = 0, seenBases = [];
   async function resolveBase(site) {
     if (apiBase) return apiBase;
     const saved = await loadSavedBase();
-    const fromWorker = await basesFromWorker();
-    workerBases = fromWorker.length;
-    seenBases = [...new Set([...fromWorker, ...basesFromPerf()])];
+    seenBases = basesFromPerf();
+    workerBases = seenBases.length;
     if (seenBases.length) console.warn("[UniFi Live] API bases observed:", seenBases);
-    const tries = [...new Set([...fromWorker, ...basesFromPerf(), saved, ...candidateBases()]
+    const tries = [...new Set([...seenBases, saved, ...candidateBases()]
       .filter(Boolean)
       .filter((b) => !failedUrls.has(`${b}/s/${site}/stat/device`)))];
     if (!tries.length) tries.push(...candidateBases());

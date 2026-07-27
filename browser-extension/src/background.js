@@ -6,38 +6,7 @@
  * persists across sessions; we also re-assert it on startup from stored config.
  */
 const SCRIPT_ID = "unifi-innerspace";
-
-/* Discover the console's API prefix from real network traffic.
- * The content script can only inspect performance entries, which a busy
- * console evicts (and which never include websockets) — a large console
- * reported seeing none at all. The worker sees the requests themselves. */
-const PROXY_RX = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network)\//;
-const basesByTab = new Map();          // tabId -> [base, ...] newest first
-
-function noteRequest(tabId, url) {
-  const m = String(url || "").match(PROXY_RX);
-  if (!m || tabId == null || tabId < 0) return;
-  const base = m[1] + "/api";
-  const list = basesByTab.get(tabId) || [];
-  const i = list.indexOf(base);
-  if (i === 0) return;
-  if (i > 0) list.splice(i, 1);
-  list.unshift(base);
-  basesByTab.set(tabId, list.slice(0, 6));
-}
-
-let watching = false;
-function watchTraffic() {
-  try {
-    if (watching || !chrome.webRequest?.onBeforeRequest) return;
-    watching = true;
-    chrome.webRequest.onBeforeRequest.addListener(
-      (d) => noteRequest(d.tabId, d.url),
-      { urls: ["*://*/*"] });        // events arrive only for granted hosts
-  } catch (_e) { watching = false; /* no permission yet; retried on enable */ }
-}
-watchTraffic();
-chrome.tabs?.onRemoved?.addListener((tabId) => basesByTab.delete(tabId));
+const PROBE_ID = "unifi-innerspace-probe";
 
 async function registerForOrigin(origin) {
   // The console is an SPA; InnerSpace lives at nested paths like
@@ -47,10 +16,10 @@ async function registerForOrigin(origin) {
   const matches = [origin + "/*"];
   try {
     const existing = await chrome.scripting.getRegisteredContentScripts({
-      ids: [SCRIPT_ID],
+      ids: [SCRIPT_ID, PROBE_ID],
     });
     if (existing.length) {
-      await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
+      await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID, PROBE_ID] });
     }
   } catch (_e) {
     /* nothing registered yet */
@@ -63,13 +32,22 @@ async function registerForOrigin(origin) {
       runAt: "document_idle",
       persistAcrossSessions: true,
     },
+    {
+      // page-context probe: must run before the app issues any request
+      id: PROBE_ID,
+      matches,
+      js: ["src/probe.js"],
+      runAt: "document_start",
+      world: "MAIN",
+      persistAcrossSessions: true,
+    },
   ]);
   return matches;
 }
 
 async function unregister() {
   try {
-    await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
+    await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID, PROBE_ID] });
   } catch (_e) {
     /* already gone */
   }
@@ -82,8 +60,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       watchTraffic();          // re-arm now that the host permission exists
       await chrome.storage.local.set({ origin: msg.origin, site: msg.site || "" });
       sendResponse({ ok: true, matches });
-    } else if (msg?.type === "bases") {
-      sendResponse({ ok: true, bases: basesByTab.get(_sender?.tab?.id) || [] });
+
     } else if (msg?.type === "disable") {
       await unregister();
       await chrome.storage.local.remove(["origin"]);

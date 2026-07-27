@@ -53,6 +53,8 @@ $("enable").addEventListener("click", async () => {
   const tab = await activeTab();
   if (tab && tab.url && tab.url.startsWith(origin)) {
     try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, files: ["src/probe.js"], world: "MAIN" });
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/content.js"] });
     } catch (_e) {
       /* not an injectable page; it'll load on next navigation */
