@@ -222,8 +222,18 @@
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
   };
 
+  let lastCtx = null;
   async function refreshData() {
     const site = siteId();
+    // switching console (or site) changes the API prefix entirely — drop any
+    // base/icon state learned for the previous one instead of reusing it
+    const ctx = location.origin + (location.pathname.split("/network/")[0] || "") + "|" + site;
+    if (ctx !== lastCtx) {
+      lastCtx = ctx;
+      apiBase = null; savedBase = null; savedLoaded = false;
+      fpMap = null; fpTried = false; fpFrom = null;
+      apByName = {}; lastErr = null; lastTriedBase = null;
+    }
     try {
       const base = await resolveBase(site);
       loadFingerprints(base, site);   // fire-and-forget; icons appear once ready
@@ -546,7 +556,7 @@
         if (c) openCard(name, c.dataset.mac, c);
       });
       overlay.appendChild(el);
-      g = { el, sig: "" };
+      g = { el, sig: "", below: 84, nativeCh: false, measuredAt: 0 };
       groups.set(name, g);
     }
     return g;
@@ -556,15 +566,18 @@
    * per-radio CHANNELS (hovering shows "Ch. N (band, width) / Utilization / TX
    * Retries") — not client counts. Remote access shows the model there instead,
    * so we render equivalent channel chips ourselves only when UniFi doesn't. */
-  function hasNativeChannels(sec) {
+  function nativeChipsBottom(sec) {
     const title = sec.querySelector('[data-testid="title"]');
     const model = sec.querySelector('[data-testid="model"]');
+    let bottom = null;
     for (const el of sec.querySelectorAll("span, div")) {
       if (el.children.length) continue;                 // leaves only
       if (title?.contains(el) || model?.contains(el)) continue;
-      if (/^\d{1,4}$/.test((el.textContent || "").trim())) return true;
+      if (!/^\d{1,4}$/.test((el.textContent || "").trim())) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height) bottom = Math.max(bottom ?? 0, r.bottom);
     }
-    return false;
+    return bottom;    // null when the console draws no channel chips
   }
 
   function renderGroup(g, apName, ap, nativeCh, below) {
@@ -725,9 +738,17 @@
       g.el.style.top = y + "px";
       g.el.style.display = "block";
       g.el.classList.toggle("fade", hoveredAp === name);
-      // marker height varies (title+model, or title+native channel chips), so
-      // measure it and drop our rows just beneath whatever UniFi drew
-      renderGroup(g, name, ap, hasNativeChannels(sec), Math.round(r.height + 34));
+      // Measure where UniFi's own content actually ends — its channel chips can
+      // sit outside the section's own box — and drop our rows below that. This
+      // walks the marker's DOM, so cache it rather than doing it every frame.
+      const now = performance.now();
+      if (!g.measuredAt || now - g.measuredAt > 500) {
+        g.measuredAt = now;
+        const chipsBottom = nativeChipsBottom(sec);
+        g.nativeCh = chipsBottom != null;
+        g.below = Math.round(Math.max(chipsBottom ?? 0, r.bottom) - y + 12);
+      }
+      renderGroup(g, name, ap, g.nativeCh, g.below);
       if (selected && selected.ap === name) {
         const el = g.el.querySelector(`.cli[data-mac="${selected.mac}"]`);
         if (el) positionCard(el);
