@@ -38,12 +38,15 @@
     const p = location.pathname, i = p.indexOf("/network/");
     return i < 0 ? "default" : (p.slice(i + 9).split("/")[0] || "default");
   }
+  const ourFetches = new Set();   // our own probes must not seed discovery
   function baseFromPerf() {
     try {
       const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network\/api)\/s\//;
       const ents = performance.getEntriesByType("resource");
       for (let k = ents.length - 1; k >= 0; k--) {
-        const m = ents[k].name.match(rx);
+        const name = ents[k].name;
+        if (ourFetches.has(name)) continue;   // skip requests we made ourselves
+        const m = name.match(rx);
         if (m) return m[1];
       }
     } catch (_e) { /* ignore */ }
@@ -62,6 +65,7 @@
     return [...new Set(list)];
   }
   async function getJson(url) {
+    ourFetches.add(url);
     const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const ct = r.headers.get("content-type") || "";
@@ -191,8 +195,7 @@
       apByName = next;
       lastErr = null;
     } catch (e) {
-      lastErr = e.message;
-      apiBase = null;
+      lastErr = e.message;   // keep any validated base; re-probe only if unset
     }
     refreshOpenCard();
     updateStatus();
@@ -562,9 +565,18 @@
   }
 
   // --- position loop ----------------------------------------------------
-  let raf = 0;
+  let raf = 0, renderErr = null;
   function tickPositions() {
     raf = 0;
+    // Never let a render error kill the loop permanently: report it in the
+    // status chip and keep scheduling, so the overlay recovers on its own.
+    try { drawFrame(); } catch (e) {
+      if (renderErr !== e.message) { renderErr = e.message; updateStatus(); }
+    }
+    schedule();
+  }
+
+  function drawFrame() {
     const canvas = document.querySelector('[data-testid="editor-canvas"]');
     if (!overlay || !canvas) return;
     const clip = canvas.getBoundingClientRect();
@@ -583,14 +595,14 @@
       g.el.style.left = x + "px";
       g.el.style.top = y + "px";
       g.el.style.display = "block";
-      renderGroup(g, name, ap.clients, hasNativeCounts(sec));
+      renderGroup(g, name, ap.clients);
       if (selected && selected.ap === name) {
         const el = g.el.querySelector(`.cli[data-mac="${selected.mac}"]`);
         if (el) positionCard(el);
       }
     });
     for (const [name, g] of groups) if (!seen.has(name)) g.el.style.display = "none";
-    schedule();
+    renderErr = null;
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(tickPositions); }
 
@@ -599,6 +611,10 @@
     if (lastErr) {
       const tried = (baseFromPerf() ? "perf, " : "") + candidateBases().length + " path(s)";
       statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} (tried ${tried})`;
+      return;
+    }
+    if (renderErr) {
+      statusEl.innerHTML = `UniFi Live: <b>render error</b> — ${esc(renderErr)}`;
       return;
     }
     const aps = Object.values(apByName).filter((a) => a.clients.length);
