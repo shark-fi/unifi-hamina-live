@@ -38,14 +38,17 @@
     const p = location.pathname, i = p.indexOf("/network/");
     return i < 0 ? "default" : (p.slice(i + 9).split("/")[0] || "default");
   }
-  const ourFetches = new Set();   // our own probes must not seed discovery
+  /* Only URLs that FAILED for us are excluded from discovery. Excluding every
+   * URL we fetched was wrong: on remote access the working base is the very one
+   * the app itself uses, so once we fetched it we started skipping it. */
+  const failedUrls = new Set();
   function baseFromPerf() {
     try {
       const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network\/api)\/s\//;
       const ents = performance.getEntriesByType("resource");
       for (let k = ents.length - 1; k >= 0; k--) {
         const name = ents[k].name;
-        if (ourFetches.has(name)) continue;   // skip requests we made ourselves
+        if (failedUrls.has(name)) continue;   // a path we already proved wrong
         const m = name.match(rx);
         if (m) return m[1];
       }
@@ -65,26 +68,55 @@
     return [...new Set(list)];
   }
   async function getJson(url) {
-    ourFetches.add(url);
-    const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    let r;
+    try {
+      r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+    } catch (e) { failedUrls.add(url); throw e; }
+    if (!r.ok) { failedUrls.add(url); throw new Error(`HTTP ${r.status}`); }
     const ct = r.headers.get("content-type") || "";
     const text = await r.text();
-    if (!ct.includes("json")) throw new Error("non-JSON (wrong API path)");
-    return JSON.parse(text);
+    if (!ct.includes("json")) { failedUrls.add(url); throw new Error("non-JSON (wrong API path)"); }
+    try {
+      return JSON.parse(text);
+    } catch (e) { failedUrls.add(url); throw new Error("bad JSON"); }
   }
 
   let apByName = {}, lastErr = null, apiBase = null;
 
+  /* Remember a base that worked. The performance resource buffer is finite and
+   * evicts old entries, so on a long-lived page the app's own API call can age
+   * out of it — without this, discovery would have nothing to learn from. */
+  const BASE_KEY = () => "apiBase:" + location.origin +
+    (location.pathname.split("/network/")[0] || "");
+  let savedBase = null, savedLoaded = false;
+  async function loadSavedBase() {
+    if (savedLoaded) return savedBase;
+    savedLoaded = true;
+    try {
+      const k = BASE_KEY();
+      savedBase = (await chrome.storage.local.get(k))[k] || null;
+    } catch (_e) { savedBase = null; }
+    return savedBase;
+  }
+  function rememberBase(b) {
+    savedBase = b;
+    try { chrome.storage.local.set({ [BASE_KEY()]: b }); } catch (_e) { /* ignore */ }
+  }
+
+  let lastTriedBase = null;
   async function resolveBase(site) {
     if (apiBase) return apiBase;
     const perf = baseFromPerf();
-    const tries = [...new Set(perf ? [perf, ...candidateBases()] : candidateBases())];
+    const saved = await loadSavedBase();
+    const tries = [...new Set([perf, saved, ...candidateBases()].filter(Boolean)
+      .filter((b) => !failedUrls.has(`${b}/s/${site}/stat/device`)))];
+    if (!tries.length) tries.push(...candidateBases());
     let lastE = "no reachable API";
     for (const b of tries) {
+      lastTriedBase = b;
       try {
         const j = await getJson(`${b}/s/${site}/stat/device`);
-        if (Array.isArray(j.data)) { apiBase = b; return b; }
+        if (Array.isArray(j.data)) { apiBase = b; rememberBase(b); return b; }
       } catch (e) { lastE = e.message; }
     }
     throw new Error(lastE);
@@ -115,7 +147,7 @@
       return performance.getEntriesByType("resource")
         .map((e) => e.name)
         .filter((n) => /fingerprint/i.test(n) && !/static\.ui\.com/i.test(n)
-          && !ourFetches.has(n));
+          && !failedUrls.has(n));
     } catch (_e) { return []; }
   }
 
@@ -709,8 +741,9 @@
   function updateStatus() {
     if (!statusEl) return;
     if (lastErr) {
-      const tried = (baseFromPerf() ? "perf, " : "") + candidateBases().length + " path(s)";
-      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} (tried ${tried})`;
+      const where = lastTriedBase ? lastTriedBase.replace(location.origin, "") : "no path found";
+      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · last tried ` +
+        `<b>${esc(where)}</b>`;
       return;
     }
     if (renderErr) {
