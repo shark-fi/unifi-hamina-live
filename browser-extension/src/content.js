@@ -185,30 +185,32 @@
   };
 
   // --- overlay ----------------------------------------------------------
-  let overlay, statusEl, card;
+  let overlay, statusEl, card, tip;
   const groups = new Map();          // apName -> {el, sig}
   const filters = new Map();         // apName -> band | null
   let selected = null;               // {ap, mac}
 
   function ensureOverlay() {
     if (overlay && document.body.contains(overlay)) return;
-    document.querySelectorAll(`#${NS}-overlay, #${NS}-status, #${NS}-card`).forEach((el) => el.remove());
+    document.querySelectorAll(`#${NS}-overlay, #${NS}-status, #${NS}-card, #${NS}-tip`)
+      .forEach((el) => el.remove());
     overlay = document.createElement("div");
     overlay.id = NS + "-overlay";
     Object.assign(overlay.style, { position: "fixed", inset: "0", pointerEvents: "none", zIndex: "2147483000" });
     const style = document.createElement("style");
     style.textContent = `
       #${NS}-overlay .grp { position: fixed; transform: translate(-50%, -50%); will-change: left, top; }
-      #${NS}-overlay .badges { position: absolute; left: 50%; top: -34px;
-        transform: translateX(-50%); display: flex; gap: 3px; white-space: nowrap;
+      /* chips mirror UniFi's own marker chips: dark pill, subtle shadow */
+      #${NS}-overlay .badges { position: absolute; left: 50%; top: -38px;
+        transform: translateX(-50%); display: flex; gap: 4px; white-space: nowrap;
         pointer-events: auto; }
-      #${NS}-overlay .badge { min-width: 15px; height: 16px; padding: 0 5px;
-        border-radius: 8px; font: 700 10px/16px system-ui, sans-serif; text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,.45); cursor: pointer; opacity: .95; }
-      #${NS}-overlay .badge.dim { opacity: .35; }
-      #${NS}-overlay .badge.tiny { min-width: 0; width: 9px; height: 9px; padding: 0;
-        border-radius: 50%; opacity: .8; }
-      #${NS}-overlay .badge.tiny:hover { opacity: 1; transform: scale(1.3); }
+      #${NS}-overlay .badge { display: flex; align-items: center; gap: 5px;
+        height: 20px; padding: 0 7px; border-radius: 6px; background: #24272c;
+        color: #fff; font: 600 11px/20px system-ui, sans-serif;
+        box-shadow: 0 2px 6px rgba(0,0,0,.45); cursor: pointer; }
+      #${NS}-overlay .badge .d { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      #${NS}-overlay .badge.on { background: #006fff; }
+      #${NS}-overlay .badge.dim { opacity: .45; }
       #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
         border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
         box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
@@ -231,12 +233,18 @@
         border-radius: 50%; background: #131722; border: 2px dashed #55607a; color: #cfd6e4;
         font: 700 9px/20px system-ui, sans-serif; text-align: center;
         pointer-events: auto; cursor: default; }
-      #${NS}-overlay .badge.b24, #${NS}-overlay .badge.b5,
-      #${NS}-overlay .badge.b6,  #${NS}-overlay .badge.bx { color: #fff; }
-      #${NS}-overlay .badge.b24 { background: #e0a83c; color: #1a1206; }
-      #${NS}-overlay .badge.b5  { background: #2b6cff; }
-      #${NS}-overlay .badge.b6  { background: #a855f7; }
-      #${NS}-overlay .badge.bx  { background: #8b93a7; color: #0b0e14; }
+      #${NS}-overlay .d.b24 { background: #e0a83c; } #${NS}-overlay .d.b5 { background: #2b6cff; }
+      #${NS}-overlay .d.b6  { background: #a855f7; } #${NS}-overlay .d.bx { background: #8b93a7; }
+      /* hover panel, matching UniFi's chip tooltip */
+      #${NS}-tip { position: fixed; z-index: 2147483003; background: #24272c; color: #fff;
+        border-radius: 10px; padding: 11px 13px; min-width: 176px; max-width: 260px;
+        font: 12px/1.5 system-ui, sans-serif; box-shadow: 0 10px 28px rgba(0,0,0,.5);
+        pointer-events: none; opacity: 0; transition: opacity .12s ease; }
+      #${NS}-tip .t { font: 600 13px/1.35 system-ui, sans-serif; margin-bottom: 6px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #${NS}-tip .r { display: flex; justify-content: space-between; gap: 18px; }
+      #${NS}-tip .r span:first-child { color: #9aa0a6; }
+      #${NS}-tip .r span:last-child { white-space: nowrap; }
       #${NS}-status { position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
         background: #131722ee; color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
         padding: 7px 11px; border-radius: 8px; border: 1px solid #2a3346;
@@ -270,10 +278,74 @@
     statusEl.textContent = "UniFi Live: starting…";
     document.body.appendChild(statusEl);
 
+    tip = document.createElement("div");
+    tip.id = NS + "-tip";
+    document.body.appendChild(tip);
+
+    overlay.addEventListener("mouseover", (e) => {
+      const chip = e.target.closest?.(".badge");
+      const cli = e.target.closest?.(".cli");
+      const grp = e.target.closest?.(".grp");
+      if (!grp) return;
+      const apName = [...groups].find(([, g]) => g.el === grp)?.[0];
+      if (!apName) return;
+      if (chip) showTip(chipTip(apName, chip.dataset.band), chip);
+      else if (cli) showTip(clientTip(apName, cli.dataset.mac), cli);
+    });
+    overlay.addEventListener("mouseout", (e) => {
+      if (e.target.closest?.(".badge, .cli")) hideTip();
+    });
+
     document.addEventListener("mousedown", (e) => {
       if (card && !card.contains(e.target) && !e.target.closest?.(`#${NS}-overlay .cli`)) closeCard();
     }, true);
   }
+
+  // --- hover panel ------------------------------------------------------
+  const rows = (pairs) => pairs.filter(([, v]) => v != null && v !== "")
+    .map(([k, v]) => `<div class="r"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("");
+  const avg = (ns) => ns.length ? Math.round(ns.reduce((a, b) => a + b, 0) / ns.length) : null;
+
+  function chipTip(apName, band) {
+    const all = apByName[apName]?.clients || [];
+    const cs = all.filter((c) => bandOf(c) === band);
+    const sig = avg(cs.map((c) => c.signal).filter((s) => s != null));
+    const guests = cs.filter((c) => c.guest).length;
+    return `<div class="t">${band === "?" ? "Unknown band" : band + " GHz"}</div>` + rows([
+      ["Clients", cs.length],
+      ["Avg signal", sig != null ? sig + " dBm" : null],
+      ["Guests", guests || null],
+      ["", filters.get(apName) === band ? "click to clear filter" : "click to filter"],
+    ]);
+  }
+
+  function clientTip(apName, mac) {
+    const c = findClient(apName, mac);
+    if (!c) return "";
+    const band = bandOf(c);
+    return `<div class="t">${esc(labelFor(c))}</div>` + rows([
+      ["Band", band === "?" ? null : `${band} GHz${c.channel ? ` · ch ${c.channel}` : ""}`],
+      ["Signal", c.signal != null ? c.signal + " dBm" : null],
+      ["TX / RX", (kbps(c.tx) && kbps(c.rx)) ? `${kbps(c.tx)} / ${kbps(c.rx)}` : null],
+      ["IP", c.ip],
+      ["", "click for details"],
+    ]);
+  }
+
+  function showTip(html, anchorEl) {
+    if (!tip || !html) return;
+    tip.innerHTML = html;
+    const r = anchorEl.getBoundingClientRect();
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = r.left + r.width / 2 - w / 2;
+    let y = r.top - h - 10;                       // above the chip, like UniFi's
+    if (y < 8) y = r.bottom + 10;                 // flip below if it would clip
+    x = Math.max(8, Math.min(x, innerWidth - w - 8));
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+    tip.style.opacity = "1";
+  }
+  function hideTip() { if (tip) tip.style.opacity = "0"; }
 
   // Ring geometry. The AP's own name/model labels (and, on a local console, its
   // per-radio count badges) sit directly BELOW the marker, so we leave a clear
@@ -319,22 +391,12 @@
     return g;
   }
 
-  /* A local console renders UniFi's own per-radio client-count chips inside the
-   * AP marker; remote access (unifi.ui.com) shows the model there instead. When
-   * UniFi is already showing counts we suppress our band chips and defer to it.
-   * Detect by looking for a numeric-only leaf node that isn't the title/model. */
-  function hasNativeCounts(sec) {
-    const title = sec.querySelector('[data-testid="title"]');
-    const model = sec.querySelector('[data-testid="model"]');
-    for (const el of sec.querySelectorAll("span, div")) {
-      if (el.children.length) continue;                 // leaves only
-      if (title?.contains(el) || model?.contains(el)) continue;
-      if (/^\d{1,4}$/.test((el.textContent || "").trim())) return true;
-    }
-    return false;
-  }
-
-  function renderGroup(g, apName, clients, nativeCounts) {
+  /* Note: the numeric chips UniFi draws under an AP on a local console are the
+   * per-radio CHANNELS (hovering one shows "Ch. N (band, width) / Utilization /
+   * TX Retries") — not client counts. So our per-band client chips don't
+   * duplicate anything; they're styled to match UniFi's chips and sit above the
+   * marker, with the same hover-panel treatment. */
+  function renderGroup(g, apName, clients) {
     const counts = bandCounts(clients);
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
@@ -343,27 +405,24 @@
     const shown = list.slice(0, over ? MAX_ICONS - 1 : MAX_ICONS);
     const extra = list.length - shown.length;
     const withNames = shown.length <= NAME_LIMIT;
-    const sig = [filter, nativeCounts ? "n" : "", BANDS.map((b) => counts[b]).join("/"),
+    const sig = [filter, BANDS.map((b) => counts[b]).join("/"),
       shown.map((c) => c.mac + bandOf(c) + (selected?.mac === c.mac ? "*" : "")).join(",")].join("|");
     if (g.sig === sig) return;
     g.sig = sig;
 
-    // When UniFi renders its own count chips (local console) we don't repeat the
-    // numbers — collapse to small colour dots that still act as band filters.
+    // UniFi-style chips: dark pill, band dot + count, highlighted when filtering
     const badges = BANDS.filter((b) => counts[b]).map((b) =>
-      `<span class="badge ${BAND_CLS[b]}${nativeCounts ? " tiny" : ""}${filter && filter !== b ? " dim" : ""}"
-         data-band="${b}" title="${b === "?" ? "unknown band" : b + " GHz"}: ${counts[b]} — click to filter"
-        >${nativeCounts ? "" : counts[b]}</span>`).join("");
+      `<span class="badge${filter === b ? " on" : ""}${filter && filter !== b ? " dim" : ""}"
+         data-band="${b}"><i class="d ${BAND_CLS[b]}"></i>${counts[b]}</span>`).join("");
 
     const pos = ringPositions(shown.length + (extra > 0 ? 1 : 0));
     const icons = shown.map((c, i) => {
       const [dx, dy] = pos[i], band = bandOf(c), glyph = iconFor(c);
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
-      const tip = `${labelFor(c)}${band !== "?" ? " · " + band + " GHz" : ""}${c.signal != null ? " · " + c.signal + " dBm" : ""}`;
       const nm = withNames
         ? `<span class="nm" style="left:${dx}px;top:${dy}px">${esc(labelFor(c))}</span>` : "";
       return `<span class="cli ${BAND_CLS[band]}${c.guest ? " guest" : ""}${sel}"
-          data-mac="${c.mac}" style="left:${dx}px;top:${dy}px" title="${esc(tip)}"
+          data-mac="${c.mac}" style="left:${dx}px;top:${dy}px"
         >${glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c))}</span>${nm}`;
     }).join("");
 
@@ -509,8 +568,8 @@
     clearInterval(dataTimer);
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     closeCard();
-    overlay?.remove(); statusEl?.remove();
-    overlay = statusEl = null;
+    overlay?.remove(); statusEl?.remove(); tip?.remove();
+    overlay = statusEl = tip = null;
     groups.clear(); filters.clear();
   }
   const check = () => onInnerspace() ? mount() : unmount();
