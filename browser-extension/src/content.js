@@ -4,28 +4,40 @@
  * the map on a WebGL <canvas>, but it also renders each AP's label as a DOM
  * <section data-testid="stats-tooltip-*"> whose CSS transform it keeps in sync
  * with the canvas as you pan/zoom. We read those live screen positions straight
- * from the DOM (no coordinate math, auto-tracks pan/zoom) and pin client bubbles
- * to them. Client counts come from the console's own Network API (same origin,
- * logged-in session, GETs only) joined to APs by name.
+ * from the DOM (no coordinate math, auto-tracks pan/zoom) and arrange each AP's
+ * clients in a ring around it — UniFi reports clients per-AP, not with x,y, so
+ * a ring around the AP is the honest representation.
+ *
+ * Each client is a small icon chip (coloured by radio band) with its name;
+ * clicking one opens a details card. Band chips above the AP filter the ring.
  */
 (() => {
   if (window.__unifiLiveInnerspace) return;
   window.__unifiLiveInnerspace = true;
 
   const REFRESH_MS = 5000;
-  const MAX_DOTS = 12;
+  const MAX_ICONS = 14;      // icons drawn per AP before overflow chip
+  const NAME_LIMIT = 12;     // show name labels only when the ring is this small
+  const NS = "unifi-live";
+
+  const BANDS = ["2.4", "5", "6", "?"];
+  const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
+  const bandOf = (c) => (c.band === "2.4" || c.band === "5" || c.band === "6") ? c.band : "?";
+  function bandCounts(cs) {
+    const n = { "2.4": 0, "5": 0, "6": 0, "?": 0 };
+    for (const c of cs) n[bandOf(c)]++;
+    return n;
+  }
   const norm = (s) => String(s || "").trim().toLowerCase();
   const macNorm = (m) => String(m || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-  // --- API base + site (local: /proxy/network/api ; cloud: proxied under the
-  // console id, exact scheme varies). We DISCOVER the base from the app's own
-  // network activity (it already polls stat/device), with URL candidates as a
-  // fallback, then cache the winner.
+  // --- API base + site --------------------------------------------------
   function siteId() {
     const p = location.pathname, i = p.indexOf("/network/");
     return i < 0 ? "default" : (p.slice(i + 9).split("/")[0] || "default");
   }
-
   function baseFromPerf() {
     try {
       const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network\/api)\/s\//;
@@ -37,10 +49,9 @@
     } catch (_e) { /* ignore */ }
     return null;
   }
-
   function candidateBases() {
     const p = location.pathname, i = p.indexOf("/network/");
-    const prefix = i < 0 ? "" : p.slice(0, i); // "" local, "/consoles/<id>" cloud
+    const prefix = i < 0 ? "" : p.slice(0, i);
     const o = location.origin, list = [`${o}${prefix}/proxy/network/api`];
     const m = prefix.match(/\/consoles\/([^/]+)/);
     if (m) {
@@ -50,7 +61,6 @@
     list.push(`${o}/proxy/network/api`);
     return [...new Set(list)];
   }
-
   async function getJson(url) {
     const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -60,17 +70,14 @@
     return JSON.parse(text);
   }
 
-  // name(lower) -> { online, clients:[{mac,hostname,band,signal,guest}] }
-  let apByName = {};
-  let lastErr = null;
-  let apiBase = null;
+  let apByName = {}, lastErr = null, apiBase = null;
 
   async function resolveBase(site) {
     if (apiBase) return apiBase;
     const perf = baseFromPerf();
-    const tries = perf ? [perf, ...candidateBases()] : candidateBases();
+    const tries = [...new Set(perf ? [perf, ...candidateBases()] : candidateBases())];
     let lastE = "no reachable API";
-    for (const b of [...new Set(tries)]) {
+    for (const b of tries) {
       try {
         const j = await getJson(`${b}/s/${site}/stat/device`);
         if (Array.isArray(j.data)) { apiBase = b; return b; }
@@ -78,6 +85,19 @@
     }
     throw new Error(lastE);
   }
+
+  const kbps = (v) => v == null ? null : (v >= 1000 ? (v / 1000).toFixed(1) + " Mbps" : v + " Kbps");
+  const bytes = (v) => {
+    if (v == null) return null;
+    const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0, n = v;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return n.toFixed(n >= 10 || i === 0 ? 0 : 1) + " " + u[i];
+  };
+  const dur = (s) => {
+    if (s == null) return null;
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+  };
 
   async function refreshData() {
     const site = siteId();
@@ -87,9 +107,9 @@
         getJson(`${base}/s/${site}/stat/device`),
         getJson(`${base}/s/${site}/stat/sta`),
       ]);
-      const byMac = {}; // AP mac -> {name, online}
+      const byMac = {};
       for (const d of dev.data || []) {
-        if (d.type && d.type !== "uap") continue; // APs only
+        if (d.type && d.type !== "uap") continue;
         byMac[macNorm(d.mac)] = { name: d.name || d.mac, online: d.state === 1 };
       }
       const cliByMac = {};
@@ -99,73 +119,166 @@
         if (!ap) continue;
         (cliByMac[ap] ||= []).push({
           mac: macNorm(c.mac),
-          hostname: c.hostname || c.name || null,
+          name: c.name || c.hostname || null,
+          hostname: c.hostname || null,
+          ip: c.ip || null,
           band: c.radio === "na" ? "5" : c.radio === "ng" ? "2.4" : c.radio === "6e" ? "6" : null,
+          channel: c.channel ?? null,
           signal: c.signal ?? null,
+          noise: c.noise ?? null,
+          essid: c.essid || null,
+          tx: c.tx_rate ?? null,
+          rx: c.rx_rate ?? null,
+          txb: c.tx_bytes ?? null,
+          rxb: c.rx_bytes ?? null,
+          uptime: c.uptime ?? null,
           guest: !!c.is_guest,
+          oui: c.oui || null,
+          vendor: c.dev_vendor || null,
+          note: c.note || null,
         });
       }
       const next = {};
       for (const [mac, ap] of Object.entries(byMac)) {
-        next[norm(ap.name)] = { online: ap.online, clients: cliByMac[mac] || [] };
+        const list = (cliByMac[mac] || []).sort(
+          (a, b) => BANDS.indexOf(bandOf(a)) - BANDS.indexOf(bandOf(b)) ||
+                    (b.signal ?? -999) - (a.signal ?? -999));
+        next[norm(ap.name)] = { online: ap.online, clients: list };
       }
       apByName = next;
       lastErr = null;
     } catch (e) {
       lastErr = e.message;
-      apiBase = null; // re-discover next tick (route/proxy may have changed)
+      apiBase = null;
     }
+    refreshOpenCard();
     updateStatus();
   }
 
+  // --- client icons -----------------------------------------------------
+  const ICONS = [
+    [/iphone|android|pixel|galaxy|phone|moto|oneplus/, "📱"],
+    [/ipad|tablet|kindle|fire hd/, "📒"],
+    [/macbook|laptop|thinkpad|notebook|xps/, "💻"],
+    [/imac|desktop|pc\b|workstation|nuc/, "🖥️"],
+    [/\btv\b|roku|appletv|apple tv|firestick|chromecast|shield|vizio|samsung tv|lg tv/, "📺"],
+    [/echo|alexa|sonos|homepod|speaker|soundbar|nest mini|nest audio/, "🔊"],
+    [/cam|camera|ring|doorbell|protect|g4|g5|ptz/, "📷"],
+    [/print|hp |epson|brother|canon/, "🖨️"],
+    [/xbox|playstation|\bps4\b|\bps5\b|switch\b|steam/, "🎮"],
+    [/watch|fitbit|garmin/, "⌚"],
+    [/thermostat|ecobee|nest|hvac|furnace|water|softener|filter|sensor|siren|chime|gateway/, "🏠"],
+    [/light|lamp|bulb|hue|lifx|led/, "💡"],
+    [/plug|outlet|kasa|switch bot/, "🔌"],
+    [/door|lock|fob|garage/, "🚪"],
+    [/dishwasher|washer|dryer|fridge|refriger|oven/, "🧺"],
+  ];
+  function iconFor(c) {
+    const t = norm([c.name, c.hostname, c.oui, c.vendor, c.note].filter(Boolean).join(" "));
+    for (const [rx, glyph] of ICONS) if (rx.test(t)) return glyph;
+    return null; // caller falls back to an initial
+  }
+  const labelFor = (c) => c.name || c.hostname || c.mac;
+  const initialFor = (c) => {
+    const s = labelFor(c).replace(/[^a-z0-9]/gi, "");
+    return (s[0] || "?").toUpperCase();
+  };
+
   // --- overlay ----------------------------------------------------------
-  const NS = "unifi-live";
-  let overlay, statusEl;
-  const groups = new Map(); // apNameLower -> {el, sig}
+  let overlay, statusEl, card;
+  const groups = new Map();          // apName -> {el, sig}
+  const filters = new Map();         // apName -> band | null
+  let selected = null;               // {ap, mac}
 
   function ensureOverlay() {
     if (overlay && document.body.contains(overlay)) return;
-    // Drop any nodes left behind by a previous (now-dead) extension context —
-    // reloading an unpacked extension orphans its DOM but not its elements.
-    document.querySelectorAll(`#${NS}-overlay, #${NS}-status`).forEach((el) => el.remove());
+    document.querySelectorAll(`#${NS}-overlay, #${NS}-status, #${NS}-card`).forEach((el) => el.remove());
     overlay = document.createElement("div");
     overlay.id = NS + "-overlay";
-    Object.assign(overlay.style, {
-      position: "fixed", inset: "0", pointerEvents: "none", zIndex: "2147483000",
-    });
+    Object.assign(overlay.style, { position: "fixed", inset: "0", pointerEvents: "none", zIndex: "2147483000" });
     const style = document.createElement("style");
     style.textContent = `
-      #${NS}-overlay .grp { position: fixed; transform: translate(-50%, -50%);
-        will-change: left, top; }
-      #${NS}-overlay .badge { position: absolute; left: 12px; top: -14px;
-        min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px;
-        background: #35c46b; color: #04140a; font: 700 11px/16px system-ui, sans-serif;
-        text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
-      #${NS}-overlay .dot { position: absolute; width: 9px; height: 9px;
-        margin: -4.5px; border-radius: 50%; background: #2b6cff;
-        border: 1.5px solid #fff; box-shadow: 0 1px 2px rgba(0,0,0,.4);
-        transition: left .7s ease, top .7s ease; }
-      #${NS}-overlay .dot.guest { background: #e0a83c; }
+      #${NS}-overlay .grp { position: fixed; transform: translate(-50%, -50%); will-change: left, top; }
+      #${NS}-overlay .badges { position: absolute; left: 50%; top: -34px;
+        transform: translateX(-50%); display: flex; gap: 3px; white-space: nowrap;
+        pointer-events: auto; }
+      #${NS}-overlay .badge { min-width: 15px; height: 16px; padding: 0 5px;
+        border-radius: 8px; font: 700 10px/16px system-ui, sans-serif; text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,.45); cursor: pointer; opacity: .95; }
+      #${NS}-overlay .badge.dim { opacity: .35; }
+      #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
+        border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
+        box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
+        display: flex; align-items: center; justify-content: center;
+        font: 600 11px/1 system-ui, sans-serif; color: #e6e9ef;
+        transition: left .7s ease, top .7s ease, transform .12s ease; }
+      #${NS}-overlay .cli:hover { transform: scale(1.25); z-index: 5; }
+      #${NS}-overlay .cli.sel { outline: 2px solid #fff; outline-offset: 1px; }
+      #${NS}-overlay .cli.guest { border-style: dashed; }
+      #${NS}-overlay .cli.b24 { border-color: #e0a83c; }
+      #${NS}-overlay .cli.b5  { border-color: #2b6cff; }
+      #${NS}-overlay .cli.b6  { border-color: #a855f7; }
+      #${NS}-overlay .cli.bx  { border-color: #8b93a7; }
+      #${NS}-overlay .cli .g { font-size: 12px; line-height: 1; }
+      #${NS}-overlay .nm { position: absolute; transform: translate(-50%, 0);
+        margin-top: 12px; max-width: 82px; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; text-align: center; font: 600 10px/1.3 system-ui, sans-serif;
+        color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none; }
+      #${NS}-overlay .more { position: absolute; padding: 0 6px; height: 18px; margin: -9px 0 0 -14px;
+        border-radius: 9px; background: #131722; border: 1px solid #3a445c; color: #cfd6e4;
+        font: 600 10px/17px system-ui, sans-serif; pointer-events: auto; cursor: default; }
+      #${NS}-overlay .badge.b24, #${NS}-overlay .badge.b5,
+      #${NS}-overlay .badge.b6,  #${NS}-overlay .badge.bx { color: #fff; }
+      #${NS}-overlay .badge.b24 { background: #e0a83c; color: #1a1206; }
+      #${NS}-overlay .badge.b5  { background: #2b6cff; }
+      #${NS}-overlay .badge.b6  { background: #a855f7; }
+      #${NS}-overlay .badge.bx  { background: #8b93a7; color: #0b0e14; }
       #${NS}-status { position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
-        background: #131722ee; color: #e6e9ef; font: 12px/1.4 system-ui, sans-serif;
+        background: #131722ee; color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
         padding: 7px 11px; border-radius: 8px; border: 1px solid #2a3346;
         pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
-      #${NS}-status b { color: #4c9aff; }`;
+      #${NS}-status b { color: #fff; font-weight: 700; }
+      #${NS}-status i { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        margin-right: 4px; }
+      #${NS}-status i.b24 { background: #e0a83c; } #${NS}-status i.b5 { background: #2b6cff; }
+      #${NS}-status i.b6 { background: #a855f7; } #${NS}-status i.bx { background: #8b93a7; }
+      #${NS}-card { position: fixed; z-index: 2147483002; width: 236px;
+        background: #131722f7; color: #e6e9ef; border: 1px solid #2a3346; border-radius: 10px;
+        font: 12px/1.45 system-ui, sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,.55);
+        pointer-events: auto; overflow: hidden; }
+      #${NS}-card .hd { display: flex; align-items: center; gap: 7px; padding: 9px 10px;
+        border-bottom: 1px solid #2a3346; }
+      #${NS}-card .hd .t { font-weight: 700; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; }
+      #${NS}-card .hd .x { margin-left: auto; cursor: pointer; color: #8b93a7; padding: 0 2px; }
+      #${NS}-card .hd .x:hover { color: #fff; }
+      #${NS}-card dl { margin: 0; padding: 8px 10px 10px; display: grid;
+        grid-template-columns: auto 1fr; gap: 3px 10px; }
+      #${NS}-card dt { color: #8b93a7; }
+      #${NS}-card dd { margin: 0; text-align: right; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap; }
+      #${NS}-card .pill { padding: 0 6px; border-radius: 8px; font-weight: 700; font-size: 10px; }`;
     overlay.appendChild(style);
     document.body.appendChild(overlay);
+
     statusEl = document.createElement("div");
     statusEl.id = NS + "-status";
     statusEl.textContent = "UniFi Live: starting…";
     document.body.appendChild(statusEl);
+
+    document.addEventListener("mousedown", (e) => {
+      if (card && !card.contains(e.target) && !e.target.closest?.(`#${NS}-overlay .cli`)) closeCard();
+    }, true);
   }
 
+  // ring geometry: radius grows with count so icons never collide
   function ringPositions(n) {
-    const out = [], per = 8;
+    const out = [], per = 10;
     for (let i = 0; i < n; i++) {
       const ring = Math.floor(i / per), inRing = i - ring * per;
       const cnt = Math.min(per, n - ring * per);
       const ang = (inRing / cnt) * 2 * Math.PI - Math.PI / 2;
-      const rad = 20 + ring * 14;
+      const rad = 46 + ring * 34 + (cnt > 6 ? (cnt - 6) * 2.5 : 0);
       out.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
     }
     return out;
@@ -176,6 +289,17 @@
     if (!g) {
       const el = document.createElement("div");
       el.className = "grp";
+      el.addEventListener("click", (ev) => {
+        const b = ev.target.closest(".badge");
+        if (b) {
+          const band = b.dataset.band;
+          filters.set(name, filters.get(name) === band ? null : band);
+          g.sig = ""; // force re-render
+          return;
+        }
+        const c = ev.target.closest(".cli");
+        if (c) openCard(name, c.dataset.mac, c);
+      });
       overlay.appendChild(el);
       g = { el, sig: "" };
       groups.set(name, g);
@@ -183,22 +307,109 @@
     return g;
   }
 
-  function renderDots(g, clients) {
-    const shown = clients.slice(0, MAX_DOTS);
-    const extra = clients.length - shown.length;
-    const sig = clients.length + ":" + shown.map((c) => c.mac + c.guest).join(",");
+  function renderGroup(g, apName, clients) {
+    const counts = bandCounts(clients);
+    const filter = filters.get(apName) || null;
+    const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
+    const shown = list.slice(0, MAX_ICONS);
+    const extra = list.length - shown.length;
+    const withNames = shown.length <= NAME_LIMIT;
+    const sig = [filter, BANDS.map((b) => counts[b]).join("/"),
+      shown.map((c) => c.mac + bandOf(c) + (selected?.mac === c.mac ? "*" : "")).join(",")].join("|");
     if (g.sig === sig) return;
     g.sig = sig;
+
+    const badges = BANDS.filter((b) => counts[b]).map((b) =>
+      `<span class="badge ${BAND_CLS[b]}${filter && filter !== b ? " dim" : ""}" data-band="${b}"
+         title="${b === "?" ? "unknown band" : b + " GHz"} — click to filter">${counts[b]}</span>`).join("");
+
     const pos = ringPositions(shown.length);
-    g.el.innerHTML =
-      `<span class="badge">${clients.length}${extra > 0 ? "" : ""}</span>` +
-      shown.map((c, i) => {
-        const [dx, dy] = pos[i];
-        const t = `${c.hostname || c.mac}${c.band ? " · " + c.band + "G" : ""}${c.signal != null ? " · " + c.signal + " dBm" : ""}${c.guest ? " · guest" : ""}`;
-        return `<span class="dot${c.guest ? " guest" : ""}" style="left:${dx}px;top:${dy}px" title="${t.replace(/"/g, "&quot;")}"></span>`;
-      }).join("");
+    const icons = shown.map((c, i) => {
+      const [dx, dy] = pos[i], band = bandOf(c), glyph = iconFor(c);
+      const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
+      const tip = `${labelFor(c)}${band !== "?" ? " · " + band + " GHz" : ""}${c.signal != null ? " · " + c.signal + " dBm" : ""}`;
+      const nm = withNames
+        ? `<span class="nm" style="left:${dx}px;top:${dy}px">${esc(labelFor(c))}</span>` : "";
+      return `<span class="cli ${BAND_CLS[band]}${c.guest ? " guest" : ""}${sel}"
+          data-mac="${c.mac}" style="left:${dx}px;top:${dy}px" title="${esc(tip)}"
+        >${glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c))}</span>${nm}`;
+    }).join("");
+
+    const more = extra > 0
+      ? `<span class="more" style="left:0px;top:${(pos.length ? 0 : 0) + 74}px">+${extra} more</span>` : "";
+    g.el.innerHTML = `<span class="badges">${badges}</span>${icons}${more}`;
   }
 
+  // --- details card -----------------------------------------------------
+  function findClient(ap, mac) {
+    return (apByName[ap]?.clients || []).find((c) => c.mac === mac) || null;
+  }
+  function openCard(ap, mac, anchorEl) {
+    selected = { ap, mac };
+    if (!card) {
+      card = document.createElement("div");
+      card.id = NS + "-card";
+      document.body.appendChild(card);
+    }
+    renderCard();
+    positionCard(anchorEl);
+    for (const [n, g] of groups) if (n === ap) g.sig = "";
+  }
+  function closeCard() {
+    selected = null;
+    card?.remove();
+    card = null;
+    for (const [, g] of groups) g.sig = "";
+  }
+  function refreshOpenCard() {
+    if (!selected) return;
+    if (!findClient(selected.ap, selected.mac)) { closeCard(); return; }
+    renderCard();
+  }
+  function row(k, v) { return v == null || v === "" ? "" : `<dt>${k}</dt><dd>${esc(v)}</dd>`; }
+  function renderCard() {
+    if (!card || !selected) return;
+    const c = findClient(selected.ap, selected.mac);
+    if (!c) return;
+    const band = bandOf(c), glyph = iconFor(c) || initialFor(c);
+    const snr = (c.signal != null && c.noise != null) ? (c.signal - c.noise) + " dB" : null;
+    card.innerHTML = `
+      <div class="hd">
+        <span style="font-size:14px">${glyph}</span>
+        <span class="t">${esc(labelFor(c))}</span>
+        <span class="pill ${BAND_CLS[band]}" style="background:${
+          band === "2.4" ? "#e0a83c;color:#1a1206" : band === "5" ? "#2b6cff;color:#fff"
+          : band === "6" ? "#a855f7;color:#fff" : "#8b93a7;color:#0b0e14"}">${band === "?" ? "?" : band + "G"}</span>
+        <span class="x" title="Close">✕</span>
+      </div>
+      <dl>
+        ${row("AP", selected.ap)}
+        ${row("SSID", c.essid)}
+        ${row("IP", c.ip)}
+        ${row("MAC", c.mac.replace(/(..)(?=.)/g, "$1:"))}
+        ${row("Signal", c.signal != null ? c.signal + " dBm" : null)}
+        ${row("SNR", snr)}
+        ${row("Channel", c.channel)}
+        ${row("TX / RX", (kbps(c.tx) && kbps(c.rx)) ? `${kbps(c.tx)} / ${kbps(c.rx)}` : null)}
+        ${row("Data", (bytes(c.txb) && bytes(c.rxb)) ? `${bytes(c.txb)} ↑ ${bytes(c.rxb)} ↓` : null)}
+        ${row("Uptime", dur(c.uptime))}
+        ${row("Vendor", c.vendor || c.oui)}
+        ${c.guest ? "<dt>Network</dt><dd>Guest</dd>" : ""}
+      </dl>`;
+    card.querySelector(".x").addEventListener("click", closeCard);
+  }
+  function positionCard(anchorEl) {
+    if (!card) return;
+    const r = anchorEl?.getBoundingClientRect();
+    const w = 236, h = card.offsetHeight || 240;
+    let x = (r ? r.right + 10 : 60), y = (r ? r.top - 10 : 60);
+    if (x + w > innerWidth - 8) x = (r ? r.left - w - 10 : 8);
+    if (y + h > innerHeight - 8) y = Math.max(8, innerHeight - h - 8);
+    card.style.left = Math.max(8, x) + "px";
+    card.style.top = Math.max(8, y) + "px";
+  }
+
+  // --- position loop ----------------------------------------------------
   let raf = 0;
   function tickPositions() {
     raf = 0;
@@ -211,10 +422,8 @@
       if (!title) return;
       const name = norm(title.textContent);
       const ap = apByName[name];
-      if (!ap || !ap.clients.length) return; // only APs with clients
+      if (!ap || !ap.clients.length) return;
       const r = sec.getBoundingClientRect();
-      // The label sits *below* the AP icon; anchor above it so the bubble ring
-      // circles the icon instead of covering the name/model text.
       const x = r.left + r.width / 2, y = r.top - 22;
       if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) return;
       seen.add(name);
@@ -222,34 +431,37 @@
       g.el.style.left = x + "px";
       g.el.style.top = y + "px";
       g.el.style.display = "block";
-      renderDots(g, ap.clients);
+      renderGroup(g, name, ap.clients);
+      if (selected && selected.ap === name) {
+        const el = g.el.querySelector(`.cli[data-mac="${selected.mac}"]`);
+        if (el) positionCard(el);
+      }
     });
     for (const [name, g] of groups) if (!seen.has(name)) g.el.style.display = "none";
     schedule();
   }
-
-  function schedule() {
-    if (!raf) raf = requestAnimationFrame(tickPositions);
-  }
+  function schedule() { if (!raf) raf = requestAnimationFrame(tickPositions); }
 
   function updateStatus() {
     if (!statusEl) return;
     if (lastErr) {
       const tried = (baseFromPerf() ? "perf, " : "") + candidateBases().length + " path(s)";
-      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${lastErr} (tried ${tried})`;
+      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} (tried ${tried})`;
       return;
     }
     const aps = Object.values(apByName).filter((a) => a.clients.length);
-    const total = aps.reduce((n, a) => n + a.clients.length, 0);
-    statusEl.innerHTML = `UniFi Live: <b>${total}</b> client${total === 1 ? "" : "s"} on <b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}`;
+    const all = aps.flatMap((a) => a.clients);
+    const n = bandCounts(all);
+    const per = BANDS.filter((b) => n[b])
+      .map((b) => `<i class="${BAND_CLS[b]}"></i>${b === "?" ? "?" : b}G <b>${n[b]}</b>`).join(" · ");
+    statusEl.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
+      `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}`;
   }
 
-  // --- lifecycle: mount on InnerSpace, react to SPA route changes --------
+  // --- lifecycle --------------------------------------------------------
   let mounted = false, dataTimer = 0;
-  function onInnerspace() {
-    return location.pathname.includes("/innerspace") &&
-      document.querySelector('[data-testid="editor-canvas"]');
-  }
+  const onInnerspace = () => location.pathname.includes("/innerspace") &&
+    document.querySelector('[data-testid="editor-canvas"]');
   function mount() {
     if (mounted) return;
     mounted = true;
@@ -263,13 +475,12 @@
     mounted = false;
     clearInterval(dataTimer);
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    closeCard();
     overlay?.remove(); statusEl?.remove();
-    overlay = statusEl = null; groups.clear();
+    overlay = statusEl = null;
+    groups.clear(); filters.clear();
   }
-  function check() {
-    if (onInnerspace()) mount();
-    else unmount();
-  }
+  const check = () => onInnerspace() ? mount() : unmount();
   new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
   setInterval(check, 1500);
   check();
