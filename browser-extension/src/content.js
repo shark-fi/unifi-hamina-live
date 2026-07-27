@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b11";        // shown in the status chip; bump on every change
+  const BUILD = "b12";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -106,7 +106,7 @@
     } catch (e) { failedUrls.add(url); throw new Error("bad JSON"); }
   }
 
-  let apByName = {}, lastErr = null, apiBase = null;
+  let apByName = {}, lastErr = null, apiBase = null, apiV2 = false;
 
   /* Remember a base that worked. The performance resource buffer is finite and
    * evicts old entries, so on a long-lived page the app's own API call can age
@@ -135,12 +135,14 @@
     } catch (_e) { return []; }
   }
 
-  let lastTriedBase = null, workerBases = 0;
+  let lastTriedBase = null, workerBases = 0, seenBases = [];
   async function resolveBase(site) {
     if (apiBase) return apiBase;
     const saved = await loadSavedBase();
     const fromWorker = await basesFromWorker();
     workerBases = fromWorker.length;
+    seenBases = [...new Set([...fromWorker, ...basesFromPerf()])];
+    if (seenBases.length) console.warn("[UniFi Live] API bases observed:", seenBases);
     const tries = [...new Set([...fromWorker, ...basesFromPerf(), saved, ...candidateBases()]
       .filter(Boolean)
       .filter((b) => !failedUrls.has(`${b}/s/${site}/stat/device`)))];
@@ -150,7 +152,14 @@
       lastTriedBase = b;
       try {
         const j = await getJson(`${b}/s/${site}/stat/device`);
-        if (Array.isArray(j.data)) { apiBase = b; rememberBase(b); return b; }
+        if (Array.isArray(j.data)) { apiBase = b; apiV2 = false; rememberBase(b); return b; }
+      } catch (e) { lastE = e.message; }
+      // some consoles serve only the v2 API — accept that shape too
+      try {
+        const v2 = b.replace(/\/api$/, "/v2/api");
+        const j2 = await getJson(`${v2}/site/${site}/device`);
+        const list = Array.isArray(j2) ? j2 : (j2.network_devices || j2.data);
+        if (Array.isArray(list)) { apiBase = b; apiV2 = true; rememberBase(b); return b; }
       } catch (e) { lastE = e.message; }
     }
     throw new Error(lastE);
@@ -265,6 +274,40 @@
     for (const [, g] of groups) { g.sig = ""; g.el.style.display = "none"; }
   }
 
+  /* v1 and v2 differ in both paths and field names; keep the differences here
+   * and hand the rest of the code one shape. */
+  async function fetchLists(base, site) {
+    if (!apiV2) {
+      const [dev, sta] = await Promise.all([
+        getJson(`${base}/s/${site}/stat/device`),
+        getJson(`${base}/s/${site}/stat/sta`),
+      ]);
+      return [dev.data || [], sta.data || []];
+    }
+    const v2 = base.replace(/\/api$/, "/v2/api");
+    const [dev, sta] = await Promise.all([
+      getJson(`${v2}/site/${site}/device`),
+      getJson(`${v2}/site/${site}/clients/active`),
+    ]);
+    const dl = Array.isArray(dev) ? dev : (dev.network_devices || dev.data || []);
+    const cl = Array.isArray(sta) ? sta : (sta.clients || sta.data || []);
+    return [dl, cl];
+  }
+
+  function bandFromRadio(c) {
+    const r = String(c.radio || "").toLowerCase();
+    if (r === "na") return "5";
+    if (r === "ng") return "2.4";
+    if (r === "6e") return "6";
+    const b = String(c.band || c.radio_band || "").toLowerCase();
+    if (b.startsWith("2")) return "2.4";
+    if (b.startsWith("5")) return "5";
+    if (b.startsWith("6")) return "6";
+    const ch = c.channel;
+    if (Number.isInteger(ch)) return ch <= 14 ? "2.4" : null;   // 5/6 overlap, stay honest
+    return null;
+  }
+
   async function refreshData() {
     const site = siteId();
     // switching console (or site) changes the API prefix entirely — drop any
@@ -274,26 +317,26 @@
     try {
       const base = await resolveBase(site);
       loadFingerprints(base, site);   // fire-and-forget; icons appear once ready
-      const [dev, sta] = await Promise.all([
-        getJson(`${base}/s/${site}/stat/device`),
-        getJson(`${base}/s/${site}/stat/sta`),
-      ]);
+      const [devList, staList] = await fetchLists(base, site);
       const byMac = {};
-      for (const d of dev.data || []) {
-        if (d.type && d.type !== "uap") continue;
+      for (const d of devList) {
+        // v2 payloads name the type differently; an AP is anything with radios
+        const isAp = d.type ? d.type === "uap"
+          : !!(d.radio_table || d.radio_table_stats || d.radios);
+        if (!isAp) continue;
         byMac[macNorm(d.mac)] = { name: d.name || d.mac, online: d.state === 1, radios: radiosOf(d) };
       }
       const cliByMac = {};
-      for (const c of sta.data || []) {
-        if (c.is_wired) continue;
-        const ap = macNorm(c.ap_mac);
+      for (const c of staList) {
+        if (c.is_wired || c.type === "WIRED") continue;
+        const ap = macNorm(c.ap_mac || c.uplink_mac || c.uplink?.mac);
         if (!ap) continue;
         (cliByMac[ap] ||= []).push({
           mac: macNorm(c.mac),
           name: c.name || c.hostname || null,
           hostname: c.hostname || null,
           ip: c.ip || null,
-          band: c.radio === "na" ? "5" : c.radio === "ng" ? "2.4" : c.radio === "6e" ? "6" : null,
+          band: bandFromRadio(c),
           channel: c.channel ?? null,
           signal: c.signal ?? null,
           noise: c.noise ?? null,
@@ -814,10 +857,10 @@
   function updateStatus() {
     if (!statusEl) return;
     if (lastErr) {
-      const where = (lastTriedBase ? lastTriedBase.replace(location.origin, "") : "no path found") +
-        ` · ${basesFromPerf().length}/${workerBases} seen`;
-      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · last tried ` +
-        `<b>${esc(where)}</b> <span style="opacity:.5">${BUILD}</span>`;
+      const saw = seenBases[0] ? seenBases[0].replace(location.origin, "") : "nothing";
+      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · saw ` +
+        `<b>${esc(saw)}</b> (${seenBases.length}) · site <b>${esc(siteId())}</b>` +
+        ` <span style="opacity:.5">${BUILD}</span>`;
       return;
     }
     if (renderErr) {
