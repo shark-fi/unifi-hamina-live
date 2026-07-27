@@ -206,6 +206,9 @@
         border-radius: 8px; font: 700 10px/16px system-ui, sans-serif; text-align: center;
         box-shadow: 0 1px 3px rgba(0,0,0,.45); cursor: pointer; opacity: .95; }
       #${NS}-overlay .badge.dim { opacity: .35; }
+      #${NS}-overlay .badge.tiny { min-width: 0; width: 9px; height: 9px; padding: 0;
+        border-radius: 50%; opacity: .8; }
+      #${NS}-overlay .badge.tiny:hover { opacity: 1; transform: scale(1.3); }
       #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
         border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
         box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
@@ -316,7 +319,22 @@
     return g;
   }
 
-  function renderGroup(g, apName, clients) {
+  /* A local console renders UniFi's own per-radio client-count chips inside the
+   * AP marker; remote access (unifi.ui.com) shows the model there instead. When
+   * UniFi is already showing counts we suppress our band chips and defer to it.
+   * Detect by looking for a numeric-only leaf node that isn't the title/model. */
+  function hasNativeCounts(sec) {
+    const title = sec.querySelector('[data-testid="title"]');
+    const model = sec.querySelector('[data-testid="model"]');
+    for (const el of sec.querySelectorAll("span, div")) {
+      if (el.children.length) continue;                 // leaves only
+      if (title?.contains(el) || model?.contains(el)) continue;
+      if (/^\d{1,4}$/.test((el.textContent || "").trim())) return true;
+    }
+    return false;
+  }
+
+  function renderGroup(g, apName, clients, nativeCounts) {
     const counts = bandCounts(clients);
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
@@ -325,14 +343,17 @@
     const shown = list.slice(0, over ? MAX_ICONS - 1 : MAX_ICONS);
     const extra = list.length - shown.length;
     const withNames = shown.length <= NAME_LIMIT;
-    const sig = [filter, BANDS.map((b) => counts[b]).join("/"),
+    const sig = [filter, nativeCounts ? "n" : "", BANDS.map((b) => counts[b]).join("/"),
       shown.map((c) => c.mac + bandOf(c) + (selected?.mac === c.mac ? "*" : "")).join(",")].join("|");
     if (g.sig === sig) return;
     g.sig = sig;
 
+    // When UniFi renders its own count chips (local console) we don't repeat the
+    // numbers — collapse to small colour dots that still act as band filters.
     const badges = BANDS.filter((b) => counts[b]).map((b) =>
-      `<span class="badge ${BAND_CLS[b]}${filter && filter !== b ? " dim" : ""}" data-band="${b}"
-         title="${b === "?" ? "unknown band" : b + " GHz"} — click to filter">${counts[b]}</span>`).join("");
+      `<span class="badge ${BAND_CLS[b]}${nativeCounts ? " tiny" : ""}${filter && filter !== b ? " dim" : ""}"
+         data-band="${b}" title="${b === "?" ? "unknown band" : b + " GHz"}: ${counts[b]} — click to filter"
+        >${nativeCounts ? "" : counts[b]}</span>`).join("");
 
     const pos = ringPositions(shown.length + (extra > 0 ? 1 : 0));
     const icons = shown.map((c, i) => {
@@ -443,7 +464,7 @@
       g.el.style.left = x + "px";
       g.el.style.top = y + "px";
       g.el.style.display = "block";
-      renderGroup(g, name, ap.clients);
+      renderGroup(g, name, ap.clients, hasNativeCounts(sec));
       if (selected && selected.ap === name) {
         const el = g.el.querySelector(`.cli[data-mac="${selected.mac}"]`);
         if (el) positionCard(el);
