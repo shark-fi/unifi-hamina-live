@@ -125,6 +125,9 @@
 
   function ensureOverlay() {
     if (overlay && document.body.contains(overlay)) return;
+    // Drop any nodes left behind by a previous (now-dead) extension context —
+    // reloading an unpacked extension orphans its DOM but not its elements.
+    document.querySelectorAll(`#${NS}-overlay, #${NS}-status`).forEach((el) => el.remove());
     overlay = document.createElement("div");
     overlay.id = NS + "-overlay";
     Object.assign(overlay.style, {
@@ -210,7 +213,9 @@
       const ap = apByName[name];
       if (!ap || !ap.clients.length) return; // only APs with clients
       const r = sec.getBoundingClientRect();
-      const x = r.left + r.width / 2, y = r.top; // marker anchor (label sits under the dot)
+      // The label sits *below* the AP icon; anchor above it so the bubble ring
+      // circles the icon instead of covering the name/model text.
+      const x = r.left + r.width / 2, y = r.top - 22;
       if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) return;
       seen.add(name);
       const g = groupFor(name);
