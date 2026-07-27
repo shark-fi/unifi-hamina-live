@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b8";        // shown in the status chip; bump on every change
+  const BUILD = "b9";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -43,18 +43,23 @@
    * URL we fetched was wrong: on remote access the working base is the very one
    * the app itself uses, so once we fetched it we started skipping it. */
   const failedUrls = new Set();
-  function baseFromPerf() {
+  /* Derive the API prefix from ANY request the console made to its network
+   * proxy — v1 (/proxy/network/api/s/...), v2 (/proxy/network/v2/api/site/...)
+   * or integration (/proxy/network/integration/v1/...). Matching only the v1
+   * shape left us blind on consoles whose UI talks v2. Newest first. */
+  function basesFromPerf() {
+    const out = [];
     try {
-      const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network\/api)\/s\//;
+      const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network)\//;
       const ents = performance.getEntriesByType("resource");
       for (let k = ents.length - 1; k >= 0; k--) {
-        const name = ents[k].name;
-        if (failedUrls.has(name)) continue;   // a path we already proved wrong
-        const m = name.match(rx);
-        if (m) return m[1];
+        const m = ents[k].name.match(rx);
+        if (!m) continue;
+        const base = m[1] + "/api";
+        if (!out.includes(base)) out.push(base);
       }
     } catch (_e) { /* ignore */ }
-    return null;
+    return out;
   }
   function candidateBases() {
     const p = location.pathname, i = p.indexOf("/network/");
@@ -107,9 +112,8 @@
   let lastTriedBase = null;
   async function resolveBase(site) {
     if (apiBase) return apiBase;
-    const perf = baseFromPerf();
     const saved = await loadSavedBase();
-    const tries = [...new Set([perf, saved, ...candidateBases()].filter(Boolean)
+    const tries = [...new Set([...basesFromPerf(), saved, ...candidateBases()].filter(Boolean)
       .filter((b) => !failedUrls.has(`${b}/s/${site}/stat/device`)))];
     if (!tries.length) tries.push(...candidateBases());
     let lastE = "no reachable API";
@@ -781,7 +785,9 @@
   function updateStatus() {
     if (!statusEl) return;
     if (lastErr) {
-      const where = lastTriedBase ? lastTriedBase.replace(location.origin, "") : "no path found";
+      const seen = basesFromPerf().length;
+      const where = (lastTriedBase ? lastTriedBase.replace(location.origin, "") : "no path found") +
+        ` · ${seen} seen`;
       statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · last tried ` +
         `<b>${esc(where)}</b> <span style="opacity:.5">${BUILD}</span>`;
       return;
