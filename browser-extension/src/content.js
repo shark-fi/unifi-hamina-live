@@ -16,7 +16,7 @@
   window.__unifiLiveInnerspace = true;
 
   const REFRESH_MS = 5000;
-  const MAX_ICONS = 14;      // icons drawn per AP before overflow chip
+  const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
 
@@ -310,8 +310,7 @@
       /* stay out of the way of UniFi's own marker tooltips */
       #${NS}-overlay .grp.fade { opacity: .12; }
       #${NS}-overlay .grp.fade .chip,
-      #${NS}-overlay .grp.fade .cli,
-      #${NS}-overlay .grp.fade .more { pointer-events: none; }
+      #${NS}-overlay .grp.fade .cli { pointer-events: none; }
       #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
         border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
         box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
@@ -332,10 +331,6 @@
         margin-top: 12px; max-width: 82px; overflow: hidden; text-overflow: ellipsis;
         white-space: nowrap; text-align: center; font: 600 10px/1.3 system-ui, sans-serif;
         color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none; }
-      #${NS}-overlay .more { position: absolute; width: 22px; height: 22px; margin: -11px;
-        border-radius: 50%; background: #131722; border: 2px dashed #55607a; color: #cfd6e4;
-        font: 700 9px/20px system-ui, sans-serif; text-align: center;
-        pointer-events: auto; cursor: default; }
       #${NS}-overlay .bar.b24 { background: #e0a83c; } #${NS}-overlay .bar.b5 { background: #2b6cff; }
       #${NS}-overlay .bar.b6  { background: #a855f7; } #${NS}-overlay .bar.bx { background: #8b93a7; }
       /* hover panel, matching UniFi's chip tooltip */
@@ -482,15 +477,22 @@
   const RING_STEP = 36;      // extra radius per additional ring
   const BOTTOM_GAP = 70 * Math.PI / 180;  // half-width of the clear wedge below
   function ringPositions(n) {
-    const out = [], per = 10;
-    for (let i = 0; i < n; i++) {
-      const ring = Math.floor(i / per), inRing = i - ring * per;
-      const cnt = Math.min(per, n - ring * per);
-      const span = 2 * Math.PI - 2 * BOTTOM_GAP;      // arc that avoids the labels
-      const ang = (Math.PI / 2 + BOTTOM_GAP) +
-        (cnt === 1 ? span / 2 : (inRing / (cnt - 1)) * span);
-      const rad = RING_R + ring * RING_STEP + (cnt > 6 ? (cnt - 6) * 3 : 0);
-      out.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
+    const span = 2 * Math.PI - 2 * BOTTOM_GAP;   // arc that avoids the labels
+    const out = [];
+    let placed = 0, ring = 0;
+    while (placed < n && ring < 12) {
+      const rad = RING_R + ring * RING_STEP;
+      // how many icons fit on this ring at MIN_SEP spacing along its arc
+      const cap = Math.max(3, Math.floor((rad * span) / MIN_SEP));
+      const cnt = Math.min(cap, n - placed);
+      const step = span / Math.max(1, cap - 1);
+      const lead = (span - step * (cnt - 1)) / 2;   // centre a partial ring
+      for (let i = 0; i < cnt; i++) {
+        const ang = (Math.PI / 2 + BOTTOM_GAP) + lead + i * step;
+        out.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
+      }
+      placed += cnt;
+      ring++;
     }
     return out;
   }
@@ -537,10 +539,7 @@
     const clients = ap.clients, counts = bandCounts(clients);
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
-    // when there is overflow, reserve the last ring slot for the "+N more" chip
-    const over = list.length > MAX_ICONS;
-    const shown = list.slice(0, over ? MAX_ICONS - 1 : MAX_ICONS);
-    const extra = list.length - shown.length;
+    const shown = list;                     // every client gets an icon
     const withNames = shown.length <= NAME_LIMIT;
     const chans = nativeCh ? [] : (ap.radios || []);
     const sig = [filter, nativeCh ? "n" : "", below, BANDS.map((b) => counts[b]).join("/"),
@@ -559,7 +558,7 @@
       `<span class="chip ch" data-band="${r.band}">${r.channel}<i class="bar ${BAND_CLS[r.band]}"></i></span>`
     ).join("");
 
-    const pos = ringPositions(shown.length + (extra > 0 ? 1 : 0));
+    const pos = ringPositions(shown.length);
     const icons = shown.map((c, i) => {
       const [dx, dy] = pos[i], band = bandOf(c), glyph = iconFor(c);
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
@@ -575,15 +574,12 @@
         >${inner}</span>${nm}`;
     }).join("");
 
-    const more = extra > 0
-      ? (([mx, my]) => `<span class="more" style="left:${mx}px;top:${my}px">+${extra}</span>`)(pos[pos.length - 1])
-      : "";
     // both chip rows sit BELOW the AP name/model, mirroring UniFi's own chips:
     // our channel chips (remote only) first, then the client counts under them
     g.el.innerHTML =
       (chanChips ? `<span class="badges ch" style="top:${below}px">${chanChips}</span>` : "") +
       `<span class="badges cl" style="top:${below + (chanChips ? 26 : 0)}px">${badges}</span>` +
-      `${icons}${more}`;
+      icons;
     // inline handlers are blocked by the page CSP, so bind the fallback here:
     // a fingerprint icon that 404s reverts the chip to its glyph/initial.
     g.el.querySelectorAll("img.ci").forEach((img) => {
