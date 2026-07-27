@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b10";        // shown in the status chip; bump on every change
+  const BUILD = "b11";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -82,8 +82,12 @@
     const o = location.origin, list = [`${o}${prefix}/proxy/network/api`];
     const m = prefix.match(/\/consoles\/([^/]+)/);
     if (m) {
-      list.push(`${o}/proxy/consoles/${m[1]}/proxy/network/api`);
-      list.push(`${o}/proxy/network/${m[1]}/proxy/network/api`);
+      const full = m[1], hex = full.split(":")[0];   // id may drop the :epoch part
+      for (const id of [...new Set([full, hex])]) {
+        list.push(`${o}/proxy/consoles/${id}/proxy/network/api`);
+        list.push(`${o}/consoles/${id}/proxy/network/api`);
+        list.push(`${o}/proxy/network/${id}/proxy/network/api`);
+      }
     }
     list.push(`${o}/proxy/network/api`);
     return [...new Set(list)];
@@ -124,11 +128,21 @@
     try { chrome.storage.local.set({ [BASE_KEY()]: b }); } catch (_e) { /* ignore */ }
   }
 
-  let lastTriedBase = null;
+  async function basesFromWorker() {
+    try {
+      const r = await chrome.runtime.sendMessage({ type: "bases" });
+      return Array.isArray(r?.bases) ? r.bases : [];
+    } catch (_e) { return []; }
+  }
+
+  let lastTriedBase = null, workerBases = 0;
   async function resolveBase(site) {
     if (apiBase) return apiBase;
     const saved = await loadSavedBase();
-    const tries = [...new Set([...basesFromPerf(), saved, ...candidateBases()].filter(Boolean)
+    const fromWorker = await basesFromWorker();
+    workerBases = fromWorker.length;
+    const tries = [...new Set([...fromWorker, ...basesFromPerf(), saved, ...candidateBases()]
+      .filter(Boolean)
       .filter((b) => !failedUrls.has(`${b}/s/${site}/stat/device`)))];
     if (!tries.length) tries.push(...candidateBases());
     let lastE = "no reachable API";
@@ -800,9 +814,8 @@
   function updateStatus() {
     if (!statusEl) return;
     if (lastErr) {
-      const seen = basesFromPerf().length;
       const where = (lastTriedBase ? lastTriedBase.replace(location.origin, "") : "no path found") +
-        ` · ${seen} seen`;
+        ` · ${basesFromPerf().length}/${workerBases} seen`;
       statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · last tried ` +
         `<b>${esc(where)}</b> <span style="opacity:.5">${BUILD}</span>`;
       return;
