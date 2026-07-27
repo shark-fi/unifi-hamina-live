@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b9";        // shown in the status chip; bump on every change
+  const BUILD = "b10";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -45,21 +45,36 @@
   const failedUrls = new Set();
   /* Derive the API prefix from ANY request the console made to its network
    * proxy — v1 (/proxy/network/api/s/...), v2 (/proxy/network/v2/api/site/...)
-   * or integration (/proxy/network/integration/v1/...). Matching only the v1
-   * shape left us blind on consoles whose UI talks v2. Newest first. */
+   * or integration (/proxy/network/integration/v1/...).
+   *
+   * Sampling performance.getEntriesByType() alone is not enough: the resource
+   * timing buffer holds a few hundred entries and the map app can evict the
+   * API calls before we look (a big console reported "0 seen" this way). So we
+   * observe entries as they arrive, keep our own list, and raise the buffer. */
+  const PROXY_RX = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network)\//;
+  const perfBases = [];                 // newest first, deduped
+  function notePerfUrl(url) {
+    const m = String(url || "").match(PROXY_RX);
+    if (!m) return;
+    const base = m[1] + "/api";
+    const i = perfBases.indexOf(base);
+    if (i === 0) return;
+    if (i > 0) perfBases.splice(i, 1);
+    perfBases.unshift(base);
+  }
+  try { performance.setResourceTimingBufferSize?.(3000); } catch (_e) { /* ignore */ }
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) notePerfUrl(e.name);
+    }).observe({ type: "resource", buffered: true });
+  } catch (_e) { /* fall back to sampling below */ }
+
   function basesFromPerf() {
-    const out = [];
-    try {
-      const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network)\//;
+    try {   // sweep whatever is still buffered, in case the observer missed it
       const ents = performance.getEntriesByType("resource");
-      for (let k = ents.length - 1; k >= 0; k--) {
-        const m = ents[k].name.match(rx);
-        if (!m) continue;
-        const base = m[1] + "/api";
-        if (!out.includes(base)) out.push(base);
-      }
+      for (let k = ents.length - 1; k >= 0; k--) notePerfUrl(ents[k].name);
     } catch (_e) { /* ignore */ }
-    return out;
+    return perfBases.slice();
   }
   function candidateBases() {
     const p = location.pathname, i = p.indexOf("/network/");
