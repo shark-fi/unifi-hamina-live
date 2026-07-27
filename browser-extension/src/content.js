@@ -17,33 +17,75 @@
   const norm = (s) => String(s || "").trim().toLowerCase();
   const macNorm = (m) => String(m || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
 
-  // --- API base + site derived from the URL (works local and on unifi.ui.com)
-  function apiCtx() {
-    const p = location.pathname;
-    const i = p.indexOf("/network/");
-    if (i < 0) return null;
-    const prefix = p.slice(0, i); // "" locally, "/consoles/<id>" on unifi.ui.com
-    const site = p.slice(i + 9).split("/")[0] || "default";
-    return { base: `${location.origin}${prefix}/proxy/network/api`, site };
+  // --- API base + site (local: /proxy/network/api ; cloud: proxied under the
+  // console id, exact scheme varies). We DISCOVER the base from the app's own
+  // network activity (it already polls stat/device), with URL candidates as a
+  // fallback, then cache the winner.
+  function siteId() {
+    const p = location.pathname, i = p.indexOf("/network/");
+    return i < 0 ? "default" : (p.slice(i + 9).split("/")[0] || "default");
+  }
+
+  function baseFromPerf() {
+    try {
+      const rx = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network\/api)\/s\//;
+      const ents = performance.getEntriesByType("resource");
+      for (let k = ents.length - 1; k >= 0; k--) {
+        const m = ents[k].name.match(rx);
+        if (m) return m[1];
+      }
+    } catch (_e) { /* ignore */ }
+    return null;
+  }
+
+  function candidateBases() {
+    const p = location.pathname, i = p.indexOf("/network/");
+    const prefix = i < 0 ? "" : p.slice(0, i); // "" local, "/consoles/<id>" cloud
+    const o = location.origin, list = [`${o}${prefix}/proxy/network/api`];
+    const m = prefix.match(/\/consoles\/([^/]+)/);
+    if (m) {
+      list.push(`${o}/proxy/consoles/${m[1]}/proxy/network/api`);
+      list.push(`${o}/proxy/network/${m[1]}/proxy/network/api`);
+    }
+    list.push(`${o}/proxy/network/api`);
+    return [...new Set(list)];
   }
 
   async function getJson(url) {
     const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
-    if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
-    return r.json();
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = r.headers.get("content-type") || "";
+    const text = await r.text();
+    if (!ct.includes("json")) throw new Error("non-JSON (wrong API path)");
+    return JSON.parse(text);
   }
 
   // name(lower) -> { online, clients:[{mac,hostname,band,signal,guest}] }
   let apByName = {};
   let lastErr = null;
+  let apiBase = null;
+
+  async function resolveBase(site) {
+    if (apiBase) return apiBase;
+    const perf = baseFromPerf();
+    const tries = perf ? [perf, ...candidateBases()] : candidateBases();
+    let lastE = "no reachable API";
+    for (const b of [...new Set(tries)]) {
+      try {
+        const j = await getJson(`${b}/s/${site}/stat/device`);
+        if (Array.isArray(j.data)) { apiBase = b; return b; }
+      } catch (e) { lastE = e.message; }
+    }
+    throw new Error(lastE);
+  }
 
   async function refreshData() {
-    const ctx = apiCtx();
-    if (!ctx) return;
+    const site = siteId();
     try {
+      const base = await resolveBase(site);
       const [dev, sta] = await Promise.all([
-        getJson(`${ctx.base}/s/${ctx.site}/stat/device`),
-        getJson(`${ctx.base}/s/${ctx.site}/stat/sta`),
+        getJson(`${base}/s/${site}/stat/device`),
+        getJson(`${base}/s/${site}/stat/sta`),
       ]);
       const byMac = {}; // AP mac -> {name, online}
       for (const d of dev.data || []) {
@@ -71,6 +113,7 @@
       lastErr = null;
     } catch (e) {
       lastErr = e.message;
+      apiBase = null; // re-discover next tick (route/proxy may have changed)
     }
     updateStatus();
   }
@@ -186,7 +229,11 @@
 
   function updateStatus() {
     if (!statusEl) return;
-    if (lastErr) { statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${lastErr}`; return; }
+    if (lastErr) {
+      const tried = (baseFromPerf() ? "perf, " : "") + candidateBases().length + " path(s)";
+      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${lastErr} (tried ${tried})`;
+      return;
+    }
     const aps = Object.values(apByName).filter((a) => a.clients.length);
     const total = aps.reduce((n, a) => n + a.clients.length, 0);
     statusEl.innerHTML = `UniFi Live: <b>${total}</b> client${total === 1 ? "" : "s"} on <b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}`;
