@@ -224,9 +224,10 @@
         margin-top: 12px; max-width: 82px; overflow: hidden; text-overflow: ellipsis;
         white-space: nowrap; text-align: center; font: 600 10px/1.3 system-ui, sans-serif;
         color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none; }
-      #${NS}-overlay .more { position: absolute; padding: 0 6px; height: 18px; margin: -9px 0 0 -14px;
-        border-radius: 9px; background: #131722; border: 1px solid #3a445c; color: #cfd6e4;
-        font: 600 10px/17px system-ui, sans-serif; pointer-events: auto; cursor: default; }
+      #${NS}-overlay .more { position: absolute; width: 22px; height: 22px; margin: -11px;
+        border-radius: 50%; background: #131722; border: 2px dashed #55607a; color: #cfd6e4;
+        font: 700 9px/20px system-ui, sans-serif; text-align: center;
+        pointer-events: auto; cursor: default; }
       #${NS}-overlay .badge.b24, #${NS}-overlay .badge.b5,
       #${NS}-overlay .badge.b6,  #${NS}-overlay .badge.bx { color: #fff; }
       #${NS}-overlay .badge.b24 { background: #e0a83c; color: #1a1206; }
@@ -271,14 +272,22 @@
     }, true);
   }
 
-  // ring geometry: radius grows with count so icons never collide
+  // Ring geometry. The AP's own name/model labels (and, on a local console, its
+  // per-radio count badges) sit directly BELOW the marker, so we leave a clear
+  // wedge at the bottom and keep the ring well clear of the AP icon. Radius also
+  // grows with the number of icons so they never collide.
+  const RING_R = 100;        // base radius (px) from the AP marker
+  const RING_STEP = 36;      // extra radius per additional ring
+  const BOTTOM_GAP = 62 * Math.PI / 180;  // half-width of the clear wedge below
   function ringPositions(n) {
     const out = [], per = 10;
     for (let i = 0; i < n; i++) {
       const ring = Math.floor(i / per), inRing = i - ring * per;
       const cnt = Math.min(per, n - ring * per);
-      const ang = (inRing / cnt) * 2 * Math.PI - Math.PI / 2;
-      const rad = 46 + ring * 34 + (cnt > 6 ? (cnt - 6) * 2.5 : 0);
+      const span = 2 * Math.PI - 2 * BOTTOM_GAP;      // arc that avoids the labels
+      const ang = (Math.PI / 2 + BOTTOM_GAP) +
+        (cnt === 1 ? span / 2 : (inRing / (cnt - 1)) * span);
+      const rad = RING_R + ring * RING_STEP + (cnt > 6 ? (cnt - 6) * 3 : 0);
       out.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
     }
     return out;
@@ -311,7 +320,9 @@
     const counts = bandCounts(clients);
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
-    const shown = list.slice(0, MAX_ICONS);
+    // when there is overflow, reserve the last ring slot for the "+N more" chip
+    const over = list.length > MAX_ICONS;
+    const shown = list.slice(0, over ? MAX_ICONS - 1 : MAX_ICONS);
     const extra = list.length - shown.length;
     const withNames = shown.length <= NAME_LIMIT;
     const sig = [filter, BANDS.map((b) => counts[b]).join("/"),
@@ -323,7 +334,7 @@
       `<span class="badge ${BAND_CLS[b]}${filter && filter !== b ? " dim" : ""}" data-band="${b}"
          title="${b === "?" ? "unknown band" : b + " GHz"} — click to filter">${counts[b]}</span>`).join("");
 
-    const pos = ringPositions(shown.length);
+    const pos = ringPositions(shown.length + (extra > 0 ? 1 : 0));
     const icons = shown.map((c, i) => {
       const [dx, dy] = pos[i], band = bandOf(c), glyph = iconFor(c);
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
@@ -336,7 +347,8 @@
     }).join("");
 
     const more = extra > 0
-      ? `<span class="more" style="left:0px;top:${(pos.length ? 0 : 0) + 74}px">+${extra} more</span>` : "";
+      ? (([mx, my]) => `<span class="more" style="left:${mx}px;top:${my}px">+${extra}</span>`)(pos[pos.length - 1])
+      : "";
     g.el.innerHTML = `<span class="badges">${badges}</span>${icons}${more}`;
   }
 
