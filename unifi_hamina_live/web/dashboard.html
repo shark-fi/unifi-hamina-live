@@ -56,6 +56,46 @@
   .clients { font-variant-numeric: tabular-nums; font-weight: 650; }
   footer { padding: 14px 22px; color: var(--muted); font-size: 12px; }
   a { color: var(--accent); }
+
+  /* live client map */
+  .section-head { display: flex; align-items: baseline; gap: 12px;
+    margin: 4px 0 12px; flex-wrap: wrap; }
+  .section-head h2 { font-size: 15px; margin: 0; font-weight: 640; }
+  .section-head .hint { color: var(--muted); font-size: 12px; }
+  select { background: var(--chip); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; font: inherit; }
+  .map-wrap { display: grid; grid-template-columns: minmax(0,1fr) 260px; gap: 14px;
+    margin-bottom: 22px; }
+  @media (max-width: 760px) { .map-wrap { grid-template-columns: 1fr; } }
+  .map-stage { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px; overflow: auto; min-height: 120px; }
+  #map { width: 100%; height: auto; display: block; border-radius: 6px; }
+  #map .grid { fill: var(--chip); }
+  #map .gridline { stroke: var(--line); stroke-width: 1; }
+  .ap-dot { cursor: pointer; }
+  .ap-core { stroke-width: 2; }
+  .ap-core.on { fill: color-mix(in srgb, var(--accent) 78%, #000 0%); stroke: #fff; }
+  .ap-core.off { fill: var(--off); stroke: #fff; }
+  .ap-core.sel { stroke: var(--ok); }
+  .ap-label { fill: var(--text); font-weight: 600; paint-order: stroke;
+    stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+  .ap-badge { fill: var(--ok); }
+  .ap-badge-t { fill: #04140a; font-weight: 700; text-anchor: middle; }
+  .cli-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 1;
+    transition: cx .8s ease, cy .8s ease, opacity .4s ease; }
+  .cli-dot.guest { fill: #e0a83c; }
+  .side { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; align-self: start; }
+  .side h3 { margin: 0 0 8px; font-size: 13px; }
+  .side .empty { color: var(--muted); font-size: 12px; }
+  .cli { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .cli:last-child { border-bottom: none; }
+  .cli .h { font-weight: 600; }
+  .cli .m { color: var(--muted); }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px;
+    margin-top: 8px; flex-wrap: wrap; }
+  .legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+    margin-right: 5px; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -74,6 +114,35 @@
     <div class="card"><div class="n" id="cOnline">—</div><div class="l">APs online</div></div>
     <div class="card"><div class="n" id="cClients">—</div><div class="l">Clients</div></div>
   </div>
+  <section id="mapSection">
+    <div class="section-head">
+      <h2>Live client map</h2>
+      <select id="floorSel" aria-label="Floor plan"></select>
+      <span class="hint" id="mapHint"></span>
+    </div>
+    <div class="map-wrap">
+      <div class="map-stage">
+        <svg id="map" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet"
+             role="img" aria-label="Floor plan with access points and clients">
+          <image id="mapImg" x="0" y="0" width="1000" height="600" href="" />
+          <g id="apLayer"></g>
+          <g id="cliLayer"></g>
+        </svg>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>client</span>
+          <span><i style="background:#e0a83c"></i>guest</span>
+          <span><i style="background:var(--ok)"></i>AP online</span>
+          <span><i style="background:var(--off)"></i>AP offline</span>
+          <span class="hint">clients cluster at their AP (UniFi reports no client x,y)</span>
+        </div>
+      </div>
+      <aside class="side">
+        <h3 id="sideTitle">Access point</h3>
+        <div id="sideBody"><div class="empty">Click an AP to list its clients.</div></div>
+      </aside>
+    </div>
+  </section>
+
   <div class="table-wrap">
     <table>
       <thead>
@@ -140,8 +209,115 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+/* ---- live client map ------------------------------------------------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+const mapS = { selected: null, selAp: null, imgFor: undefined, aps: [] };
+
+function clientPositions(ap, R) {
+  const k = ap.clients.length, per = 8, out = [];
+  for (let i = 0; i < k; i++) {
+    const ring = Math.floor(i / per), inRing = i - ring * per;
+    const cnt = Math.min(per, k - ring * per);
+    const ang = (inRing / cnt) * 2 * Math.PI - Math.PI / 2;
+    const rad = R * 2.1 + ring * R * 1.3;
+    out.push({ ...ap.clients[i], apName: ap.name,
+      cx: ap.x + rad * Math.cos(ang), cy: ap.y + rad * Math.sin(ang) });
+  }
+  return out;
+}
+
+async function refreshMap() {
+  let url = "/api/map";
+  if (mapS.selected) url += "?floorplan=" + encodeURIComponent(mapS.selected);
+  let data;
+  try { data = await fetch(url).then(r => r.json()); } catch (e) { return; }
+  const sel = $("floorSel");
+  const opts = (data.floorplans || []).map(p =>
+    `<option value="${esc(p.id)}">${esc(p.name)} · ${p.num_placed_aps} AP${p.num_placed_aps === 1 ? "" : "s"}</option>`).join("");
+  if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; }
+  mapS.selected = data.selected;
+  if (data.selected) sel.value = data.selected;
+  const plan = (data.floorplans || []).find(p => p.id === data.selected) || null;
+  mapS.aps = data.access_points || [];
+  renderMap(plan, mapS.aps);
+}
+
+function renderMap(plan, aps) {
+  const svg = $("map"), img = $("mapImg");
+  const W = (plan && plan.width_px) || 1000, H = (plan && plan.height_px) || 600;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  img.setAttribute("width", W); img.setAttribute("height", H);
+  const total = aps.reduce((n, a) => n + a.clients.length, 0);
+  $("mapHint").textContent = !plan ? "No floor plans with placed APs yet."
+    : !aps.length ? "No APs placed on this plan — place them in UniFi InnerSpace."
+    : `${aps.length} AP${aps.length === 1 ? "" : "s"} · ${total} client${total === 1 ? "" : "s"}`;
+  const wantImg = plan && plan.has_image
+    ? `/api/floorplans/${encodeURIComponent(plan.id)}/image` : "";
+  if (mapS.imgFor !== (plan && plan.id)) {
+    img.setAttribute("href", wantImg); mapS.imgFor = plan && plan.id;
+  }
+  const R = Math.min(Math.max(Math.max(W, H) * 0.012, 9), 26);
+
+  $("apLayer").innerHTML = aps.map(a => {
+    const s = a.serial === mapS.selAp ? " sel" : "";
+    const badge = a.clients.length ? `
+      <circle class="ap-badge" cx="${a.x + R}" cy="${a.y - R}" r="${R * 0.72}"></circle>
+      <text class="ap-badge-t" x="${a.x + R}" y="${a.y - R + R * 0.30}" font-size="${R * 0.9}">${a.clients.length}</text>` : "";
+    return `<g class="ap-dot" data-serial="${esc(a.serial)}">
+      <circle class="ap-core ${a.online ? "on" : "off"}${s}" cx="${a.x}" cy="${a.y}" r="${R}"></circle>
+      <text class="ap-label" x="${a.x}" y="${a.y + R * 2.1}" font-size="${R * 1.05}" text-anchor="middle">${esc(a.name)}</text>
+      ${badge}</g>`;
+  }).join("");
+  $("apLayer").querySelectorAll(".ap-dot").forEach(g =>
+    g.addEventListener("click", () => selectAp(g.dataset.serial)));
+
+  const targets = {};
+  aps.forEach(a => clientPositions(a, R).forEach(c => { targets[c.mac] = c; }));
+  const cliL = $("cliLayer"), have = {};
+  cliL.querySelectorAll("circle").forEach(el => { have[el.dataset.mac] = el; });
+  Object.keys(have).forEach(mac => { if (!targets[mac]) have[mac].remove(); });
+  Object.values(targets).forEach(c => {
+    let el = have[c.mac];
+    if (!el) {
+      el = document.createElementNS(SVGNS, "circle");
+      el.setAttribute("class", "cli-dot" + (c.is_guest ? " guest" : ""));
+      el.dataset.mac = c.mac;
+      cliL.appendChild(el);
+    }
+    el.setAttribute("r", R * 0.42);
+    el.setAttribute("cx", c.cx); el.setAttribute("cy", c.cy);
+    el.replaceChildren();
+    const t = document.createElementNS(SVGNS, "title");
+    t.textContent = `${c.hostname || c.mac} · ${c.apName || ""}`
+      + (c.signal_dbm != null ? ` · ${c.signal_dbm} dBm` : "");
+    el.appendChild(t);
+  });
+  if (mapS.selAp) selectAp(mapS.selAp, true);
+}
+
+function selectAp(serial, keep) {
+  mapS.selAp = serial;
+  const a = mapS.aps.find(x => x.serial === serial);
+  document.querySelectorAll("#apLayer .ap-dot").forEach(g =>
+    g.querySelector(".ap-core").classList.toggle("sel", g.dataset.serial === serial));
+  $("sideTitle").textContent = a ? a.name : "Access point";
+  if (!a) { $("sideBody").innerHTML = `<div class="empty">—</div>`; return; }
+  const list = a.clients.length ? a.clients.map(c => `
+    <div class="cli"><div class="h">${esc(c.hostname || c.mac)}</div>
+      <div class="m">${esc(c.mac)}${c.band ? ` · ${esc(c.band)}G` : ""}${c.signal_dbm != null ? ` · ${c.signal_dbm} dBm` : ""}${c.is_guest ? " · guest" : ""}</div></div>`).join("")
+    : `<div class="empty">No clients on this AP.</div>`;
+  $("sideBody").innerHTML =
+    `<div class="m" style="margin-bottom:8px">${esc(a.model)} · ${a.online ? "online" : "offline"} · ${a.clients.length} client${a.clients.length === 1 ? "" : "s"}</div>${list}`;
+}
+
+$("floorSel").addEventListener("change", e => {
+  mapS.selected = e.target.value; mapS.selAp = null; refreshMap();
+});
+
 tick();
+refreshMap();
 setInterval(tick, 5000);
+setInterval(refreshMap, 5000);
 </script>
 </body>
 </html>

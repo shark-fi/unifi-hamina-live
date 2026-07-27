@@ -128,8 +128,17 @@ Full walkthrough: [docs/CATALYST.md](docs/CATALYST.md).
 
 ### Neutral REST API — `/api`
 `/api/health`, `/api/sites`, `/api/access-points`, `/api/clients`,
-`/api/summary`, `POST /api/refresh`. Unauthenticated; meant to sit behind your
-own network and power the dashboard.
+`/api/summary`, `/api/map`, `/api/floorplans/{id}/image`, `POST /api/refresh`.
+Unauthenticated; meant to sit behind your own network and power the dashboard.
+
+### Live client map — dashboard `/`
+The dashboard renders a **live map of connected clients** on the floor-plan
+image: each placed AP is drawn at its live `x`/`y`, with the clients currently
+associated to it clustered around it (UniFi, like every non-Mist vendor,
+reports clients per-AP, not with real x,y) and animating as they roam. Backed
+by `GET /api/map` (floor-plan list + placed APs with their clients in one call)
+and `GET /api/floorplans/{id}/image` (the floor-plan image proxied from the
+console). Pick a floor from the selector; click an AP to list its clients.
 
 ### Live AP placement — `/api/floorplans`
 Floor plans and per-AP `x`/`y` are collected every poll from classic Maps or
