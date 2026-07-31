@@ -30,11 +30,31 @@ bubbles to them on `requestAnimationFrame` — so the dots follow the APs throug
 pan/zoom with no coordinate math and no WebGL hooking. Client counts come from
 the Network API, joined to each AP by name.
 
+## Where it works
+
+| Access path | Works | Why |
+|---|---|---|
+| Console on its LAN address (`https://192.168.x.x/...`) | ✅ | API is same-origin |
+| `unifi.ui.com` with an HTTP proxy path (`/consoles/<id>/proxy/network/...`) | ✅ | API is reachable over HTTP |
+| `unifi.ui.com` with a **WebRTC-relayed** session | ❌ | No HTTP API exists to call |
+
+Some remote sessions don't proxy the console over HTTP at all — they tunnel it
+through a **WebRTC data channel** (UniFi's own telemetry calls this
+`Rtc-Cloudflare` / `Ok-Relay`). In that mode the page issues no request to the
+console's API; the `<console-id>.id.ui.direct` host it contacts serves only the
+SSO handshake and answers API paths with the app shell. There is nothing for an
+extension to fetch, short of re-implementing UniFi's signalling and speaking the
+data channel.
+
+The overlay detects this and says so, rather than reporting a path error. Open
+the same console on its **LAN address** and it works normally.
+
 ## Status
 
-Positions and API paths are matched to a real `unifi.ui.com` InnerSpace session;
-**not yet run end-to-end** (field names in `stat/sta` may need a small tweak on
-your Network version — the on-screen status chip surfaces any API error).
+Confirmed working against live consoles on both a LAN address and an
+HTTP-proxied `unifi.ui.com` session, showing 60+ clients across 3 APs. The
+status chip reports what it resolved (and any failure) so problems are
+diagnosable from the page rather than by guesswork.
 
 ## Load it (unpacked)
 

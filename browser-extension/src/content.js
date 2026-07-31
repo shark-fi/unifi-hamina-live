@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b15";        // shown in the status chip; bump on every change
+  const BUILD = "b16";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -144,6 +144,12 @@
   }
 
   let apByName = {}, lastErr = null, apiBase = null, apiV2 = false;
+  /* Some remote sessions carry console traffic inside a WebRTC data channel
+   * (UniFi reports "Rtc-Cloudflare / Ok-Relay"): the page makes no HTTP API
+   * request at all, and the <id>.id.ui.direct host it does contact serves only
+   * the SSO handshake, answering 200-with-HTML for API paths. Nothing we can
+   * fetch exists in that mode, so say so instead of probing forever. */
+  let relayOnly = false;
 
   /* Remember a base that worked. The performance resource buffer is finite and
    * evicts old entries, so on a long-lived page the app's own API call can age
@@ -182,7 +188,10 @@
       try {
         const j = await getJson(`${b}/s/${site}/stat/device`);
         if (Array.isArray(j.data)) { apiBase = b; apiV2 = false; rememberBase(b); return b; }
-      } catch (e) { lastE = e.message; }
+      } catch (e) {
+        lastE = e.message;
+        if (/id\.ui\.direct/.test(b) && /HTTP 200, wrong path/.test(lastE)) relayOnly = true;
+      }
       // some consoles serve only the v2 API — accept that shape too
       try {
         const v2 = b.replace(/\/api$/, "/v2/api");
@@ -339,6 +348,7 @@
 
   async function refreshData() {
     const site = siteId();
+    if (relayOnly) { updateStatus(); return; }   // nothing to fetch in relay mode
     // switching console (or site) changes the API prefix entirely — drop any
     // base/icon state learned for the previous one instead of reusing it
     const ctx = location.origin + (location.pathname.split("/network/")[0] || "") + "|" + site;
@@ -885,6 +895,13 @@
 
   function updateStatus() {
     if (!statusEl) return;
+    if (relayOnly) {
+      statusEl.innerHTML =
+        `UniFi Live: this remote session is <b>relayed (WebRTC)</b> — the console's ` +
+        `API isn't reachable over HTTP here. Open the console on its <b>LAN address</b> ` +
+        `to use the overlay. <span style="opacity:.5">${BUILD}</span>`;
+      return;
+    }
     if (lastErr) {
       const saw = seenBases[0] ? seenBases[0].replace(location.origin, "") : "nothing";
       statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · saw ` +
