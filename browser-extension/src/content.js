@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b14";        // shown in the status chip; bump on every change
+  const BUILD = "b15";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -121,16 +121,26 @@
     return reply.res;
   }
 
+  /* Judge the body, not the Content-Type header: some consoles answer with
+   * text/plain, and an HTML body tells us plainly whether we hit an app shell
+   * (wrong path) or a login page (not authenticated on that host). The HTTP
+   * status is carried into the message so those cases stay distinguishable. */
   async function getJson(url) {
     let r;
     try { r = await rawGet(url); } catch (e) { failedUrls.add(url); throw e; }
-    if (!r.ok) { failedUrls.add(url); throw new Error(`HTTP ${r.status}`); }
-    if (!String(r.type).includes("json")) {
-      failedUrls.add(url); throw new Error("non-JSON (wrong API path)");
+    const body = String(r.text || "");
+    const head = body.trimStart().slice(0, 1);
+    if (head === "<") {
+      failedUrls.add(url);
+      throw new Error(`HTML not JSON (HTTP ${r.status}${r.status === 200 ? ", wrong path" : ""})`);
     }
+    if (!r.ok) { failedUrls.add(url); throw new Error(`HTTP ${r.status}`); }
     try {
-      return JSON.parse(r.text);
-    } catch (e) { failedUrls.add(url); throw new Error("bad JSON"); }
+      return JSON.parse(body);
+    } catch (_e) {
+      failedUrls.add(url);
+      throw new Error(`unparseable body (HTTP ${r.status}, ${body.length}B)`);
+    }
   }
 
   let apByName = {}, lastErr = null, apiBase = null, apiV2 = false;
