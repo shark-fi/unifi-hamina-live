@@ -41,7 +41,10 @@ $("enable").addEventListener("click", async () => {
   setStatus("Requesting permission…");
   let granted;
   try {
-    granted = await chrome.permissions.request({ origins: [origin + "/*"] });
+    // remote consoles are reached over https://<id>.id.ui.direct, a separate
+    // origin, so we need permission for it as well as the console page itself
+    granted = await chrome.permissions.request({
+      origins: [origin + "/*", "https://*.id.ui.direct/*"] });
   } catch (e) {
     return setStatus("Permission error: " + e.message);
   }

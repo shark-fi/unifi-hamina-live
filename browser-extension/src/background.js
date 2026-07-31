@@ -53,14 +53,28 @@ async function unregister() {
   }
 }
 
+/* Fetch on behalf of the content script. Remote consoles are reached over a
+ * separate origin (<console-id>.id.ui.direct), and content-script fetches are
+ * subject to the page's CORS; the worker's are not, given host permission. */
+async function proxyGet(url) {
+  const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+  const text = await r.text();
+  return { ok: r.ok, status: r.status, type: r.headers.get("content-type") || "", text };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     if (msg?.type === "enable" && msg.origin) {
       const matches = await registerForOrigin(msg.origin);
-      watchTraffic();          // re-arm now that the host permission exists
       await chrome.storage.local.set({ origin: msg.origin, site: msg.site || "" });
       sendResponse({ ok: true, matches });
 
+    } else if (msg?.type === "get" && msg.url) {
+      try {
+        sendResponse({ ok: true, res: await proxyGet(msg.url) });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message || e) });
+      }
     } else if (msg?.type === "disable") {
       await unregister();
       await chrome.storage.local.remove(["origin"]);

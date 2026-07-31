@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b13";        // shown in the status chip; bump on every change
+  const BUILD = "b14";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -52,11 +52,19 @@
    * API calls before we look (a big console reported "0 seen" this way). So we
    * observe entries as they arrive, keep our own list, and raise the buffer. */
   const PROXY_RX = /^(https?:\/\/[^/]+(?:\/[^?#]*?)?\/proxy\/network)\//;
+  /* Remote access can reach the console over a direct tunnel host —
+   * https://<console-id>.id.ui.direct/... — which is a DIFFERENT ORIGIN from
+   * the page. A console reached that way makes no /proxy/network/ request on
+   * the page's own origin at all, which is why discovery kept coming up empty.
+   * The tunnel host is the console root, so its API sits at /proxy/network/api. */
+  const DIRECT_RX = /^https?:\/\/([a-z0-9-]+\.id\.ui\.direct)(?::\d+)?\//i;
   const perfBases = [];                 // newest first, deduped
   function notePerfUrl(url) {
-    const m = String(url || "").match(PROXY_RX);
-    if (!m) return;
-    const base = m[1] + "/api";
+    const s = String(url || "");
+    const m = s.match(PROXY_RX);
+    const d = m ? null : s.match(DIRECT_RX);
+    if (!m && !d) return;
+    const base = m ? m[1] + "/api" : `https://${d[1]}/proxy/network/api`;
     const i = perfBases.indexOf(base);
     if (i === 0) return;
     if (i > 0) perfBases.splice(i, 1);
@@ -96,17 +104,32 @@
     list.push(`${o}/proxy/network/api`);
     return [...new Set(list)];
   }
+  const sameOrigin = (u) => {
+    try { return new URL(u, location.href).origin === location.origin; }
+    catch (_e) { return true; }
+  };
+
+  async function rawGet(url) {
+    if (sameOrigin(url)) {
+      const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+      return { ok: r.ok, status: r.status, type: r.headers.get("content-type") || "",
+               text: await r.text() };
+    }
+    // cross-origin (the tunnel host): the worker is not bound by page CORS
+    const reply = await chrome.runtime.sendMessage({ type: "get", url });
+    if (!reply?.ok) throw new Error(reply?.error || "worker fetch failed");
+    return reply.res;
+  }
+
   async function getJson(url) {
     let r;
-    try {
-      r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
-    } catch (e) { failedUrls.add(url); throw e; }
+    try { r = await rawGet(url); } catch (e) { failedUrls.add(url); throw e; }
     if (!r.ok) { failedUrls.add(url); throw new Error(`HTTP ${r.status}`); }
-    const ct = r.headers.get("content-type") || "";
-    const text = await r.text();
-    if (!ct.includes("json")) { failedUrls.add(url); throw new Error("non-JSON (wrong API path)"); }
+    if (!String(r.type).includes("json")) {
+      failedUrls.add(url); throw new Error("non-JSON (wrong API path)");
+    }
     try {
-      return JSON.parse(text);
+      return JSON.parse(r.text);
     } catch (e) { failedUrls.add(url); throw new Error("bad JSON"); }
   }
 

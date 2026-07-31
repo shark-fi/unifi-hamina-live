@@ -13,7 +13,9 @@
   if (window.__unifiLiveProbe) return;
   window.__unifiLiveProbe = true;
 
-  const RX = /\/proxy\/network\//;
+  // /proxy/network/... on the console origin, OR the direct tunnel host that
+  // remote access uses (<console-id>.id.ui.direct), which is a different origin
+  const RX = /\/proxy\/network\/|\.id\.ui\.direct/i;
   const send = (u) => {
     try {
       if (!u) return;
