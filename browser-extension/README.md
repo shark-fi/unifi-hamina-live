@@ -51,10 +51,15 @@ the same console on its **LAN address** and it works normally.
 
 ## Status
 
-Confirmed working against live consoles on both a LAN address and an
-HTTP-proxied `unifi.ui.com` session, showing 60+ clients across 3 APs. The
-status chip reports what it resolved (and any failure) so problems are
-diagnosable from the page rather than by guesswork.
+Confirmed working against two live consoles: a 3-AP site over an HTTP-proxied
+`unifi.ui.com` session, and a 14-AP site on its LAN address showing 57 clients
+(2.4 GHz 10 · 5 GHz 35 · 6 GHz 12). The status chip reports what it resolved
+(and any failure) so problems are diagnosable from the page rather than by
+guesswork.
+
+Client icons currently fall back to device glyphs/initials — the status chip
+says `icons none` because UniFi's fingerprint-database endpoint isn't among the
+requests these consoles make, so there is nothing to discover it from.
 
 ## Load it (unpacked)
 
