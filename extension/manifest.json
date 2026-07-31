@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "UniFi Live for InnerSpace",
+  "version": "0.1.0",
+  "description": "Overlay live UniFi Network clients and AP telemetry onto the InnerSpace floor plan. Same-origin and read-only (GETs only).",
+  "permissions": [
+    "storage",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "UniFi Live for InnerSpace"
+  }
+}
