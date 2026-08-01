@@ -16,10 +16,11 @@
   window.__unifiLiveInnerspace = true;
 
   const REFRESH_MS = 5000;
-  const MIN_SEP = 36;        // minimum px between client icon centres
+  const MIN_SEP = 36;        // preferred px between client icon centres
+  const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b17";        // shown in the status chip; bump on every change
+  const BUILD = "b18";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -447,6 +448,11 @@
       #${NS}-overlay .cli .g { font-size: 12px; line-height: 1; }
       #${NS}-overlay .cli img.ci { width: 16px; height: 16px; display: block;
         border-radius: 3px; object-fit: contain; }
+      /* a crowded AP: smaller chips so the capped rings still breathe */
+      #${NS}-overlay .grp.dense .cli { width: 18px; height: 18px; margin: -9px;
+        border-width: 1.5px; font-size: 9px; }
+      #${NS}-overlay .grp.dense .cli .g { font-size: 10px; }
+      #${NS}-overlay .grp.dense .cli img.ci { width: 13px; height: 13px; }
       #${NS}-overlay .nm { position: absolute; transform: translate(-50%, 0);
         margin-top: 12px; max-width: 82px; overflow: hidden; text-overflow: ellipsis;
         white-space: nowrap; text-align: center; font: 600 10px/1.3 system-ui, sans-serif;
@@ -589,32 +595,66 @@
   }
   function hideTip() { if (tip) tip.style.opacity = "0"; }
 
-  // Ring geometry. The AP's own name/model labels (and, on a local console, its
-  // per-radio count badges) sit directly BELOW the marker, so we leave a clear
-  // wedge at the bottom and keep the ring well clear of the AP icon. Radius also
-  // grows with the number of icons so they never collide.
-  const RING_R = 100;        // base radius (px) from the AP marker
-  const RING_STEP = 36;      // extra radius per additional ring
+  /* Ring geometry. The AP's own name/model labels (and, on a local console, its
+   * per-radio count badges) sit directly BELOW the marker, so we leave a clear
+   * wedge at the bottom and keep the ring well clear of the AP icon.
+   *
+   * Radius grows with the client count, but only to RING_MAX: an AP with 50+
+   * clients would otherwise throw a ring right across the floor plan and bury
+   * the room labels. Past the cap the stack packs tighter instead of reaching
+   * further: the rings share the load in proportion to their arc length and the
+   * chips shrink to suit (the .dense class), so every client is still drawn. */
+  const RING_R = 100;        // innermost ring radius (px) from the AP marker
+  const RING_STEP = 36;      // nominal gap between rings
+  const RING_MAX = 175;      // hard cap on how far a ring may reach
+  const MAX_RINGS = 6;
   const BOTTOM_GAP = 70 * Math.PI / 180;  // half-width of the clear wedge below
+
+  function ringRadii() {
+    const out = [];
+    for (let r = RING_R; r <= RING_MAX && out.length < MAX_RINGS; r += RING_STEP) out.push(r);
+    return out;
+  }
+  const ringCap = (radii, sep, span) =>
+    radii.reduce((t, r) => t + Math.max(3, Math.floor((r * span) / sep)), 0);
+
   function ringPositions(n) {
     const span = 2 * Math.PI - 2 * BOTTOM_GAP;   // arc that avoids the labels
-    const out = [];
-    let placed = 0, ring = 0;
-    while (placed < n && ring < 12) {
-      const rad = RING_R + ring * RING_STEP;
-      // how many icons fit on this ring at MIN_SEP spacing along its arc
-      const cap = Math.max(3, Math.floor((rad * span) / MIN_SEP));
-      const cnt = Math.min(cap, n - placed);
-      const step = span / Math.max(1, cap - 1);
-      const lead = (span - step * (cnt - 1)) / 2;   // centre a partial ring
-      for (let i = 0; i < cnt; i++) {
-        const ang = (Math.PI / 2 + BOTTOM_GAP) + lead + i * step;
-        out.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
+    const radii = ringRadii();
+    const roomy = ringCap(radii, MIN_SEP, span) >= n;
+    // roomy: fill ring by ring at the preferred spacing, inner rings first.
+    // packed: hand every ring a share proportional to its arc, so the crowding
+    // is spread evenly instead of dumped on the outermost ring.
+    let counts;
+    if (roomy) {
+      counts = []; let left = n;
+      for (const r of radii) {
+        const c = Math.min(Math.max(3, Math.floor((r * span) / MIN_SEP)), left);
+        counts.push(c); left -= c;
       }
-      placed += cnt;
-      ring++;
+    } else {
+      const total = radii.reduce((a, b) => a + b, 0);
+      counts = radii.map((r) => Math.floor((n * r) / total));
+      let left = n - counts.reduce((a, b) => a + b, 0);   // at most one per ring
+      for (let i = counts.length - 1; left > 0; i = (i + counts.length - 1) % counts.length) {
+        counts[i]++; left--;
+      }
     }
-    return out;
+    const pts = [];
+    let sep = Infinity;
+    radii.forEach((rad, i) => {
+      const cnt = counts[i];
+      if (!cnt) return;
+      const cap = roomy ? Math.max(3, Math.floor((rad * span) / MIN_SEP)) : cnt;
+      const step = span / Math.max(1, cap - 1);
+      const lead = roomy ? (span - step * (cnt - 1)) / 2 : 0;   // centre a partial ring
+      if (cnt > 1) sep = Math.min(sep, step * rad);
+      for (let j = 0; j < cnt; j++) {
+        const ang = (Math.PI / 2 + BOTTOM_GAP) + lead + j * step;
+        pts.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
+      }
+    });
+    return { pts, sep: Number.isFinite(sep) ? sep : MIN_SEP };
   }
 
   function groupFor(name) {
@@ -681,9 +721,11 @@
       `<span class="chip ch" data-band="${r.band}">${r.channel}<i class="bar ${BAND_CLS[r.band]}"></i></span>`
     ).join("");
 
-    const pos = ringPositions(shown.length);
+    const { pts, sep } = ringPositions(shown.length);
+    // packed tighter than the chips' own size likes? shrink them to suit
+    g.el.classList.toggle("dense", sep < DENSE_SEP);
     const icons = shown.map((c, i) => {
-      const [dx, dy] = pos[i], band = bandOf(c), glyph = iconFor(c);
+      const [dx, dy] = pts[i], band = bandOf(c), glyph = iconFor(c);
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
       const nm = withNames
         ? `<span class="nm" style="left:${dx}px;top:${dy}px">${esc(labelFor(c))}</span>` : "";
