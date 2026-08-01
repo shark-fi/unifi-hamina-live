@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b20";        // shown in the status chip; bump on every change
+  const BUILD = "b21";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -600,6 +600,7 @@
     if (!c) return "";
     const band = bandOf(c);
     return `<div class="t">${esc(labelFor(c))}</div>` + rows([
+      ["SSID", c.essid],
       ["Band", band === "?" ? null : `${band} GHz${c.channel ? ` · ch ${c.channel}` : ""}`],
       ["Signal", c.signal != null ? c.signal + " dBm" : null],
       ["TX / RX", (kbps(c.tx) && kbps(c.rx)) ? `${kbps(c.tx)} / ${kbps(c.rx)}` : null],
