@@ -8,8 +8,9 @@
  * clients in a ring around it — UniFi reports clients per-AP, not with x,y, so
  * a ring around the AP is the honest representation.
  *
- * Each client is a small icon chip (coloured by radio band) with its name;
- * clicking one opens a details card. Band chips above the AP filter the ring.
+ * Each client is a small icon chip, outlined in its radio band's colour. Hover
+ * one for its name and signal, click for full details. Band chips above the AP
+ * filter the ring; hovering a channel chip spotlights that radio's clients.
  */
 (() => {
   if (window.__unifiLiveInnerspace) return;
@@ -18,9 +19,8 @@
   const REFRESH_MS = 5000;
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
-  const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b19";        // shown in the status chip; bump on every change
+  const BUILD = "b20";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -436,16 +436,11 @@
       #${NS}-overlay .grp.fade .cli { pointer-events: none; }
       /* hovering a channel chip — ours or UniFi's — spotlights that radio:
          everything on the other bands drops back instead of the whole group */
-      #${NS}-overlay .grp[data-hi] .cli,
-      #${NS}-overlay .grp[data-hi] .nm { opacity: .12; transition: opacity .12s ease; }
+      #${NS}-overlay .grp[data-hi] .cli { opacity: .12; transition: opacity .12s ease; }
       #${NS}-overlay .grp[data-hi="2.4"] .cli.b24,
-      #${NS}-overlay .grp[data-hi="2.4"] .nm.b24,
       #${NS}-overlay .grp[data-hi="5"] .cli.b5,
-      #${NS}-overlay .grp[data-hi="5"] .nm.b5,
       #${NS}-overlay .grp[data-hi="6"] .cli.b6,
-      #${NS}-overlay .grp[data-hi="6"] .nm.b6,
-      #${NS}-overlay .grp[data-hi="?"] .cli.bx,
-      #${NS}-overlay .grp[data-hi="?"] .nm.bx { opacity: 1; }
+      #${NS}-overlay .grp[data-hi="?"] .cli.bx { opacity: 1; }
       #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
         border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
         box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
@@ -467,10 +462,6 @@
         border-width: 1.5px; font-size: 9px; }
       #${NS}-overlay .grp.dense .cli .g { font-size: 10px; }
       #${NS}-overlay .grp.dense .cli img.ci { width: 13px; height: 13px; }
-      #${NS}-overlay .nm { position: absolute; transform: translate(-50%, 0);
-        margin-top: 12px; max-width: 82px; overflow: hidden; text-overflow: ellipsis;
-        white-space: nowrap; text-align: center; font: 600 10px/1.3 system-ui, sans-serif;
-        color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none; }
       #${NS}-overlay .bar.b24 { background: #e0a83c; } #${NS}-overlay .bar.b5 { background: #2b6cff; }
       #${NS}-overlay .bar.b6  { background: #a855f7; } #${NS}-overlay .bar.bx { background: #8b93a7; }
       /* hover panel, matching UniFi's chip tooltip */
@@ -740,7 +731,6 @@
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
     const shown = list;                     // every client gets an icon
-    const withNames = shown.length <= NAME_LIMIT;
     const chans = nativeCh ? [] : (ap.radios || []);
     const sig = [filter, nativeCh ? "n" : "", below, BANDS.map((b) => counts[b]).join("/"),
       chans.map((r) => r.band + r.channel).join(","),
@@ -764,18 +754,17 @@
     const icons = shown.map((c, i) => {
       const [dx, dy] = pts[i], band = bandOf(c), glyph = iconFor(c);
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
-      const nm = withNames
-        ? `<span class="nm ${BAND_CLS[band]}" style="left:${dx}px;top:${dy}px"
-           >${esc(labelFor(c))}</span>` : "";
       // prefer UniFi's own fingerprint icon; fall back to our glyph / initial
       const fb = glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c));
       const url = uiIconFor(c);
       // no crossorigin: we only display the image, and asking for CORS would
       // make it fail outright if the CDN doesn't send the header
       const inner = url ? `<img class="ci" src="${esc(url)}" alt="">` : fb;
+      // the client's name is one hover away, so the ring stays icons only —
+      // labels collided at close spacing and competed with the room names
       return `<span class="cli ${BAND_CLS[band]}${c.guest ? " guest" : ""}${sel}"
           data-mac="${c.mac}" data-fb="${esc(fb)}" style="left:${dx}px;top:${dy}px"
-        >${inner}</span>${nm}`;
+        >${inner}</span>`;
     }).join("");
 
     // both chip rows sit BELOW the AP name/model, mirroring UniFi's own chips:
