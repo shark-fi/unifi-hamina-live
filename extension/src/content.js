@@ -20,7 +20,7 @@
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b18";        // shown in the status chip; bump on every change
+  const BUILD = "b19";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -415,9 +415,11 @@
       #${NS}-overlay .grp { position: fixed; transform: translate(-50%, -50%); will-change: left, top; }
       /* chips mirror UniFi's channel chips: dark pill + band-coloured underline.
          client counts sit ABOVE the marker; our channel chips below the labels. */
+      /* --s tracks the zoom InnerSpace has applied to its own marker, so our
+         chip rows grow and shrink in step with its channel chips */
       #${NS}-overlay .badges { position: absolute; left: 50%;
-        transform: translateX(-50%); display: flex; gap: 4px; white-space: nowrap;
-        pointer-events: auto; }
+        transform: translateX(-50%) scale(var(--s, 1)); transform-origin: top center;
+        display: flex; gap: 4px; white-space: nowrap; pointer-events: auto; }
 
       #${NS}-overlay .chip { position: relative; display: inline-flex;
         align-items: center; justify-content: center; min-width: 24px; height: 20px;
@@ -432,6 +434,18 @@
       #${NS}-overlay .grp.fade { opacity: .12; }
       #${NS}-overlay .grp.fade .chip,
       #${NS}-overlay .grp.fade .cli { pointer-events: none; }
+      /* hovering a channel chip — ours or UniFi's — spotlights that radio:
+         everything on the other bands drops back instead of the whole group */
+      #${NS}-overlay .grp[data-hi] .cli,
+      #${NS}-overlay .grp[data-hi] .nm { opacity: .12; transition: opacity .12s ease; }
+      #${NS}-overlay .grp[data-hi="2.4"] .cli.b24,
+      #${NS}-overlay .grp[data-hi="2.4"] .nm.b24,
+      #${NS}-overlay .grp[data-hi="5"] .cli.b5,
+      #${NS}-overlay .grp[data-hi="5"] .nm.b5,
+      #${NS}-overlay .grp[data-hi="6"] .cli.b6,
+      #${NS}-overlay .grp[data-hi="6"] .nm.b6,
+      #${NS}-overlay .grp[data-hi="?"] .cli.bx,
+      #${NS}-overlay .grp[data-hi="?"] .nm.bx { opacity: 1; }
       #${NS}-overlay .cli { position: absolute; width: 22px; height: 22px; margin: -11px;
         border-radius: 50%; background: #131722; border: 2px solid #2b6cff;
         box-shadow: 0 2px 6px rgba(0,0,0,.5); cursor: pointer; pointer-events: auto;
@@ -513,11 +527,16 @@
       if (!grp) return;
       const apName = [...groups].find(([, g]) => g.el === grp)?.[0];
       if (!apName) return;
-      if (chip) showTip(chip.classList.contains("ch")
-        ? chanTip(apName, chip.dataset.band) : chipTip(apName, chip.dataset.band), chip);
-      else if (cli) showTip(clientTip(apName, cli.dataset.mac), cli);
+      if (chip) {
+        // our own chips spotlight their band too, same as UniFi's channel chips
+        hoveredAp = apName;
+        hoverBand = chip.dataset.band || null;
+        showTip(chip.classList.contains("ch")
+          ? chanTip(apName, chip.dataset.band) : chipTip(apName, chip.dataset.band), chip);
+      } else if (cli) showTip(clientTip(apName, cli.dataset.mac), cli);
     });
     overlay.addEventListener("mouseout", (e) => {
+      if (e.target.closest?.(".chip")) { hoveredAp = null; hoverBand = null; }
       if (e.target.closest?.(".chip, .cli")) hideTip();
     });
 
@@ -529,15 +548,33 @@
     }, true);
   }
 
-  // While the pointer is over UniFi's own AP marker we fade our overlay for
-  // that AP, so its channel tooltip is never covered by our chips/icons.
-  let hoveredAp = null;
+  /* While the pointer is over UniFi's own AP marker we fade our overlay for that
+   * AP, so its channel tooltip is never covered by our chips/icons.
+   *
+   * Except on one of its channel chips: there the useful thing is to see which
+   * clients are on that radio, so instead of fading everything we spotlight that
+   * band and drop the other bands back. UniFi's chips carry only the channel
+   * number, so we match it against the radios we already polled to learn which
+   * band the chip is. */
+  let hoveredAp = null, hoverBand = null;
+  function chanBandAt(el, sec, ap) {
+    for (let n = el; n && n !== sec; n = n.parentElement) {
+      const t = (n.textContent || "").trim();
+      if (!/^\d{1,4}$/.test(t)) continue;
+      const hit = (ap?.radios || []).find((r) => r.channel === Number(t));
+      return hit ? hit.band : null;
+    }
+    return null;
+  }
   function onDocHover(e) {
     const sec = e.target.closest?.('section[data-testid^="stats-tooltip-"]');
     const name = sec ? norm(sec.querySelector('[data-testid="title"]')?.textContent) : null;
     const next = e.type === "mouseout" && !sec ? null : (name || null);
-    if (next === hoveredAp) return;
+    const band = (next && e.type !== "mouseout" && sec)
+      ? chanBandAt(e.target, sec, apByName[next]) : null;
+    if (next === hoveredAp && band === hoverBand) return;
     hoveredAp = next;
+    hoverBand = band;
     if (hoveredAp) hideTip();
   }
 
@@ -728,7 +765,8 @@
       const [dx, dy] = pts[i], band = bandOf(c), glyph = iconFor(c);
       const sel = selected && selected.ap === apName && selected.mac === c.mac ? " sel" : "";
       const nm = withNames
-        ? `<span class="nm" style="left:${dx}px;top:${dy}px">${esc(labelFor(c))}</span>` : "";
+        ? `<span class="nm ${BAND_CLS[band]}" style="left:${dx}px;top:${dy}px"
+           >${esc(labelFor(c))}</span>` : "";
       // prefer UniFi's own fingerprint icon; fall back to our glyph / initial
       const fb = glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c));
       const url = uiIconFor(c);
@@ -744,7 +782,9 @@
     // our channel chips (remote only) first, then the client counts under them
     g.el.innerHTML =
       (chanChips ? `<span class="badges ch" style="top:${below}px">${chanChips}</span>` : "") +
-      `<span class="badges cl" style="top:${below + (chanChips ? 26 : 0)}px">${badges}</span>` +
+      // the gap between the two rows scales too, so they stay adjacent at any zoom
+      `<span class="badges cl" style="top:calc(${below}px + ${chanChips ? 26 : 0}px * var(--s,1))"
+        >${badges}</span>` +
       icons;
     // inline handlers are blocked by the page CSP, so bind the fallback here:
     // a fingerprint icon that 404s reverts the chip to its glyph/initial.
@@ -863,7 +903,14 @@
       g.el.style.left = x + "px";
       g.el.style.top = y + "px";
       g.el.style.display = "block";
-      g.el.classList.toggle("fade", hoveredAp === name);
+      // InnerSpace scales its markers with the map zoom; track that so our chip
+      // rows stay the size of its channel chips instead of drifting apart
+      const s = sec.offsetWidth ? r.width / sec.offsetWidth : 1;
+      g.el.style.setProperty("--s", Math.min(3, Math.max(0.5, s)).toFixed(3));
+      const hovered = hoveredAp === name;
+      g.el.classList.toggle("fade", hovered && !hoverBand);
+      if (hovered && hoverBand) g.el.dataset.hi = hoverBand;
+      else if (g.el.dataset.hi) delete g.el.dataset.hi;
       // Measure where UniFi's own content actually ends — its channel chips can
       // sit outside the section's own box — and drop our rows below that. This
       // walks the marker's DOM, so cache it rather than doing it every frame.
