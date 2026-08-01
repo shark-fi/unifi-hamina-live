@@ -17,9 +17,10 @@ console (`https://192.168.1.1/network/…`) and via Ubiquiti remote access
 
 ## What it shows
 
-- **Client icons** ringed around each AP — a device glyph inferred from
-  name/vendor, or an initial. The ring outline is coloured by radio band and
-  guests are dashed. Ring capacity is computed from circumference, so every
+- **Client icons** ringed around each AP — UniFi's own fingerprint icon for the
+  device where it has one, otherwise a glyph inferred from name/vendor, or an
+  initial. The ring outline is coloured by radio band and guests are dashed.
+  Ring capacity is computed from circumference, so every
   client is drawn (no `+N` chip) at ≥36 px spacing, with a clear wedge beneath
   the marker so the AP's own name/model stays readable.
 - **Per-band client chips** (2.4 / 5 / 6 GHz) styled to match UniFi's own chips.
@@ -73,10 +74,6 @@ Confirmed working against two live consoles: a 3-AP site over an HTTP-proxied
 (and any failure) so problems are diagnosable from the page rather than by
 guesswork.
 
-Client icons currently fall back to device glyphs/initials — the status chip
-says `icons none` because UniFi's fingerprint-database endpoint isn't among the
-requests these consoles make, so there is nothing to discover it from.
-
 ## Load it (unpacked)
 
 1. Chrome → `chrome://extensions` → enable **Developer mode**.
@@ -106,6 +103,12 @@ requests these consoles make, so there is nothing to discover it from.
   no bodies or responses.
 - `src/content.js` — resolves the API base/site, polls for clients and radio
   state, and renders the overlay.
+
+Client icons come straight from UniFi's CDN at
+`https://static.ui.com/fingerprint/0/<dev_id>_101x101.png`, keyed by the
+fingerprint id that `stat/sta` already returns — no lookup table and no extra
+request. Ids UniFi hasn't fingerprinted, or that have no artwork, fall back to
+a glyph. The status chip reports how many clients resolved to a real icon.
 
 API-path discovery layers the page-context probe, a `PerformanceObserver`, a
 persisted known-good base, and candidates derived from the URL, accepting both

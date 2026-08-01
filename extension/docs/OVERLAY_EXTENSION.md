@@ -112,13 +112,14 @@ console URL; on save, request that origin and
   [`unifi-innerspace-live`](https://github.com/shark-fi/unifi-innerspace-live),
   since it needs no bridge at all. Q1 and the plan overlay do depend on the
   bridge and would sit with it (or here, fed over the worker).
+- *Fingerprint icons* — UniFi serves them at
+  `https://static.ui.com/fingerprint/0/<dev_id>_101x101.png`, keyed by the
+  numeric `dev_id` already present in `stat/sta`. The earlier assumption — a
+  fingerprint database mapping ids to icon uuids — was wrong; there is nothing
+  to fetch.
 
 **Still open:**
 
 - **Heatmap?** If Hamina's computed heatmap picture matters, add the Hamina
   share-link source in P5; otherwise vector plan-vs-live is enough.
 - **Chrome only or Firefox too?** (MV3 is Chrome-first.)
-- **Fingerprint icons.** UniFi's own client icons live at
-  `https://static.ui.com/fingerprint/ui/icons/<uuid>_101x101.png`, but the
-  console request that maps a client to its fingerprint uuid hasn't been located
-  on the consoles tested — the overlay falls back to glyphs/initials.

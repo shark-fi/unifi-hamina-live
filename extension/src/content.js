@@ -19,7 +19,7 @@
   const MIN_SEP = 36;        // minimum px between client icon centres
   const NAME_LIMIT = 12;     // show name labels only when the ring is this small
   const NS = "unifi-live";
-  const BUILD = "b16";        // shown in the status chip; bump on every change
+  const BUILD = "b17";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -203,60 +203,21 @@
     throw new Error(lastE);
   }
 
-  /* UniFi's own client icons: the console ships a fingerprint database mapping a
-   * device id to an icon uuid, served from static.ui.com (the console already
-   * loads icons from there, so the page CSP allows it). The payload's shape
-   * varies by Network version, so walk it generically for {id: icon-uuid}. */
-  const ICON_URL = (id) => `https://static.ui.com/fingerprint/ui/icons/${id}_101x101.png`;
-  let fpMap = null, fpTried = false, fpFrom = null;
+  /* UniFi's own client icons. The console serves them from its CDN keyed by the
+   * numeric fingerprint device id that stat/sta already carries:
+   *   https://static.ui.com/fingerprint/0/<dev_id>_101x101.png
+   * So there is no database to fetch and no uuid to resolve — the id is already
+   * in the payload we poll. The console loads icons from that host itself, so
+   * the page CSP allows them; no host permission is involved either, since the
+   * page requests the image, not us. An id with no artwork 404s and the chip
+   * falls back to its glyph (bound in renderGroup, since CSP blocks onerror=). */
+  const ICON_URL = (id) => `https://static.ui.com/fingerprint/0/${id}_101x101.png`;
 
-  function extractIcons(node, out = {}, depth = 0) {
-    if (!node || typeof node !== "object" || depth > 4) return out;
-    for (const [k, v] of Object.entries(node)) {
-      if (!v || typeof v !== "object") continue;
-      const icon = v.icon_filename || v.iconFilename || v.icon;
-      if (typeof icon === "string" && /^[0-9a-f][0-9a-f-]{15,}$/i.test(icon)) out[k] = icon;
-      extractIcons(v, out, depth + 1);
-    }
-    return out;
-  }
-
-  // URLs the console itself fetched that look like a fingerprint database —
-  // far more reliable than guessing the endpoint per Network version.
-  function fpUrlsFromPerf() {
-    try {
-      return performance.getEntriesByType("resource")
-        .map((e) => e.name)
-        .filter((n) => /fingerprint/i.test(n) && !/static\.ui\.com/i.test(n)
-          && !failedUrls.has(n));
-    } catch (_e) { return []; }
-  }
-
-  async function loadFingerprints(base, site) {
-    if (fpMap || fpTried) return fpMap;
-    fpTried = true;
-    const v2 = base.replace(/\/api$/, "/v2/api");
-    for (const u of [...fpUrlsFromPerf(),
-                     `${v2}/fingerprint_devices/0`,
-                     `${v2}/site/${site}/fingerprint_devices/0`,
-                     `${v2}/site/${site}/fingerprint_devices`,
-                     `${base}/s/${site}/stat/fingerprint_devices`]) {
-      try {
-        const m = extractIcons(await getJson(u));
-        if (Object.keys(m).length) { fpMap = m; fpFrom = u; updateStatus(); return m; }
-      } catch (_e) { /* try the next shape */ }
-    }
-    fpMap = {};
-    updateStatus();
-    return fpMap;
-  }
-
+  // dev_id_override wins when set: that's a user-corrected fingerprint, and it's
+  // what the console's own client list renders.
   const devIdOf = (c) => c.dev_id_override ?? c.dev_id ??
     c.fingerprint?.computed_dev_id ?? c.fingerprint?.dev_id ?? null;
-  const uiIconFor = (c) => {
-    const id = c.devId != null && fpMap ? fpMap[String(c.devId)] : null;
-    return id ? ICON_URL(id) : null;
-  };
+  const uiIconFor = (c) => (c.devId != null ? ICON_URL(c.devId) : null);
 
   /* Per-radio channel state, so we can reproduce UniFi's own channel chips
    * (and their Utilization / TX Retries panel) on remote access, where the
@@ -306,7 +267,6 @@
   let lastCtx = null;
   function resetConsoleState() {
     apiBase = null; savedBase = null; savedLoaded = false;
-    fpMap = null; fpTried = false; fpFrom = null;
     apByName = {}; lastErr = null; lastTriedBase = null; lastCtx = null;
     failedUrls.clear();
     for (const [, g] of groups) { g.sig = ""; g.el.style.display = "none"; }
@@ -355,7 +315,6 @@
     if (ctx !== lastCtx) { resetConsoleState(); lastCtx = ctx; }
     try {
       const base = await resolveBase(site);
-      loadFingerprints(base, site);   // fire-and-forget; icons appear once ready
       const [devList, staList] = await fetchLists(base, site);
       const byMac = {};
       for (const d of devList) {
@@ -731,8 +690,9 @@
       // prefer UniFi's own fingerprint icon; fall back to our glyph / initial
       const fb = glyph ? `<span class="g">${glyph}</span>` : esc(initialFor(c));
       const url = uiIconFor(c);
-      const inner = url
-        ? `<img class="ci" src="${esc(url)}" crossorigin="anonymous" alt="">` : fb;
+      // no crossorigin: we only display the image, and asking for CORS would
+      // make it fail outright if the CDN doesn't send the header
+      const inner = url ? `<img class="ci" src="${esc(url)}" alt="">` : fb;
       return `<span class="cli ${BAND_CLS[band]}${c.guest ? " guest" : ""}${sel}"
           data-mac="${c.mac}" data-fb="${esc(fb)}" style="left:${dx}px;top:${dy}px"
         >${inner}</span>${nm}`;
@@ -789,9 +749,9 @@
     const snr = (c.signal != null && c.noise != null) ? (c.signal - c.noise) + " dB" : null;
     card.innerHTML = `
       <div class="hd">
-        ${url ? `<img class="ci" src="${esc(url)}" crossorigin="anonymous" alt=""
+        ${url ? `<img class="ci" src="${esc(url)}" alt=""
                   style="width:18px;height:18px;object-fit:contain">`
-              : `<span style="font-size:14px">${glyph}</span>`}
+              : `<span style="font-size:14px">${esc(glyph)}</span>`}
         <span class="t">${esc(labelFor(c))}</span>
         <span class="pill ${BAND_CLS[band]}" style="background:${
           band === "2.4" ? "#e0a83c;color:#1a1206" : band === "5" ? "#2b6cff;color:#fff"
@@ -813,6 +773,10 @@
         ${c.guest ? "<dt>Network</dt><dd>Guest</dd>" : ""}
       </dl>`;
     card.querySelector(".x").addEventListener("click", closeCard);
+    // same fallback as the ring chips: an id with no artwork reverts to a glyph
+    card.querySelector("img.ci")?.addEventListener("error", (e) => {
+      e.target.outerHTML = `<span style="font-size:14px">${esc(glyph)}</span>`;
+    }, { once: true });
   }
   function positionCard(anchorEl) {
     if (!card) return;
@@ -918,8 +882,9 @@
     const n = bandCounts(all);
     const per = BANDS.filter((b) => n[b])
       .map((b) => `<i class="${BAND_CLS[b]}"></i>${b === "?" ? "?" : b}G <b>${n[b]}</b>`).join(" · ");
-    const icons = fpMap == null ? "" :
-      (Object.keys(fpMap).length ? ` · icons <b>${Object.keys(fpMap).length}</b>` : " · icons <b>none</b>");
+    // how many clients UniFi has actually fingerprinted (the rest show a glyph)
+    const withIcon = all.filter((c) => c.devId != null).length;
+    const icons = all.length ? ` · icons <b>${withIcon || "none"}</b>` : "";
     statusEl.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
       `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
       ` <span style="opacity:.5">${BUILD}</span>`;
