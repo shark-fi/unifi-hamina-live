@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from ..deps import collector, snapshot
 from ..models import AccessPoint, Client, FloorPlan, Site, Snapshot
@@ -64,6 +64,80 @@ def floorplans(
     if site:
         return snap.floorplans_for_site(site)
     return snap.floorplans
+
+
+@router.get("/floorplans/{plan_id}/image")
+def floorplan_image(plan_id: str, col: Collector = Depends(collector)):
+    """Raw floor-plan image bytes (the same image imported into Hamina), used as
+    the backdrop for the live client map. 404 until the collector has fetched
+    it. Images are cached in memory, so this is cheap to poll."""
+    blob = col.floor_image(plan_id)
+    if not blob:
+        raise HTTPException(status_code=404, detail="no image for this floor plan")
+    media = "image/jpeg" if blob[:3] == b"\xff\xd8\xff" else "image/png"
+    return Response(content=blob, media_type=media,
+                    headers={"Cache-Control": "no-cache"})
+
+
+def _client_brief(c: Client) -> dict:
+    return {
+        "mac": c.mac,
+        "hostname": c.hostname,
+        "ip": c.ip,
+        "band": c.band,
+        "essid": c.essid,
+        "signal_dbm": c.signal_dbm if c.signal_dbm is not None else c.rssi,
+        "is_guest": c.is_guest,
+    }
+
+
+@router.get("/map")
+def live_map(
+    floorplan: str | None = Query(default=None, description="Floor-plan id to render."),
+    col: Collector = Depends(collector),
+    snap: Snapshot = Depends(snapshot),
+):
+    """One-shot projection for the live client map: the floor-plan list (for the
+    picker) plus, for the selected plan, every placed AP with the clients
+    currently associated to it. Clients carry no vendor x,y — UniFi (like every
+    non-Mist vendor) reports them per-AP — so the UI clusters each AP's clients
+    around it."""
+    plans = []
+    for f in snap.floorplans:
+        placed = [
+            a for a in snap.access_points
+            if a.floorplan_id == f.id and a.x is not None and a.y is not None
+        ]
+        plans.append({
+            "id": f.id, "site_id": f.site_id, "name": f.name,
+            "width_px": f.width_px, "height_px": f.height_px,
+            "has_image": col.floor_image(f.id) is not None,
+            "num_placed_aps": len(placed),
+        })
+    selected = floorplan
+    if selected is None:  # default to the first plan that actually has placed APs
+        with_aps = [p for p in plans if p["num_placed_aps"]]
+        selected = (with_aps or plans or [{"id": None}])[0]["id"]
+
+    aps_out = []
+    if selected is not None:
+        for a in snap.access_points:
+            if a.floorplan_id != selected or a.x is None or a.y is None:
+                continue
+            clients = snap.clients_for_ap(a.mac)
+            aps_out.append({
+                "serial": a.serial, "mac": a.mac, "name": a.name,
+                "model": a.model, "online": a.online,
+                "x": a.x, "y": a.y,
+                "num_clients": a.num_clients,
+                "clients": [_client_brief(c) for c in clients],
+            })
+    return {
+        "generated_at": snap.generated_at,
+        "floorplans": plans,
+        "selected": selected,
+        "access_points": aps_out,
+    }
 
 
 @router.get("/clients", response_model=list[Client])
