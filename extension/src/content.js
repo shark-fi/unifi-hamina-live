@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b22";        // shown in the status chip; bump on every change
+  const BUILD = "b23";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -179,9 +179,14 @@
    * attempts: previously only v1 set it, so whenever v1 failed for some other
    * reason and v2 was the one that hit the shell, the overlay reported a plain
    * "API error" and sent you hunting for a path bug that doesn't exist. */
-  function noteRelay(base, msg) {
-    if (/id\.ui\.direct/.test(base) && /HTTP 200, wrong path/.test(msg)) relayOnly = true;
-  }
+  const isShell = (msg) => /HTTP 200, wrong path/.test(msg);
+  // Are we on a remote-access page at all? A LAN console is an IP or a bare
+  // hostname and never has a /consoles/ path, so this keeps the relay verdict
+  // off local consoles, where 200-with-HTML really does mean a wrong path.
+  const isRemotePage = () =>
+    /\/consoles\//.test(location.pathname) ||
+    /(^|\.)ui\.com$/i.test(location.hostname) ||
+    seenBases.some((b) => /id\.ui\.direct/.test(b));
 
   async function resolveBase(site) {
     if (apiBase) return apiBase;
@@ -193,21 +198,35 @@
       .filter(Boolean)
       .filter((b) => !failedUrls.has(`${b}/s/${site}/stat/device`)))];
     if (!tries.length) tries.push(...candidateBases());
-    let lastE = "no reachable API";
+    let lastE = "no reachable API", shells = 0;
+    const fail = (b, e) => {
+      lastE = e.message;
+      if (isShell(lastE)) shells++;
+      // the tunnel host itself answering with the app shell is conclusive
+      if (/id\.ui\.direct/.test(b) && isShell(lastE)) relayOnly = true;
+    };
     for (const b of tries) {
       lastTriedBase = b;
       try {
         const j = await getJson(`${b}/s/${site}/stat/device`);
         if (Array.isArray(j.data)) { apiBase = b; apiV2 = false; rememberBase(b); return b; }
-      } catch (e) { lastE = e.message; noteRelay(b, lastE); }
+      } catch (e) { fail(b, e); }
       // some consoles serve only the v2 API — accept that shape too
       try {
         const v2 = b.replace(/\/api$/, "/v2/api");
         const j2 = await getJson(`${v2}/site/${site}/device`);
         const list = Array.isArray(j2) ? j2 : (j2.network_devices || j2.data);
         if (Array.isArray(list)) { apiBase = b; apiV2 = true; rememberBase(b); return b; }
-      } catch (e) { lastE = e.message; noteRelay(b, lastE); }
+      } catch (e) { fail(b, e); }
     }
+    /* An API path answering with the app shell, on a remote-access page, means
+     * there is no HTTP API there to find — the relayed session. Checking only
+     * the tunnel-host URL wasn't enough: on unifi.ui.com the same shell comes
+     * back for our own-origin candidates too, so whichever happened to be tried
+     * last decided the message, and a run could end reporting a bare path error
+     * on a session where no API exists at all. (A local console is excluded:
+     * there, 200-with-HTML really does mean we asked for the wrong path.) */
+    if (shells && isRemotePage()) relayOnly = true;
     throw new Error(lastE);
   }
 
