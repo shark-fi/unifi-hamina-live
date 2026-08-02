@@ -20,17 +20,25 @@ console (`https://192.168.1.1/network/…`) and via Ubiquiti remote access
 - **Client icons** ringed around each AP — UniFi's own fingerprint icon for the
   device where it has one, otherwise a glyph inferred from name/vendor, or an
   initial. The ring outline is coloured by radio band and guests are dashed.
-  Ring capacity is computed from circumference, so every
-  client is drawn (no `+N` chip) at ≥36 px spacing, with a clear wedge beneath
-  the marker so the AP's own name/model stays readable.
+  Every client is drawn (no `+N` chip): ring capacity comes from circumference,
+  with a clear wedge beneath the marker so the AP's own name and chips stay
+  readable. Rings never reach past a fixed radius — a busy AP packs tighter and
+  its chips shrink rather than throwing a ring across the floor plan.
+- **Hover a client** for its name, SSID, band and channel, signal, TX/RX and IP;
+  **click** for a details card adding MAC, SNR, data volume, uptime, vendor and
+  guest status.
 - **Per-band client chips** (2.4 / 5 / 6 GHz) styled to match UniFi's own chips.
   Click one to filter the ring to that radio.
 - **Channel chips with Utilization / TX Retries**, reproduced from
   `radio_table` / `radio_table_stats` on consoles that don't render their own —
   and suppressed on the ones that do, so nothing is duplicated or covered.
-- **Click a client** for a details card: AP, SSID, IP, MAC, signal, SNR, channel,
-  TX/RX rate, data volume, uptime, vendor, guest.
-- A **status chip** bottom-left with per-band totals and a build tag.
+- **Hovering a channel chip spotlights that radio** — its clients stay lit and
+  the other bands drop back. Works on UniFi's own chips too: they carry only a
+  channel number, so the band is resolved against the radios we already poll.
+- **Chips scale with the map**, tracking the zoom InnerSpace applies to its own
+  markers. Client icons stay a fixed size so they remain readable zoomed out.
+- A **status chip** bottom-left with per-band totals, how many clients resolved
+  to a real icon, and a build tag.
 
 ## How it pins to the map
 
