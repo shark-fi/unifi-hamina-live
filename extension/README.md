@@ -71,8 +71,19 @@ host it contacts serves only the SSO handshake and answers API paths with the
 app shell. There is nothing for an extension to fetch, short of re-implementing
 UniFi's signalling and speaking the data channel.
 
-The overlay detects this and says so, rather than reporting a path error. Open
-the same console on its **LAN address** and it works normally.
+**Which of the two you get is UniFi's decision, not a setting** — not in this
+extension, and not anywhere in the UniFi UI. It depends on whether the console
+is reachable directly from your browser; the relay is the fallback when it
+isn't. So a `unifi.ui.com` session that lands on the relay cannot be talked into
+working, and the row above is a description of what happens, not something to
+configure.
+
+To tell which one a session is using: open DevTools → Network on the console and
+look for any request to a `/proxy/network/` path. Requests present, it's proxied
+and the overlay works. None at all, it's relayed.
+
+The overlay detects the relayed case and says so, rather than reporting a path
+error. Open the same console on its **LAN address** and it works normally.
 
 ## Status
 

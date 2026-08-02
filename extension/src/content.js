@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b21";        // shown in the status chip; bump on every change
+  const BUILD = "b22";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -173,6 +173,16 @@
   }
 
   let lastTriedBase = null, workerBases = 0, seenBases = [];
+  /* The tunnel host answering an API path with the app shell (HTML at 200) is
+   * the signature of a relayed session — the host serves only the SSO handshake
+   * and there is no HTTP API behind it. Checked after BOTH the v1 and v2
+   * attempts: previously only v1 set it, so whenever v1 failed for some other
+   * reason and v2 was the one that hit the shell, the overlay reported a plain
+   * "API error" and sent you hunting for a path bug that doesn't exist. */
+  function noteRelay(base, msg) {
+    if (/id\.ui\.direct/.test(base) && /HTTP 200, wrong path/.test(msg)) relayOnly = true;
+  }
+
   async function resolveBase(site) {
     if (apiBase) return apiBase;
     const saved = await loadSavedBase();
@@ -189,17 +199,14 @@
       try {
         const j = await getJson(`${b}/s/${site}/stat/device`);
         if (Array.isArray(j.data)) { apiBase = b; apiV2 = false; rememberBase(b); return b; }
-      } catch (e) {
-        lastE = e.message;
-        if (/id\.ui\.direct/.test(b) && /HTTP 200, wrong path/.test(lastE)) relayOnly = true;
-      }
+      } catch (e) { lastE = e.message; noteRelay(b, lastE); }
       // some consoles serve only the v2 API — accept that shape too
       try {
         const v2 = b.replace(/\/api$/, "/v2/api");
         const j2 = await getJson(`${v2}/site/${site}/device`);
         const list = Array.isArray(j2) ? j2 : (j2.network_devices || j2.data);
         if (Array.isArray(list)) { apiBase = b; apiV2 = true; rememberBase(b); return b; }
-      } catch (e) { lastE = e.message; }
+      } catch (e) { lastE = e.message; noteRelay(b, lastE); }
     }
     throw new Error(lastE);
   }
