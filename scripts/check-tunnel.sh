@@ -86,8 +86,9 @@ case "$code" in
     if printf '%s' "$peek" | grep -qE '^[[:space:]]*[{[]'; then
       red "  HTTP 200 WITH DATA — this endpoint is OPEN TO THE INTERNET."
       red "  Anyone with the hostname can read your client inventory."
-      red "  -> Zero Trust > Access > Applications: add a self-hosted app for"
-      red "     $HOST covering /api and require your identity. Then re-run."
+      red "  -> Zero Trust > Access > Applications > Add > Self-hosted:"
+      red "     domain $HOST, PATH LEFT EMPTY (the dashboard at / shows the same"
+      red "     data as /api), policy Allow + your email. Then re-run."
       echo "     first bytes: $peek"
       fail=1
     elif printf '%s' "$peek" | grep -qiE 'cloudflareaccess\.com|<!doctype|<html'; then

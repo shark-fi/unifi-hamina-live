@@ -54,8 +54,9 @@ anyone who learns the hostname. Put a Cloudflare Access application over them.
 
 In **Zero Trust → Access → Applications → Add → Self-hosted**:
 
-1. Application domain: your tunnel hostname; path `api` (repeat for `/` if you
-   also want the dashboard covered).
+1. Application domain: your tunnel hostname, **path left empty** — the whole
+   host. Scoping the policy to `api` leaves the dashboard at `/` open, and it
+   renders the same APs and clients that `/api` returns.
 2. Policy: *Allow*, with `Emails` = your own address. That is enough.
 3. Save. `./scripts/check-tunnel.sh <hostname>` should now report the tunnel as
    refusing unauthenticated calls.
