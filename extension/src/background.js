@@ -79,12 +79,19 @@ async function probeBridge(base) {
   const t0 = Date.now();
   let r;
   try {
-    r = await fetch(url, { headers: { Accept: "application/json" } });
+    // credentials:"include" so a Cloudflare Access session cookie is carried
+    // when the bridge is published through a tunnel behind an Access policy
+    r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
   } catch (e) {
     return { ok: false, stage: "fetch", url, error: String((e && e.message) || e) };
   }
   const ms = Date.now() - t0;
   const text = (await r.text()).slice(0, 400);
+  // An Access policy answers an unauthenticated call with its own login page,
+  // not with the bridge — worth naming, since it looks like a broken endpoint
+  const gated = /cloudflareaccess\.com|cf-access|Access.*Cloudflare/i.test(text)
+    || !!r.headers.get("cf-access-domain");
+  if (gated) return { ok: false, stage: "access", url, status: r.status, ms };
   if (!r.ok) return { ok: false, stage: "http", url, status: r.status, ms, text };
   try {
     return { ok: true, url, status: r.status, ms, json: JSON.parse(text) };

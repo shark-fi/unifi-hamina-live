@@ -125,6 +125,12 @@ $("testbridge").addEventListener("click", async () => {
       `Works — HTTP ${r.status} in ${r.ms} ms · ${counts}${age}. `
       + "Worker fetch to plain HTTP is allowed; bridge saved.", "ok");
   }
+  if (r.stage === "access") {
+    return setBridgeStatus(
+      `Reached it, but Cloudflare Access is asking for a login (HTTP ${r.status}). `
+      + "Open the bridge URL in a tab and sign in once — the worker will then "
+      + "carry the session cookie.", "bad");
+  }
   if (r.stage === "fetch") {
     return setBridgeStatus(
       `Fetch failed: ${r.error}. Either the bridge isn't reachable at ${base} `
