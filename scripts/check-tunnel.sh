@@ -46,10 +46,38 @@ esac
 
 # --- 2. the tunnel, unauthenticated: this SHOULD be refused ---------------
 hdr "2. Tunnel without credentials  ($PUB/api/health)"
-out=$(curl -sS --max-time 15 -o /tmp/ct.$$ -w '%{http_code} %{redirect_url}' "$PUB/api/health" 2>&1)
-code=${out%% *}; redir=${out#* }
-peek=$(head -c 200 /tmp/ct.$$ 2>/dev/null); rm -f /tmp/ct.$$
+case "$HOST" in
+  *example.com|*example.org|*example.net)
+    ylw "  '$HOST' is the placeholder from the docs, not a real hostname."
+    ylw "  -> pass your tunnel's own public hostname." ;;
+esac
+body_f=$(mktemp); err_f=$(mktemp)
+# Keep curl's stderr OUT of the -w capture and check its exit status separately:
+# merging them put curl's error text where the HTTP code was expected, which fell
+# through to the catch-all below — and the catch-all did not set fail, so a
+# tunnel that never answered was summarised as "Looks right".
+out=$(curl -sS --max-time 15 -o "$body_f" -w '%{http_code}|%{redirect_url}' \
+      "$PUB/api/health" 2>"$err_f")
+rc=$?
+peek=$(head -c 200 "$body_f" 2>/dev/null)
+errtext=$(head -c 200 "$err_f" 2>/dev/null)
+rm -f "$body_f" "$err_f"
+if [ "$rc" -ne 0 ]; then
+  red "  no answer — curl exit $rc: $errtext"
+  case "$rc" in
+    6)  red "  -> hostname does not resolve. Has the tunnel been created, and is"
+        red "     this its public hostname?" ;;
+    7)  red "  -> connection refused / unreachable." ;;
+    28) red "  -> timed out." ;;
+    35|60) red "  -> TLS failed. A tunnel should present a valid CA-signed cert." ;;
+  esac
+  fail=1
+  code=""
+else
+  code=${out%%|*}; redir=${out#*|}
+fi
 case "$code" in
+  "") ;;   # already reported above
   200)
     # Decide on the SHAPE of the body, never on keywords: the bridge's own
     # health JSON contains "access_points", so a keyword match for "access"
@@ -78,7 +106,9 @@ case "$code" in
     fi ;;
   401|403) grn "  HTTP $code — refused. Policy is ON." ;;
   000)     red "  no response — hostname not resolving, or the tunnel is down"; fail=1 ;;
-  *)       ylw "  HTTP $code (unexpected): $peek" ;;
+  # Never let an outcome we don't recognise read as success: an unverified
+  # tunnel is exactly the state this script exists to refuse to bless.
+  *)       ylw "  HTTP $code (unexpected): $peek"; fail=1 ;;
 esac
 
 # --- 3. the machine path, if a service token is configured ----------------
