@@ -47,6 +47,11 @@ class Client(BaseModel):
 
     mac: str
     hostname: str | None = None
+    name: str | None = Field(
+        default=None,
+        description="User-set alias in UniFi, when there is one. Distinct from "
+        "hostname, which is what the device calls itself.",
+    )
     ip: str | None = None
     site_id: str
     ap_mac: str | None = Field(default=None, description="MAC of the AP it is on.")
@@ -63,6 +68,15 @@ class Client(BaseModel):
     rx_bytes: int | None = None
     uptime_seconds: int | None = None
     is_guest: bool = False
+    dev_id: int | None = Field(
+        default=None,
+        description="UniFi fingerprint device-type id. Its icon is served at "
+        "https://static.ui.com/fingerprint/0/<dev_id>_101x101.png — a device "
+        "type, not a device.",
+    )
+    vendor: str | None = Field(
+        default=None, description="Vendor from the MAC OUI, when UniFi resolved one."
+    )
 
 
 class FloorPlan(BaseModel):

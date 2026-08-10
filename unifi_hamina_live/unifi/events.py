@@ -84,6 +84,9 @@ def _connect(snap: Snapshot, ev: dict, site_id: str, serial_by_mac: dict) -> boo
             Client(
                 mac=mac,
                 hostname=ev.get("hostname") or ev.get("name"),
+                # a connect event carries no fingerprint or OUI; the next poll
+                # fills dev_id/vendor in
+                name=ev.get("name") or None,
                 site_id=site_id,
                 ap_mac=ap_mac,
                 ap_serial=serial_by_mac.get(ap_mac),

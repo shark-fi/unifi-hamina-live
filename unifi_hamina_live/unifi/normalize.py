@@ -129,6 +129,25 @@ def is_access_point(dev: dict) -> bool:
     return dev.get("type") == "uap"
 
 
+def _dev_id(sta: dict) -> int | None:
+    """UniFi's fingerprint device-type id, which keys the client icon on its CDN.
+
+    dev_id_override wins when set: that is a user-corrected fingerprint, and it
+    is what the console's own client list renders. The value can arrive as a
+    string, so coerce rather than trusting the type.
+    """
+    fp = sta.get("fingerprint") or {}
+    for v in (sta.get("dev_id_override"), sta.get("dev_id"),
+              fp.get("computed_dev_id"), fp.get("dev_id")):
+        if v is None or isinstance(v, bool):
+            continue
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def client(sta: dict, site_id: str, serial_by_mac: dict[str, str]) -> Client:
     ap_mac = normalize_mac(sta.get("ap_mac"))
     band_raw = sta.get("radio")
@@ -139,6 +158,7 @@ def client(sta: dict, site_id: str, serial_by_mac: dict[str, str]) -> Client:
     return Client(
         mac=normalize_mac(sta.get("mac")),
         hostname=sta.get("hostname") or sta.get("name") or None,
+        name=sta.get("name") or None,
         ip=sta.get("ip") or None,
         site_id=site_id,
         ap_mac=ap_mac or None,
@@ -155,6 +175,8 @@ def client(sta: dict, site_id: str, serial_by_mac: dict[str, str]) -> Client:
         rx_bytes=sta.get("rx_bytes"),
         uptime_seconds=sta.get("uptime"),
         is_guest=bool(sta.get("is_guest")),
+        dev_id=_dev_id(sta),
+        vendor=sta.get("oui") or None,
     )
 
 
