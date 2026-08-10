@@ -55,15 +55,15 @@ case "$HOST" in
     ylw "-> pass your tunnel's own public hostname." ;;
 esac
 
-check_public() {   # $1 = path, $2 = what lives there
-  hdr "2. Tunnel without credentials  ($PUB$1)"
+check_public() {   # $1 = step label, $2 = path, $3 = what lives there
+  hdr "$1. Tunnel without credentials  ($PUB$2)"
   body_f=$(mktemp); err_f=$(mktemp)
   # Keep curl's stderr OUT of the -w capture and check its exit status
   # separately: merging them put curl's error text where the HTTP code was
   # expected, which fell through to the catch-all — and the catch-all did not
   # set fail, so a tunnel that never answered was summarised as "Looks right".
   out=$(curl -sS --max-time 15 -o "$body_f" -w '%{http_code}|%{redirect_url}' \
-        "$PUB$1" 2>"$err_f")
+        "$PUB$2" 2>"$err_f")
   rc=$?
   peek=$(head -c 200 "$body_f" 2>/dev/null)
   errtext=$(head -c 200 "$err_f" 2>/dev/null)
@@ -88,7 +88,7 @@ check_public() {   # $1 = path, $2 = what lives there
       # reports a wide-open endpoint as protected — inverting the one check this
       # script exists to make.
       if printf '%s' "$peek" | grep -qE '^[[:space:]]*[{[]'; then
-        red "  HTTP 200 WITH DATA — $2 is OPEN TO THE INTERNET."
+        red "  HTTP 200 WITH DATA — $3 is OPEN TO THE INTERNET."
         red "  Anyone with the hostname can read your client inventory."
         red "  -> Zero Trust > Access > Applications > Add > Self-hosted:"
         red "     domain $HOST, PATH LEFT EMPTY (a path-scoped policy leaves the"
@@ -98,7 +98,7 @@ check_public() {   # $1 = path, $2 = what lives there
       elif printf '%s' "$peek" | grep -qiE 'cloudflareaccess\.com'; then
         grn "  HTTP 200, Access login page — policy is ON"
       elif printf '%s' "$peek" | grep -qiE '<!doctype|<html'; then
-        red "  HTTP 200 WITH HTML — $2 is OPEN TO THE INTERNET (this is the"
+        red "  HTTP 200 WITH HTML — $3 is OPEN TO THE INTERNET (this is the"
         red "  dashboard, not an Access login: no cloudflareaccess.com in it)."
         red "  -> widen the Access policy to the whole host. Then re-run."
         fail=1
@@ -122,8 +122,8 @@ check_public() {   # $1 = path, $2 = what lives there
   esac
 }
 
-check_public "/api/health" "the API"
-check_public "/"           "the dashboard"
+check_public "2a" "/api/health" "the API"
+check_public "2b" "/"           "the dashboard"
 
 # --- 3. the machine path, if a service token is configured ----------------
 hdr "3. Tunnel with a service token"
