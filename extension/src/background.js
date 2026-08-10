@@ -87,17 +87,22 @@ async function probeBridge(base) {
   }
   const ms = Date.now() - t0;
   const text = (await r.text()).slice(0, 400);
+  // Judge the body by shape, and JSON first: the bridge's health payload
+  // contains "access_points", so any keyword sniff for Access has to lose to a
+  // successful parse or it will misread the bridge's own reply.
+  if (r.ok) {
+    try {
+      return { ok: true, url, status: r.status, ms, json: JSON.parse(text) };
+    } catch (_e) { /* not the bridge — fall through and work out what it is */ }
+  }
   // An Access policy answers an unauthenticated call with its own login page,
   // not with the bridge — worth naming, since it looks like a broken endpoint
-  const gated = /cloudflareaccess\.com|cf-access|Access.*Cloudflare/i.test(text)
-    || !!r.headers.get("cf-access-domain");
-  if (gated) return { ok: false, stage: "access", url, status: r.status, ms };
-  if (!r.ok) return { ok: false, stage: "http", url, status: r.status, ms, text };
-  try {
-    return { ok: true, url, status: r.status, ms, json: JSON.parse(text) };
-  } catch (_e) {
-    return { ok: false, stage: "body", url, status: r.status, ms, text };
+  if (/cloudflareaccess\.com/i.test(text) || r.headers.get("cf-access-domain")
+      || /^\s*<(!doctype|html)/i.test(text)) {
+    return { ok: false, stage: "access", url, status: r.status, ms };
   }
+  if (!r.ok) return { ok: false, stage: "http", url, status: r.status, ms, text };
+  return { ok: false, stage: "body", url, status: r.status, ms, text };
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

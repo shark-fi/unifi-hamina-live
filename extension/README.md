@@ -140,8 +140,29 @@ notes, including two related overlay targets that build on the same technique.
 
 ## Privacy / safety
 
-No data leaves your browser or your console. No analytics, no external hosts,
-no telemetry. The extension only ever reads; it never writes to the console.
+The extension **only ever reads** — it never writes to the console. No
+analytics, no telemetry, and nothing is sent anywhere.
+
+Two things worth stating precisely rather than as a blanket claim:
+
+**One external host.** Client icons are `<img>` tags pointing at UniFi's own CDN,
+`static.ui.com/fingerprint/0/<dev_id>_101x101.png` — the same images the console
+itself loads. So that CDN sees requests for the fingerprint ids of your clients
+(a device *type*, not a device: `4488`, not a MAC). Nothing else leaves the
+browser. If you'd rather it didn't, deleting `uiIconFor` falls back to the
+built-in glyphs and the overlay works unchanged.
+
+**The overlay draws into the page's DOM**, so scripts on that page can read what
+it draws — client names, MACs, IPs, SSIDs. On your console that discloses
+nothing: it is the console's own data, on the console's own page. It would
+matter on any *other* page, so the overlay only runs on the origin you enable,
+and any address it reports (an API base, a bridge URL) is printed **only when
+the page is that console** and redacted everywhere else.
+
+Relatedly, discovery accepts an API address only from the page's own origin or a
+`<console-id>.id.ui.direct` tunnel host. The page-context probe reports URLs over
+a `window` event, which a page could forge; the host check means a forged one is
+ignored.
 
 ## Related
 

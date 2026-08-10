@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b23";        // shown in the status chip; bump on every change
+  const BUILD = "b25";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -60,8 +60,24 @@
    * The tunnel host is the console root, so its API sits at /proxy/network/api. */
   const DIRECT_RX = /^https?:\/\/([a-z0-9-]+\.id\.ui\.direct)(?::\d+)?\//i;
   const perfBases = [];                 // newest first, deduped
+  /* Only the page's own origin, or a console tunnel host, may name an API base.
+   *
+   * PROXY_RX matches a /proxy/network/ path on ANY host, and the probe's event
+   * channel is a plain window CustomEvent — so any script on the page could
+   * dispatch one naming a host of its choosing and steer discovery. Nothing
+   * came of that (the worker only fetches origins with granted host
+   * permission), but a page should not get a say in where we look. */
+  function hostAllowed(u) {
+    try {
+      const h = new URL(u).host;
+      return h === location.host || /^[a-z0-9-]+\.id\.ui\.direct(?::\d+)?$/i.test(h);
+    } catch (_e) {
+      return false;
+    }
+  }
   function notePerfUrl(url) {
     const s = String(url || "");
+    if (!hostAllowed(s)) return;
     const m = s.match(PROXY_RX);
     const d = m ? null : s.match(DIRECT_RX);
     if (!m && !d) return;
@@ -151,6 +167,28 @@
    * the SSO handshake, answering 200-with-HTML for API paths. Nothing we can
    * fetch exists in that mode, so say so instead of probing forever. */
   let relayOnly = false;
+
+  /* Everything the overlay draws goes into the PAGE's DOM, where the page's own
+   * scripts can read it. On the console that discloses nothing: the addresses
+   * are the page's own, learned from the page's own traffic. On any other page
+   * — a Hamina plan, once the overlay runs there — printing them would hand
+   * over where the console or the bridge lives. So URLs are shown only when the
+   * page IS the console you enabled, and redacted everywhere else. */
+  let consoleOrigin = null;
+  try {
+    chrome.storage.local.get("origin").then(
+      (s) => { consoleOrigin = s.origin || null; },
+      () => {});
+  } catch (_e) { /* storage unavailable; stay redacted */ }
+  const onConsolePage = () => consoleOrigin != null && location.origin === consoleOrigin;
+  const showUrl = (u) => {
+    if (!u) return "nothing";
+    if (onConsolePage()) return String(u).replace(location.origin, "");
+    return "(endpoint hidden)";
+  };
+  // error text can carry a URL too, so scrub it off non-console pages
+  const showErr = (e) => (onConsolePage() ? String(e)
+    : String(e).replace(/\bhttps?:\/\/\S+/gi, "(url hidden)"));
 
   /* Remember a base that worked. The performance resource buffer is finite and
    * evicts old entries, so on a long-lived page the app's own API call can age
@@ -972,10 +1010,9 @@
       return;
     }
     if (lastErr) {
-      const saw = seenBases[0] ? seenBases[0].replace(location.origin, "") : "nothing";
-      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(lastErr)} · saw ` +
-        `<b>${esc(saw)}</b> (${seenBases.length}) · site <b>${esc(siteId())}</b>` +
-        ` <span style="opacity:.5">${BUILD}</span>`;
+      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(showErr(lastErr))} · saw ` +
+        `<b>${esc(showUrl(seenBases[0]))}</b> (${seenBases.length}) · site ` +
+        `<b>${esc(siteId())}</b> <span style="opacity:.5">${BUILD}</span>`;
       return;
     }
     if (renderErr) {
