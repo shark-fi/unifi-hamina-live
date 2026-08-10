@@ -238,7 +238,15 @@ async function refreshMap() {
   mapS.selected = data.selected;
   if (data.selected) sel.value = data.selected;
   const plan = (data.floorplans || []).find(p => p.id === data.selected) || null;
-  mapS.aps = data.access_points || [];
+  /* AP y arrives in the export's pixel space, which measures UP from the bottom
+   * (see scene_to_pixels: InnerSpace and OpenIntent both have y up, so it only
+   * re-centres and deliberately does not flip). An SVG measures DOWN from the
+   * top, so plotting it raw mirrored every AP about the middle of the plan —
+   * the kitchen AP landed in the garage. Flip once here, where the coordinate
+   * first meets the image, rather than at each of the five places it is drawn. */
+  const H = (plan && plan.height_px) || 0;
+  mapS.aps = (data.access_points || []).map(
+    (a) => (H && a.y != null ? { ...a, y: H - a.y } : a));
   renderMap(plan, mapS.aps);
 }
 
