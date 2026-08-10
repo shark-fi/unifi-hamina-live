@@ -45,72 +45,85 @@ case "$body" in
 esac
 
 # --- 2. the tunnel, unauthenticated: this SHOULD be refused ---------------
-hdr "2. Tunnel without credentials  ($PUB/api/health)"
+# Probe BOTH the API and the site root. An Access policy scoped to a path
+# protects only that path, and the bridge's dashboard at / renders the same
+# access points and clients that /api returns — so checking /api alone can
+# report "protected" over a wide-open dashboard.
 case "$HOST" in
   *example.com|*example.org|*example.net)
-    ylw "  '$HOST' is the placeholder from the docs, not a real hostname."
-    ylw "  -> pass your tunnel's own public hostname." ;;
+    ylw "'$HOST' is the placeholder from the docs, not a real hostname."
+    ylw "-> pass your tunnel's own public hostname." ;;
 esac
-body_f=$(mktemp); err_f=$(mktemp)
-# Keep curl's stderr OUT of the -w capture and check its exit status separately:
-# merging them put curl's error text where the HTTP code was expected, which fell
-# through to the catch-all below — and the catch-all did not set fail, so a
-# tunnel that never answered was summarised as "Looks right".
-out=$(curl -sS --max-time 15 -o "$body_f" -w '%{http_code}|%{redirect_url}' \
-      "$PUB/api/health" 2>"$err_f")
-rc=$?
-peek=$(head -c 200 "$body_f" 2>/dev/null)
-errtext=$(head -c 200 "$err_f" 2>/dev/null)
-rm -f "$body_f" "$err_f"
-if [ "$rc" -ne 0 ]; then
-  red "  no answer — curl exit $rc: $errtext"
-  case "$rc" in
-    6)  red "  -> hostname does not resolve. Has the tunnel been created, and is"
-        red "     this its public hostname?" ;;
-    7)  red "  -> connection refused / unreachable." ;;
-    28) red "  -> timed out." ;;
-    35|60) red "  -> TLS failed. A tunnel should present a valid CA-signed cert." ;;
-  esac
-  fail=1
-  code=""
-else
+
+check_public() {   # $1 = path, $2 = what lives there
+  hdr "2. Tunnel without credentials  ($PUB$1)"
+  body_f=$(mktemp); err_f=$(mktemp)
+  # Keep curl's stderr OUT of the -w capture and check its exit status
+  # separately: merging them put curl's error text where the HTTP code was
+  # expected, which fell through to the catch-all — and the catch-all did not
+  # set fail, so a tunnel that never answered was summarised as "Looks right".
+  out=$(curl -sS --max-time 15 -o "$body_f" -w '%{http_code}|%{redirect_url}' \
+        "$PUB$1" 2>"$err_f")
+  rc=$?
+  peek=$(head -c 200 "$body_f" 2>/dev/null)
+  errtext=$(head -c 200 "$err_f" 2>/dev/null)
+  rm -f "$body_f" "$err_f"
+  if [ "$rc" -ne 0 ]; then
+    red "  no answer — curl exit $rc: $errtext"
+    case "$rc" in
+      6)  red "  -> hostname does not resolve. Has the tunnel been created, and is"
+          red "     this its public hostname?" ;;
+      7)  red "  -> connection refused / unreachable." ;;
+      28) red "  -> timed out." ;;
+      35|60) red "  -> TLS failed. A tunnel should present a valid CA-signed cert." ;;
+    esac
+    fail=1
+    return
+  fi
   code=${out%%|*}; redir=${out#*|}
-fi
-case "$code" in
-  "") ;;   # already reported above
-  200)
-    # Decide on the SHAPE of the body, never on keywords: the bridge's own
-    # health JSON contains "access_points", so a keyword match for "access"
-    # reports a wide-open endpoint as protected — inverting the one check this
-    # script exists to make. A JSON object means the bridge itself answered.
-    if printf '%s' "$peek" | grep -qE '^[[:space:]]*[{[]'; then
-      red "  HTTP 200 WITH DATA — this endpoint is OPEN TO THE INTERNET."
-      red "  Anyone with the hostname can read your client inventory."
-      red "  -> Zero Trust > Access > Applications > Add > Self-hosted:"
-      red "     domain $HOST, PATH LEFT EMPTY (the dashboard at / shows the same"
-      red "     data as /api), policy Allow + your email. Then re-run."
-      echo "     first bytes: $peek"
-      fail=1
-    elif printf '%s' "$peek" | grep -qiE 'cloudflareaccess\.com|<!doctype|<html'; then
-      grn "  HTTP 200 but served an Access login page — policy is ON"
-    else
-      ylw "  HTTP 200, body neither JSON nor a login page — inspect it yourself:"
-      echo "     first bytes: $peek"
-      fail=1
-    fi ;;
-  301|302|303|307|308)
-    if printf '%s' "$redir" | grep -qi 'cloudflareaccess\.com'; then
-      grn "  HTTP $code to the Access login — policy is ON"
-    else
-      ylw "  HTTP $code to $redir — redirected, but not to Access. Check the policy."
-      fail=1
-    fi ;;
-  401|403) grn "  HTTP $code — refused. Policy is ON." ;;
-  000)     red "  no response — hostname not resolving, or the tunnel is down"; fail=1 ;;
-  # Never let an outcome we don't recognise read as success: an unverified
-  # tunnel is exactly the state this script exists to refuse to bless.
-  *)       ylw "  HTTP $code (unexpected): $peek"; fail=1 ;;
-esac
+  case "$code" in
+    200)
+      # Decide on the SHAPE of the body, never on keywords: the bridge's own
+      # health JSON contains "access_points", so a keyword match for "access"
+      # reports a wide-open endpoint as protected — inverting the one check this
+      # script exists to make.
+      if printf '%s' "$peek" | grep -qE '^[[:space:]]*[{[]'; then
+        red "  HTTP 200 WITH DATA — $2 is OPEN TO THE INTERNET."
+        red "  Anyone with the hostname can read your client inventory."
+        red "  -> Zero Trust > Access > Applications > Add > Self-hosted:"
+        red "     domain $HOST, PATH LEFT EMPTY (a path-scoped policy leaves the"
+        red "     rest of the host open), policy Allow + your email. Then re-run."
+        echo "     first bytes: $peek"
+        fail=1
+      elif printf '%s' "$peek" | grep -qiE 'cloudflareaccess\.com'; then
+        grn "  HTTP 200, Access login page — policy is ON"
+      elif printf '%s' "$peek" | grep -qiE '<!doctype|<html'; then
+        red "  HTTP 200 WITH HTML — $2 is OPEN TO THE INTERNET (this is the"
+        red "  dashboard, not an Access login: no cloudflareaccess.com in it)."
+        red "  -> widen the Access policy to the whole host. Then re-run."
+        fail=1
+      else
+        ylw "  HTTP 200, body neither JSON nor a login page — inspect it yourself:"
+        echo "     first bytes: $peek"
+        fail=1
+      fi ;;
+    301|302|303|307|308)
+      if printf '%s' "$redir" | grep -qi 'cloudflareaccess\.com'; then
+        grn "  HTTP $code to the Access login — policy is ON"
+      else
+        ylw "  HTTP $code to $redir — redirected, but not to Access. Check the policy."
+        fail=1
+      fi ;;
+    401|403) grn "  HTTP $code — refused. Policy is ON." ;;
+    000)     red "  no response — hostname not resolving, or the tunnel is down"; fail=1 ;;
+    # Never let an outcome we don't recognise read as success: an unverified
+    # tunnel is exactly the state this script exists to refuse to bless.
+    *)       ylw "  HTTP $code (unexpected): $peek"; fail=1 ;;
+  esac
+}
+
+check_public "/api/health" "the API"
+check_public "/"           "the dashboard"
 
 # --- 3. the machine path, if a service token is configured ----------------
 hdr "3. Tunnel with a service token"
