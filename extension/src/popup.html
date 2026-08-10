@@ -15,7 +15,12 @@
   button { flex: 1; padding: 8px; border-radius: 7px; border: 1px solid #232a3a;
     background: #1b2130; color: #e6e9ef; font: inherit; cursor: pointer; }
   button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
-  #status { margin-top: 10px; font-size: 12px; color: #8b93a7; min-height: 16px; }
+  #status, #bridgestatus { margin-top: 10px; font-size: 12px; color: #8b93a7;
+    min-height: 16px; word-break: break-word; }
+  #bridgestatus.ok { color: #4ade80; }
+  #bridgestatus.bad { color: #f87171; }
+  hr { border: 0; border-top: 1px solid #232a3a; margin: 16px 0 0; }
+  code { font-size: 11px; background: #0b0e14; padding: 1px 4px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -34,6 +39,18 @@
     <button id="disable">Disable</button>
   </div>
   <div id="status"></div>
+
+  <hr />
+  <label for="bridge">Bridge URL (optional, experimental)</label>
+  <input id="bridge" type="text" placeholder="http://192.168.1.50:8000" />
+  <p class="sub" style="margin:6px 0 0">
+    A <code>unifi-hamina-live</code> instance on your LAN. Lets the overlay get
+    data without the page's own API — the only way to cover a relayed
+    <code>unifi.ui.com</code> session. Test it before relying on it.</p>
+  <div class="row">
+    <button id="testbridge">Test bridge</button>
+  </div>
+  <div id="bridgestatus"></div>
 
   <script src="popup.js"></script>
 </body>

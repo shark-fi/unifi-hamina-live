@@ -62,12 +62,46 @@ async function proxyGet(url) {
   return { ok: r.ok, status: r.status, type: r.headers.get("content-type") || "", text };
 }
 
+/* Probe a unifi-hamina-live bridge from the WORKER, not from a page.
+ *
+ * The whole point of the bridge is to supply data on pages where the console's
+ * own API is unreachable — a relayed unifi.ui.com session, or hamina.com. Those
+ * are HTTPS pages and a LAN bridge is plain HTTP, so a content-script fetch
+ * would be blocked as mixed content. The worker is not a document and is not
+ * subject to that, given host permission — which is the assumption this probe
+ * exists to verify before anything is built on it.
+ *
+ * Reports the outcome in enough detail to tell the failure modes apart: a
+ * throw (blocked / refused / DNS), an HTTP status, or a body that isn't the
+ * bridge's JSON (wrong port, something else listening). */
+async function probeBridge(base) {
+  const url = base.replace(/\/+$/, "") + "/api/health";
+  const t0 = Date.now();
+  let r;
+  try {
+    r = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch (e) {
+    return { ok: false, stage: "fetch", url, error: String((e && e.message) || e) };
+  }
+  const ms = Date.now() - t0;
+  const text = (await r.text()).slice(0, 400);
+  if (!r.ok) return { ok: false, stage: "http", url, status: r.status, ms, text };
+  try {
+    return { ok: true, url, status: r.status, ms, json: JSON.parse(text) };
+  } catch (_e) {
+    return { ok: false, stage: "body", url, status: r.status, ms, text };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     if (msg?.type === "enable" && msg.origin) {
       const matches = await registerForOrigin(msg.origin);
       await chrome.storage.local.set({ origin: msg.origin, site: msg.site || "" });
       sendResponse({ ok: true, matches });
+
+    } else if (msg?.type === "probeBridge" && msg.base) {
+      sendResponse({ ok: true, res: await probeBridge(msg.base) });
 
     } else if (msg?.type === "get" && msg.url) {
       try {

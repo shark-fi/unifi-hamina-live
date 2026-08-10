@@ -19,8 +19,22 @@ async function activeTab() {
   return tab;
 }
 
+// A LAN bridge is plain HTTP far more often than not, so default the scheme to
+// http here (the console field defaults to https). Explicit schemes win.
+function normBridge(v) {
+  v = (v || "").trim();
+  if (!v) return "";
+  if (!/^https?:\/\//i.test(v)) v = "http://" + v;
+  try {
+    return new URL(v).origin;
+  } catch (_e) {
+    return "";
+  }
+}
+
 async function init() {
-  const stored = await chrome.storage.local.get(["origin", "site"]);
+  const stored = await chrome.storage.local.get(["origin", "site", "bridge"]);
+  $("bridge").value = stored.bridge || "";
   const tab = await activeTab();
   const prefill =
     stored.origin ||
@@ -64,6 +78,65 @@ $("enable").addEventListener("click", async () => {
     }
   }
   setStatus(`Enabled for ${origin}. Open the InnerSpace map.`);
+});
+
+/* Verify the load-bearing assumption for bridge support: that the service
+ * worker can fetch a plain-HTTP LAN address, which is what makes a relayed
+ * unifi.ui.com session (and hamina.com) coverable at all. Runs the fetch in the
+ * worker — the same path the overlay would use — and reports which stage failed
+ * rather than a bare "didn't work". */
+function setBridgeStatus(msg, cls) {
+  const el = $("bridgestatus");
+  el.textContent = msg;
+  el.className = cls || "";
+}
+
+$("testbridge").addEventListener("click", async () => {
+  const base = normBridge($("bridge").value);
+  if (!base) return setBridgeStatus("Enter a bridge URL, e.g. http://192.168.1.50:8000", "bad");
+  setBridgeStatus("Requesting permission…");
+  let granted;
+  try {
+    granted = await chrome.permissions.request({ origins: [base + "/*"] });
+  } catch (e) {
+    return setBridgeStatus("Permission error: " + e.message, "bad");
+  }
+  if (!granted) return setBridgeStatus("Permission denied for " + base, "bad");
+
+  setBridgeStatus("Fetching " + base + "/api/health from the service worker…");
+  const reply = await chrome.runtime.sendMessage({ type: "probeBridge", base });
+  const r = reply?.res;
+  if (!reply?.ok || !r) return setBridgeStatus("Worker error: " + (reply?.error || "no reply"), "bad");
+
+  if (r.ok) {
+    await chrome.storage.local.set({ bridge: base });
+    // /api/health reports the collector's own state, so the same call tells us
+    // whether the bridge is reachable AND whether it has data worth overlaying
+    const j = r.json || {};
+    const counts = `${j.access_points ?? "?"} AP(s) · ${j.clients ?? "?"} client(s)`;
+    const age = j.age_seconds != null ? `, ${j.age_seconds}s old` : "";
+    if (j.ok === false) {
+      return setBridgeStatus(
+        `Worker fetch to plain HTTP WORKS (HTTP ${r.status} in ${r.ms} ms) — but the `
+        + `bridge itself isn't collecting: ${j.error || "unknown error"}. `
+        + "Fix its console credentials; the transport is fine.", "bad");
+    }
+    return setBridgeStatus(
+      `Works — HTTP ${r.status} in ${r.ms} ms · ${counts}${age}. `
+      + "Worker fetch to plain HTTP is allowed; bridge saved.", "ok");
+  }
+  if (r.stage === "fetch") {
+    return setBridgeStatus(
+      `Fetch failed: ${r.error}. Either the bridge isn't reachable at ${base} `
+      + "(wrong host/port, not running, firewall), or Chrome blocked the "
+      + "plain-HTTP request from the worker.", "bad");
+  }
+  if (r.stage === "http") {
+    return setBridgeStatus(`Reached it, but HTTP ${r.status}: ${r.text.slice(0, 120)}`, "bad");
+  }
+  return setBridgeStatus(
+    `Reached it (HTTP ${r.status}) but the reply isn't JSON — something else is `
+    + `listening on that port? First bytes: ${r.text.slice(0, 80)}`, "bad");
 });
 
 $("disable").addEventListener("click", async () => {
