@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b25";        // shown in the status chip; bump on every change
+  const BUILD = "b26";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };

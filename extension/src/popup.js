@@ -19,12 +19,21 @@ async function activeTab() {
   return tab;
 }
 
-// A LAN bridge is plain HTTP far more often than not, so default the scheme to
-// http here (the console field defaults to https). Explicit schemes win.
+/* Guess the scheme from the shape of the address. An IP or localhost is a LAN
+ * bridge and is plain HTTP; a hostname is reached through a tunnel or reverse
+ * proxy and is HTTPS. Defaulting everything to http sent the worker at a
+ * tunnel's http:// address, which redirects to https — a cross-origin redirect
+ * the worker has no permission to follow, so it failed as a bare "Failed to
+ * fetch" that reads like the bridge is down. An explicit scheme always wins. */
 function normBridge(v) {
   v = (v || "").trim();
   if (!v) return "";
-  if (!/^https?:\/\//i.test(v)) v = "http://" + v;
+  if (!/^https?:\/\//i.test(v)) {
+    const host = v.split("/")[0].split(":")[0];
+    const lan = /^(\d{1,3}\.){3}\d{1,3}$/.test(host)
+      || host === "localhost" || /\.local$/i.test(host);
+    v = (lan ? "http://" : "https://") + v;
+  }
   try {
     return new URL(v).origin;
   } catch (_e) {
@@ -132,10 +141,16 @@ $("testbridge").addEventListener("click", async () => {
       + "carry the session cookie.", "bad");
   }
   if (r.stage === "fetch") {
+    const httpToTunnel = /^http:\/\//i.test(base) && !/^http:\/\/(\d|localhost)/i.test(base);
     return setBridgeStatus(
-      `Fetch failed: ${r.error}. Either the bridge isn't reachable at ${base} `
-      + "(wrong host/port, not running, firewall), or Chrome blocked the "
-      + "plain-HTTP request from the worker.", "bad");
+      `Fetch failed: ${r.error}. `
+      + (httpToTunnel
+        ? `${base} is plain HTTP on a hostname — if that's a tunnel it redirects `
+          + "to https, and the worker can't follow a redirect to an origin it has "
+          + "no permission for. Try the https:// address."
+        : `Either the bridge isn't reachable at ${base} (wrong host/port, not `
+          + "running, firewall), or Chrome blocked the plain-HTTP request from "
+          + "the worker."), "bad");
   }
   if (r.stage === "http") {
     return setBridgeStatus(`Reached it, but HTTP ${r.status}: ${r.text.slice(0, 120)}`, "bad");
