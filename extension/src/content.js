@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b27";        // shown in the status chip; bump on every change
+  const BUILD = "b28";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -1029,7 +1029,7 @@
   }
 
   // --- position loop ----------------------------------------------------
-  let raf = 0, renderErr = null, mismatchSince = 0;
+  let raf = 0, renderErr = null, mismatchSince = 0, bridgeMismatch = false;
   function tickPositions() {
     raf = 0;
     // Never let a render error kill the loop permanently: report it in the
@@ -1091,13 +1091,24 @@
      * Drop it and re-resolve rather than showing stale numbers indefinitely. */
     const known = Object.keys(apByName);
     if (domNames.size && known.length && !known.some((n) => domNames.has(n))) {
-      if (!mismatchSince) mismatchSince = performance.now();
-      else if (performance.now() - mismatchSince > 2000) {
+      /* Data for APs that aren't on this plan. From the console it means we're
+       * holding the previous console's data and re-resolving fixes it. From a
+       * bridge it means the bridge polls a DIFFERENT console — re-fetching will
+       * return the same wrong site forever, so say so instead, or the overlay
+       * just renders nothing while reporting a healthy client count. */
+      if (usingBridge) {
+        if (!bridgeMismatch) { bridgeMismatch = true; updateStatus(); }
+      } else if (!mismatchSince) {
+        mismatchSince = performance.now();
+      } else if (performance.now() - mismatchSince > 2000) {
         mismatchSince = 0;
         resetConsoleState();
         refreshData();
       }
-    } else mismatchSince = 0;
+    } else {
+      mismatchSince = 0;
+      if (bridgeMismatch) { bridgeMismatch = false; updateStatus(); }
+    }
 
     renderErr = null;
   }
@@ -1123,6 +1134,15 @@
     }
     if (renderErr) {
       statusEl.innerHTML = `UniFi Live: <b>render error</b> — ${esc(renderErr)}`;
+      return;
+    }
+    if (bridgeMismatch) {
+      const n = Object.keys(apByName).length;
+      statusEl.innerHTML =
+        `UniFi Live: the bridge is reporting <b>${n}</b> AP${n === 1 ? "" : "s"}, but ` +
+        `none of them are on this plan — it polls a <b>different console</b>. Point a ` +
+        `bridge at this one, or open this console on its LAN address. ` +
+        `<span style="opacity:.5">${BUILD}</span>`;
       return;
     }
     const aps = Object.values(apByName).filter((a) => a.clients.length);
