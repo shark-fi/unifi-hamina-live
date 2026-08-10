@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b26";        // shown in the status chip; bump on every change
+  const BUILD = "b27";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -174,10 +174,10 @@
    * — a Hamina plan, once the overlay runs there — printing them would hand
    * over where the console or the bridge lives. So URLs are shown only when the
    * page IS the console you enabled, and redacted everywhere else. */
-  let consoleOrigin = null;
+  let consoleOrigin = null, bridgeBase = null, usingBridge = false;
   try {
-    chrome.storage.local.get("origin").then(
-      (s) => { consoleOrigin = s.origin || null; },
+    chrome.storage.local.get(["origin", "bridge"]).then(
+      (s) => { consoleOrigin = s.origin || null; bridgeBase = s.bridge || null; },
       () => {});
   } catch (_e) { /* storage unavailable; stay redacted */ }
   const onConsolePage = () => consoleOrigin != null && location.origin === consoleOrigin;
@@ -331,7 +331,7 @@
 
   let lastCtx = null;
   function resetConsoleState() {
-    apiBase = null; savedBase = null; savedLoaded = false;
+    apiBase = null; savedBase = null; savedLoaded = false; usingBridge = false;
     apByName = {}; lastErr = null; lastTriedBase = null; lastCtx = null;
     failedUrls.clear();
     for (const [, g] of groups) { g.sig = ""; g.el.style.display = "none"; }
@@ -371,9 +371,99 @@
     return null;
   }
 
+  /* A unifi-hamina-live bridge as a second source.
+   *
+   * The console's own API is preferred and needs nothing configured. But a
+   * WebRTC-relayed remote session has no HTTP API to ask at all — while still
+   * rendering the map, and therefore still showing the AP markers we pin to.
+   * The bridge polls the console over the LAN and we read the bridge, so the
+   * transport the page cannot offer stops mattering.
+   *
+   * Cross-origin by definition, so it goes through the worker. Reached over
+   * HTTPS through a tunnel it carries the browser's Cloudflare Access session
+   * cookie, so no credential lives in the extension. */
+  async function bridgeJson(path) {
+    const reply = await chrome.runtime.sendMessage(
+      { type: "get", url: bridgeBase.replace(/\/+$/, "") + path });
+    if (!reply?.ok) throw new Error(reply?.error || "bridge unreachable");
+    const r = reply.res;
+    const body = String(r.text || "");
+    if (/^\s*</.test(body)) {
+      throw new Error(/cloudflareaccess\.com/i.test(body)
+        ? "bridge needs an Access login — open it in a tab and sign in"
+        : `bridge returned HTML (HTTP ${r.status})`);
+    }
+    if (!r.ok) throw new Error(`bridge HTTP ${r.status}`);
+    return JSON.parse(body);
+  }
+
+  // The bridge already reports neutral models, so this is a rename, not a parse.
+  async function fetchFromBridge() {
+    const [aps, clients] = await Promise.all([
+      bridgeJson("/api/access-points"), bridgeJson("/api/clients"),
+    ]);
+    const byMac = {};
+    for (const a of aps || []) {
+      byMac[macNorm(a.mac)] = {
+        name: a.name || a.mac,
+        online: !!a.online,
+        radios: (a.radios || []).map((r) => ({
+          band: r.band, channel: r.channel, width: r.channel_width_mhz,
+          util: r.channel_utilization_pct, retries: r.tx_retries_pct,
+        })).filter((r) => r.band),
+      };
+    }
+    const cliByMac = {};
+    for (const c of clients || []) {
+      const ap = macNorm(c.ap_mac);
+      if (!ap) continue;
+      (cliByMac[ap] ||= []).push({
+        mac: macNorm(c.mac),
+        name: c.name || c.hostname || null,
+        hostname: c.hostname || null,
+        ip: c.ip || null,
+        band: c.band || null,
+        channel: c.channel ?? null,
+        signal: c.signal_dbm ?? c.rssi ?? null,
+        noise: c.noise_dbm ?? null,
+        essid: c.essid || null,
+        tx: c.tx_rate_kbps ?? null,
+        rx: c.rx_rate_kbps ?? null,
+        txb: c.tx_bytes ?? null,
+        rxb: c.rx_bytes ?? null,
+        uptime: c.uptime_seconds ?? null,
+        guest: !!c.is_guest,
+        devId: c.dev_id ?? null,
+        oui: null,
+        vendor: c.vendor || null,
+        note: null,
+      });
+    }
+    const next = {};
+    for (const [mac, ap] of Object.entries(byMac)) {
+      const list = (cliByMac[mac] || []).sort(
+        (a, b) => BANDS.indexOf(bandOf(a)) - BANDS.indexOf(bandOf(b)) ||
+                  (b.signal ?? -999) - (a.signal ?? -999));
+      next[norm(ap.name)] = { online: ap.online, clients: list, radios: ap.radios || [] };
+    }
+    if (!Object.keys(next).length) throw new Error("bridge reported no APs");
+    return next;
+  }
+
   async function refreshData() {
     const site = siteId();
-    if (relayOnly) { updateStatus(); return; }   // nothing to fetch in relay mode
+    // Relayed session: the page has no API, but the bridge does.
+    if (relayOnly) {
+      if (!bridgeBase) { updateStatus(); return; }
+      try {
+        apByName = await fetchFromBridge();
+        usingBridge = true;
+        lastErr = null;
+      } catch (e) { lastErr = e.message; }
+      refreshOpenCard();
+      updateStatus();
+      return;
+    }
     // switching console (or site) changes the API prefix entirely — drop any
     // base/icon state learned for the previous one instead of reusing it
     const ctx = location.origin + (location.pathname.split("/network/")[0] || "") + "|" + site;
@@ -424,9 +514,22 @@
         next[norm(ap.name)] = { online: ap.online, clients: list, radios: ap.radios || [] };
       }
       apByName = next;
+      usingBridge = false;
       lastErr = null;
     } catch (e) {
-      lastErr = e.message;   // keep any validated base; re-probe only if unset
+      // console API unreachable — fall back to the bridge if one is configured,
+      // and only report the console's error if that fails too
+      if (bridgeBase) {
+        try {
+          apByName = await fetchFromBridge();
+          usingBridge = true;
+          lastErr = null;
+        } catch (e2) {
+          lastErr = `${e.message} · bridge: ${e2.message}`;
+        }
+      } else {
+        lastErr = e.message;   // keep any validated base; re-probe only if unset
+      }
     }
     refreshOpenCard();
     updateStatus();
@@ -1002,11 +1105,14 @@
 
   function updateStatus() {
     if (!statusEl) return;
-    if (relayOnly) {
+    // Relayed AND no bridge is the only dead end left; with a bridge configured
+    // the poll below succeeds and this never renders.
+    if (relayOnly && !bridgeBase) {
       statusEl.innerHTML =
         `UniFi Live: this remote session is <b>relayed (WebRTC)</b> — the console's ` +
-        `API isn't reachable over HTTP here. Open the console on its <b>LAN address</b> ` +
-        `to use the overlay. <span style="opacity:.5">${BUILD}</span>`;
+        `API isn't reachable over HTTP here. Open the console on its <b>LAN address</b>, ` +
+        `or set a <b>Bridge URL</b> in the extension popup. ` +
+        `<span style="opacity:.5">${BUILD}</span>`;
       return;
     }
     if (lastErr) {
@@ -1029,6 +1135,7 @@
     const icons = all.length ? ` · icons <b>${withIcon || "none"}</b>` : "";
     statusEl.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
       `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
+      `${usingBridge ? " · via <b>bridge</b>" : ""}` +
       ` <span style="opacity:.5">${BUILD}</span>`;
   }
 

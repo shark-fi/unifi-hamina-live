@@ -126,13 +126,14 @@ $("testbridge").addEventListener("click", async () => {
     const age = j.age_seconds != null ? `, ${j.age_seconds}s old` : "";
     if (j.ok === false) {
       return setBridgeStatus(
-        `Worker fetch to plain HTTP WORKS (HTTP ${r.status} in ${r.ms} ms) — but the `
-        + `bridge itself isn't collecting: ${j.error || "unknown error"}. `
+        `The worker reached it (HTTP ${r.status} in ${r.ms} ms) — but the bridge `
+        + `itself isn't collecting: ${j.error || "unknown error"}. `
         + "Fix its console credentials; the transport is fine.", "bad");
     }
+    const scheme = base.startsWith("https:") ? "HTTPS" : "plain HTTP";
     return setBridgeStatus(
       `Works — HTTP ${r.status} in ${r.ms} ms · ${counts}${age}. `
-      + "Worker fetch to plain HTTP is allowed; bridge saved.", "ok");
+      + `Worker fetch over ${scheme} is allowed; bridge saved.`, "ok");
   }
   if (r.stage === "access") {
     return setBridgeStatus(
