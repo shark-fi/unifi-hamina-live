@@ -44,6 +44,40 @@ The bridge is now at `https://unifi-bridge.example.com` — e.g.
 the paths you expose (`/api/v1/*`), and if you know the consumer's egress IP
 ranges, allow-list them. You can also require the API key at the edge.
 
+### Access policy for the neutral `/api` routes (browser extension)
+
+`EXPOSURE.md` was written around the Meraki facade, which has its own API key.
+The **neutral `/api/*` routes do not** — they are unauthenticated by design,
+expecting to sit on your LAN. Tunnelled without a policy in front, they publish
+your whole client inventory (MACs, hostnames, IPs, SSIDs, per-AP association) to
+anyone who learns the hostname. Put a Cloudflare Access application over them.
+
+In **Zero Trust → Access → Applications → Add → Self-hosted**:
+
+1. Application domain: your tunnel hostname; path `api` (repeat for `/` if you
+   also want the dashboard covered).
+2. Policy: *Allow*, with `Emails` = your own address. That is enough.
+3. Save. `./scripts/check-tunnel.sh <hostname>` should now report the tunnel as
+   refusing unauthenticated calls.
+
+The **browser extension needs no credentials of its own**: open the tunnel
+hostname in a tab and sign in once, and the extension's service worker reuses
+that Access session cookie (it fetches with `credentials: "include"`). Only
+headless callers need a **service token** (Zero Trust → Access → Service Auth),
+sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`; add the token to the
+application's policy, and pass it to the checker via those env vars.
+
+### Verifying it
+
+```bash
+./scripts/check-tunnel.sh unifi-bridge.example.com
+```
+
+Checks the bridge on the LAN, then the tunnel **without** credentials — where
+the answer you want is a refusal. A tunnel published without a policy looks
+perfectly healthy while serving everything to everyone, so the script treats a
+JSON body there as a failure and says so loudly.
+
 ## Option 2 — Reverse proxy + DNS + Let's Encrypt
 
 If you prefer to self-host the edge: forward `443` on your router to a reverse
@@ -73,3 +107,5 @@ never accept inbound connections from the internet. More infra, best isolation.
   a valid, CA-signed certificate.
 - **Don't** run the Meraki facade without `MERAKI_COMPAT_API_KEY` set once it is
   publicly reachable.
+- **Don't** tunnel the neutral `/api/*` routes without an Access policy — they
+  have no key of their own and will serve your client inventory to anyone.
