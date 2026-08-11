@@ -652,12 +652,29 @@ def _ap_floor(ap: AccessPoint, snap: Snapshot) -> FloorPlan | None:
 
 
 def _ap_metres(ap: AccessPoint, fp: FloorPlan | None):
+    """AP placement in DNAC floor metres.
+
+    The placement layer reports x,y in IMAGE pixels — origin top-left, y
+    increasing DOWNWARD. A DNAC floor has its origin bottom-left with y going
+    UP, so y must be flipped against the floor's length. Without it every AP
+    lands mirrored about the horizontal centre line: an AP by the front door
+    appears at the back of the building, and the error is symmetric enough to
+    look like a plausible layout rather than a bug.
+
+    This is the third surface in this platform to need the same flip — the
+    OpenIntent exporter and the live map's SVG both had it (unifi-hamina-export
+    #7, #7 here). Pixel-down versus metres-up is the one conversion this
+    codebase gets wrong by default.
+    """
     if fp is None or ap.x is None or ap.y is None:
         return None, None
     mpp = fp.meters_per_px
     if not mpp:
-        return ap.x, ap.y
-    return round(ap.x * mpp, 3), round(ap.y * mpp, 3)
+        # unscaled: still flip, in the pixel space we are falling back to
+        return ap.x, (fp.height_px - ap.y) if fp.height_px else ap.y
+    _, length_m = _metres_dims(fp)
+    y_m = (length_m - ap.y * mpp) if length_m else (ap.y * mpp)
+    return round(ap.x * mpp, 3), round(y_m, 3)
 
 
 def _site_name(ap: AccessPoint, snap: Snapshot) -> str:
