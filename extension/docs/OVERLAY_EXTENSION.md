@@ -96,8 +96,22 @@ console URL; on save, request that origin and
 - **P3 — Q2 in-map overlay.** ✔ — pixel-true overlay pinned to the
   `stats-tooltip-*` marker rects on `requestAnimationFrame`; client rings,
   per-band chips, channel/utilization/TX-retries chips, details card.
-- **P4 — Q1.** Same-pattern card on `*.hamina.com` fed by the bridge via the
-  background worker. *Not built.*
+- **P4 — Q1.** Card on `*.hamina.com` fed by the bridge via the background
+  worker. ✔ — `src/hamina.js`, opt-in from the popup.
+
+  Built as a **panel, not dots on the map**. Hamina's map is a single
+  `<canvas>` with no per-AP DOM nodes — verified on a UniFi site *and* on a
+  working Juniper Mist site, which render identically, so this is how Hamina
+  draws live data generally rather than a symptom of the UniFi integration
+  failing. There is no `stats-tooltip-*` equivalent to pin to, and pinning to
+  canvas pixels needs a pan/zoom transform Hamina does not expose. The panel
+  carries the same data and cannot drift out of alignment.
+
+  The coordinate problem this doc worried about turned out not to matter:
+  Hamina's own GraphQL (`mapById.accessPoints`, same-origin with the user's
+  session) hands us every AP on the open map with its `x`/`y`, so if a dots
+  layer is ever built it starts from Hamina's own numbers rather than a
+  reverse-engineered transform.
 - **P5 — Plan overlay.** Bridge `GET /api/plan` + plan⟷live toggle; optional
   Hamina share-image embed; "Open in Hamina" deep link. *Not built.*
 

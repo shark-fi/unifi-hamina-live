@@ -24,3 +24,6 @@ exports/
 .mypy_cache/
 .ruff_cache/
 .coverage
+
+# macOS
+.DS_Store
