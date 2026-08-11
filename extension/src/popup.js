@@ -212,6 +212,50 @@ $("testbridge").addEventListener("click", async () => {
     + `listening on that port? First bytes: ${r.text.slice(0, 80)}`, "bad");
 });
 
+/* --- Hamina overlay ---------------------------------------------------- */
+
+function setHaminaStatus(msg, cls) {
+  const el = $("haminastatus");
+  el.textContent = msg;
+  el.className = cls || "";
+}
+
+$("haminaenable").addEventListener("click", async () => {
+  let base = ($("haminaorigin").value || "").trim().replace(/\/+$/, "");
+  if (!base) return setHaminaStatus("Enter the Hamina URL you sign in to.", "bad");
+  if (!/^https?:\/\//i.test(base)) base = "https://" + base;
+  let origin;
+  try {
+    origin = new URL(base).origin;
+  } catch (_e) {
+    return setHaminaStatus("That is not a URL.", "bad");
+  }
+
+  // Carry the bridge over explicitly. The overlay can fall back to a lone
+  // console bridge, but being explicit avoids surprises once a second console
+  // is configured and "the only one" stops being unambiguous.
+  const bridge = ($("bridge").value || "").trim().replace(/\/+$/, "");
+
+  setHaminaStatus("Requesting permission…");
+  let granted;
+  try {
+    granted = await chrome.permissions.request({ origins: [origin + "/*"] });
+  } catch (e) {
+    return setHaminaStatus("Permission error: " + e.message, "bad");
+  }
+  if (!granted) return setHaminaStatus("Permission denied for " + origin, "bad");
+
+  const reply = await chrome.runtime.sendMessage(
+    { type: "enableHamina", origin, bridge: bridge || undefined });
+  if (!reply?.ok) return setHaminaStatus("Failed: " + (reply?.error || "?"), "bad");
+  setHaminaStatus("Enabled for " + origin + " — reload the Hamina tab.", "ok");
+});
+
+$("haminadisable").addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "disableHamina" });
+  setHaminaStatus("Disabled. Reload the Hamina tab to remove the panel.");
+});
+
 $("disable").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "disable" });
   setStatus("Disabled. Reload the console tab to remove the panel.");

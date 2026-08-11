@@ -54,6 +54,21 @@
   </div>
   <div id="bridgestatus"></div>
 
+  <hr />
+  <label for="haminaorigin">Hamina overlay (optional)</label>
+  <input id="haminaorigin" type="text" placeholder="https://us.hamina.com" />
+  <p class="sub" style="margin:6px 0 0">
+    Draws this bridge's live UniFi data as a panel on Hamina's map. Hamina Live
+    cannot pull UniFi itself, so nothing is sent to Hamina — the panel is built
+    in your browser from Hamina's own map API plus the bridge. Use
+    <code>https://us.hamina.com</code> or <code>https://eu.hamina.com</code>,
+    whichever you sign in to. Needs a bridge configured above.</p>
+  <div class="row">
+    <button id="haminaenable" class="primary">Enable on Hamina</button>
+    <button id="haminadisable">Disable</button>
+  </div>
+  <div id="haminastatus"></div>
+
   <script src="popup.js"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@
  */
 const SCRIPT_ID = "unifi-innerspace";
 const PROBE_ID = "unifi-innerspace-probe";
+const HAMINA_ID = "unifi-live-hamina";
 
 async function registerForOrigin(origin) {
   // The console is an SPA; InnerSpace lives at nested paths like
@@ -43,6 +44,31 @@ async function registerForOrigin(origin) {
     },
   ]);
   return matches;
+}
+
+/* Register the Hamina overlay. Its hosts ARE known (us./eu.hamina.com), unlike
+ * the console's, but a static content_scripts entry would need a non-optional
+ * host permission — and demanding hamina.com access from everyone who installs
+ * this, including the many who only use the InnerSpace overlay, is not a
+ * reasonable default. So it is opt-in through the popup, same as the console. */
+async function registerHamina(origin) {
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: [HAMINA_ID] });
+  } catch (_e) { /* nothing registered yet */ }
+  await chrome.scripting.registerContentScripts([{
+    id: HAMINA_ID,
+    matches: [origin + "/*"],
+    js: ["src/hamina.js"],
+    runAt: "document_idle",
+    persistAcrossSessions: true,
+  }]);
+  return [origin + "/*"];
+}
+
+async function unregisterHamina() {
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: [HAMINA_ID] });
+  } catch (_e) { /* already gone */ }
 }
 
 async function unregister() {
@@ -121,6 +147,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       } catch (e) {
         sendResponse({ ok: false, error: String(e && e.message || e) });
       }
+    } else if (msg?.type === "enableHamina" && msg.origin) {
+      const matches = await registerHamina(msg.origin);
+      await chrome.storage.local.set({
+        haminaOrigin: msg.origin,
+        ...(msg.bridge ? { haminaBridge: msg.bridge } : {}),
+      });
+      sendResponse({ ok: true, matches });
+
+    } else if (msg?.type === "disableHamina") {
+      await unregisterHamina();
+      await chrome.storage.local.remove(["haminaOrigin"]);
+      sendResponse({ ok: true });
+
     } else if (msg?.type === "disable") {
       await unregister();
       await chrome.storage.local.remove(["origin"]);
@@ -134,9 +173,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Re-assert registration on browser startup (in case it was cleared).
 chrome.runtime.onStartup.addListener(async () => {
-  const { origin } = await chrome.storage.local.get("origin");
+  const { origin, haminaOrigin } = await chrome.storage.local.get(["origin", "haminaOrigin"]);
   if (origin) {
     const granted = await chrome.permissions.contains({ origins: [origin + "/*"] });
     if (granted) await registerForOrigin(origin);
+  }
+  if (haminaOrigin) {
+    const granted = await chrome.permissions.contains({ origins: [haminaOrigin + "/*"] });
+    if (granted) await registerHamina(haminaOrigin);
   }
 });
