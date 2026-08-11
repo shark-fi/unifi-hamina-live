@@ -425,10 +425,17 @@ image has explained more "the fix did not work" reports here than every real
 bug combined:
 
 ```bash
-C=$(docker ps --filter publish=8080 --format '{{.Names}}' | head -1)
-docker exec -i "$C" python -c "import unifi_hamina_live, sys; print(sys.version)"
-docker compose images
+curl -s localhost:8080/version | jq
 ```
+
+```json
+{ "name": "unifi-hamina-live", "version": "0.1.0",
+  "sha": "4d1fa90…", "built_at": "…", "python": "3.12.x" }
+```
+
+`sha` is the commit the image was built from — compare it against `git log` on
+`main`. `"unknown"` means this is a local build or a source checkout rather than
+the published image, which is itself worth knowing.
 
 On a NAS your user is usually not in the `docker` group (prefix everything with
 `sudo`), and a stack created through the NAS UI often has a different compose
