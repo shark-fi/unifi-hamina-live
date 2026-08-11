@@ -762,3 +762,80 @@ def test_ap_y_flip_survives_an_unscaled_plan():
                      serial="S3", model_code="U7PRO", model="u7-pro",
                      online=True, floorplan_id="p1", x=100.0, y=200.0, radios=[])
     assert mapping._ap_metres(ap, fp) == (100.0, 600.0)
+
+
+def _snap_with_clients(n: int) -> Snapshot:
+    from unifi_hamina_live.models import Client
+    ap = AccessPoint(site_id="default", name="AP", mac="aa:bb:cc:00:11:22",
+                     serial="S", model_code="U7PRO", model="u7-pro", online=True,
+                     floorplan_id="p1", x=500.0, y=400.0, radios=[])
+    fp = FloorPlan(id="p1", site_id="default", name="F", source="innerspace",
+                   width_px=1000, height_px=800, meters_per_px=0.05)  # 50 x 40 m
+    clients = [Client(mac=f"de:ad:00:00:{i // 256:02x}:{i % 256:02x}",
+                      site_id="default", ap_mac="aa:bb:cc:00:11:22",
+                      essid="Corp", band="5", channel=36, signal_dbm=-50 - i)
+               for i in range(n)]
+    return Snapshot(generated_at=time.time(), ok=True,
+                    sites=[Site(id="default", name="HQ", num_aps=1)],
+                    access_points=[ap], floorplans=[fp], clients=clients)
+
+
+def _clients_of(snap):
+    from unifi_hamina_live.catalyst import mapping
+    fid = mapping.floor_id_for(snap.floorplans[0])
+    return mapping.clients_v1(snap, fid)
+
+
+def test_clients_ring_around_their_ap():
+    """Clients sit near their AP, spread rather than stacked on one point.
+
+    UniFi does not locate clients, so the ring means "near this AP" — the same
+    representation the InnerSpace overlay uses. A working Mist project returns
+    coordinates for 371 of 440 live clients, which is why coordinates are sent
+    at all.
+    """
+    import math
+    snap = _snap_with_clients(12)
+    rows = _clients_of(snap)
+    # AP is at 500px*0.05 = 25 m across; y flips: 40 - 400*0.05 = 20 m
+    for r in rows:
+        d = math.hypot(r["x"] - 25.0, r["y"] - 20.0)
+        assert 0.5 < d <= 4.5, f"{r['macAddress']} at {d:.2f} m from its AP"
+    # spread, not stacked
+    assert len({(r["x"], r["y"]) for r in rows}) == len(rows)
+
+
+def test_client_positions_are_stable_between_polls():
+    """The same client keeps its spot, or the map shimmers every refresh and a
+    station looks like it is moving."""
+    a = {r["macAddress"]: (r["x"], r["y"]) for r in _clients_of(_snap_with_clients(9))}
+    b = {r["macAddress"]: (r["x"], r["y"]) for r in _clients_of(_snap_with_clients(9))}
+    assert a == b
+
+
+def test_a_busy_ap_does_not_sprawl_across_the_plan():
+    """50 clients must stay a cluster, not a field covering the floor."""
+    import math
+    rows = _clients_of(_snap_with_clients(50))
+    assert len(rows) == 50
+    far = max(math.hypot(r["x"] - 25.0, r["y"] - 20.0) for r in rows)
+    assert far <= 4.5, f"outermost client {far:.2f} m from the AP"
+
+
+def test_the_ring_stays_on_the_floor():
+    """An AP against a wall must not scatter half its clients off the plan."""
+    from unifi_hamina_live.models import Client
+    from unifi_hamina_live.catalyst import mapping
+    ap = AccessPoint(site_id="default", name="Corner", mac="aa:bb:cc:00:11:33",
+                     serial="S", model_code="U7PRO", model="u7-pro", online=True,
+                     floorplan_id="p1", x=0.0, y=0.0, radios=[])   # top-left
+    fp = FloorPlan(id="p1", site_id="default", name="F", source="innerspace",
+                   width_px=1000, height_px=800, meters_per_px=0.05)
+    snap = Snapshot(generated_at=time.time(), ok=True,
+                    sites=[Site(id="default", name="HQ", num_aps=1)],
+                    access_points=[ap], floorplans=[fp],
+                    clients=[Client(mac=f"de:ad:00:00:00:{i:02x}", site_id="default",
+                                    ap_mac="aa:bb:cc:00:11:33", band="5",
+                                    signal_dbm=-55) for i in range(8)])
+    for r in mapping.clients_v1(snap, mapping.floor_id_for(fp)):
+        assert 0.0 <= r["x"] <= 50.0 and 0.0 <= r["y"] <= 40.0

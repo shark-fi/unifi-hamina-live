@@ -14,6 +14,7 @@ the well-known endpoints and leaves room to extend.
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 
 from ..models import AccessPoint, FloorPlan, Snapshot
@@ -711,6 +712,52 @@ def _s(v) -> str | None:
 # this floor plan is not on this floor.
 _HEALTH_GOOD, _HEALTH_FAIR = -67, -75
 
+# Client placement. UniFi does not locate clients — it reports which AP a
+# station is on and nothing more — so the only position available is the AP's.
+# Stacking every client on one point is useless to look at, so they are spread
+# on concentric rings around the AP, the same representation the InnerSpace
+# overlay uses and for the same reason: a ring says "somewhere near this AP",
+# which is exactly what is known.
+#
+# This is NOT client location. A station 20 m down the corridor renders as if it
+# were beside the AP, and a map cannot tell that apart from a real fix. It is
+# here because a working Juniper Mist project in the same Hamina account returns
+# coordinates for 371 of 440 live clients, so the connector evidently expects
+# them — Mist genuinely locates clients; we cannot.
+_RING_R0 = 1.0        # innermost ring, metres from the AP
+_RING_STEP = 0.8      # gap between rings
+_RING_MAX = 4.0       # a busy AP must not sprawl across the floor plan
+_RING_SEP = 0.7       # preferred spacing between clients on a ring
+
+
+def _ring_offsets(n: int, seed: int) -> list[tuple[float, float]]:
+    """`n` (dx, dy) offsets in metres, on rings around the origin.
+
+    Deterministic: the same client keeps the same spot between polls, or the
+    map would shimmer every refresh and a station would look like it was
+    moving. `seed` rotates each AP's ring so neighbouring APs do not line their
+    clients up in the same direction.
+    """
+    if n <= 0:
+        return []
+    out: list[tuple[float, float]] = []
+    radius = _RING_R0
+    base = (seed % 360) * math.pi / 180.0
+    while len(out) < n:
+        cap = max(3, int((2 * math.pi * radius) / _RING_SEP))
+        take = min(cap, n - len(out))
+        step = 2 * math.pi / take
+        for i in range(take):
+            ang = base + i * step
+            out.append((radius * math.cos(ang), radius * math.sin(ang)))
+        radius += _RING_STEP
+        if radius > _RING_MAX:
+            # past the cap, keep packing the outermost ring rather than reaching
+            # further out across the plan
+            radius = _RING_MAX
+            base += step / 2      # interleave with the ring already placed
+    return out[:n]
+
 
 def _client_health(signal: int | None) -> int:
     """DNAC reports a 1-10 client health score. Derive it from RSSI rather than
@@ -751,6 +798,33 @@ def clients_v1(snap: Snapshot, floor_id: str, req_type: str = "") -> list[dict]:
         return []
     aps_here = {ap.mac: ap for ap in snap.access_points if ap.floorplan_id == fp.id}
     now_ms = int(snap.generated_at * 1000)
+    width_m, length_m = _metres_dims(fp)
+
+    # group by AP so each AP's clients get one ring, strongest signal innermost
+    # and ties broken by MAC so the layout is stable across polls
+    by_ap: dict[str, list] = {}
+    for c in snap.clients:
+        if c.ap_mac in aps_here:
+            by_ap.setdefault(c.ap_mac, []).append(c)
+    placed: dict[str, tuple[float, float]] = {}
+    for mac, group in by_ap.items():
+        ap = aps_here[mac]
+        ax, ay = _ap_metres(ap, fp)
+        group.sort(key=lambda c: (-(c.signal_dbm if c.signal_dbm is not None
+                                    else c.rssi if c.rssi is not None else -999),
+                                  c.mac))
+        seed = int(uuid.uuid5(_NS, "ring:" + mac).int % 360)
+        for c, (dx, dy) in zip(group, _ring_offsets(len(group), seed)):
+            x = (ax or 0) + dx
+            y = (ay or 0) + dy
+            # keep the ring on the floor: an AP near a wall would otherwise
+            # scatter half its clients outside the plan
+            if width_m:
+                x = min(max(x, 0.0), width_m)
+            if length_m:
+                y = min(max(y, 0.0), length_m)
+            placed[c.mac] = (round(x, 3), round(y, 3))
+
     out = []
     for c in snap.clients:
         ap = aps_here.get(c.ap_mac or "")
@@ -763,6 +837,11 @@ def clients_v1(snap: Snapshot, floor_id: str, req_type: str = "") -> list[dict]:
             "id": str(uuid.uuid5(_NS, "client:" + c.mac)),
             "macAddress": c.mac,
             "type": req_type or "WIRELESS",
+            # Position on the AP's ring — see _ring_offsets. A working Mist
+            # project returns coordinates for 371 of 440 live clients, so the
+            # connector expects them; ours mean "near this AP", not a fix.
+            "x": placed.get(c.mac, (None, None))[0],
+            "y": placed.get(c.mac, (None, None))[1],
             "name": c.name or c.hostname or c.mac,
             "hostName": c.hostname or c.name or c.mac,
             "userId": None,
