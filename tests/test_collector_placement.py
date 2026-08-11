@@ -79,3 +79,50 @@ async def test_innerspace_placement_flows_into_snapshot():
     assert (ap.x, ap.y) == (600.0, 450.0)
     fp = next(f for f in snap.floorplans if f.id == "p1")
     assert fp.site_id == "default" and fp.width_px == 1000
+
+
+async def test_login_happens_once_across_many_polls():
+    """Re-authenticating every poll rate-limits the console.
+
+    This used to build a client and log in on EVERY poll — roughly 120 logins an
+    hour at the default interval. UniFi OS rate-limits authentication, so the
+    bridge locked itself out with "login failed: HTTP 429" and then kept
+    hammering at the same rate, never recovering on its own.
+    """
+    logins = {"n": 0}
+
+    class CountingClient(FakeClient):
+        async def login(self):
+            logins["n"] += 1
+
+    col = Collector(Settings(_env_file=None), client_factory=CountingClient)
+    for _ in range(5):
+        await col.poll_once()
+    assert logins["n"] == 1, f"logged in {logins['n']} times for 5 polls"
+
+
+async def test_an_expired_session_re_authenticates_once():
+    """A session does expire eventually; one retry, not a loop.
+
+    Retrying more than once on an auth failure feeds the same rate limiter this
+    change exists to avoid.
+    """
+    from unifi_hamina_live.unifi.client import UniFiAuthError
+
+    state = {"logins": 0, "calls": 0}
+
+    class ExpiringClient(FakeClient):
+        async def login(self):
+            state["logins"] += 1
+
+        async def sites(self):
+            state["calls"] += 1
+            if state["calls"] == 2:          # second poll: the session is gone
+                raise UniFiAuthError("401")
+            return await FakeClient.sites(self)
+
+    col = Collector(Settings(_env_file=None), client_factory=ExpiringClient)
+    await col.poll_once()
+    snap = await col.poll_once()
+    assert state["logins"] == 2, "should re-authenticate exactly once"
+    assert snap.ok, "the retry should have produced a good snapshot"
