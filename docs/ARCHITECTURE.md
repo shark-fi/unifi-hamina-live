@@ -1,6 +1,6 @@
 # Architecture
 
-One background poller, one immutable snapshot, three read-only projections.
+One background poller, one immutable snapshot, read-only projections.
 
 ```
                     ┌────────────────────────────────────────────┐
@@ -33,8 +33,10 @@ One background poller, one immutable snapshot, three read-only projections.
    fails, the last good snapshot is retained and `ok=False` + `error` are set.
 4. Every endpoint is a **pure projection** of the current snapshot:
    - `meraki/router.py` + `meraki/mapping.py` → Meraki v1 shapes.
-   - `api/router.py` → neutral JSON + the dashboard's data.
-   Because all three read the same snapshot, they can never disagree.
+   - `api/router.py` → neutral JSON + the dashboard's data, and the three
+     endpoints the in-tree browser extension reads (`/api/health`,
+     `/api/access-points`, `/api/clients` — see the README's *The extension*).
+   Because all of them read the same snapshot, they can never disagree.
 
 ## Why this shape
 

@@ -3,7 +3,7 @@
 Pull **live** Wi-Fi data from a UniFi console — access points, per-radio channel
 and TX power, and the clients connected to each AP — and serve it in the shape
 Hamina Live's supported vendors expose, so it's drop-in the day Hamina can point
-at it. Ships three surfaces over one live poll:
+at it. Ships four surfaces over one live poll:
 
 1. **Meraki Dashboard API v1 compatible facade** (`/api/v1`) — the same
    organizations → networks → devices → radios/clients vocabulary Hamina Live
@@ -13,6 +13,10 @@ at it. Ships three surfaces over one live poll:
 3. **Scheduled OpenIntent refresh** (`/openintent`) — regenerates the
    [OpenIntent](https://github.com/shark-fi/unifi-hamina-export) zip on an
    interval so you can re-import fresh AP config into Hamina Planner **today**.
+4. **UniFi Live for InnerSpace** (`extension/`) — a Chrome extension that draws
+   live clients and AP telemetry onto the InnerSpace floor plan *inside the
+   UniFi console*. It reads the console directly where it can, and falls back to
+   this bridge where it can't — see [The extension](#the-extension).
 
 > **Read this first:** Hamina Live is *pull-based*. It reaches out to a vendor's
 > cloud API; there is **no API to push data into Hamina**, and UniFi is not a
@@ -107,7 +111,7 @@ authoritative reconciler, so a missed event self-heals. The event stream is
 undocumented and varies by Network version — hence experimental, and off by
 default.
 
-## The three surfaces
+## The surfaces
 
 ### Meraki-compatible facade — `/api/v1`
 Implements the subset of Meraki Dashboard API v1 that a Live/observability
@@ -164,6 +168,53 @@ structure and, on such a change, sets `stale: true` on `/openintent/status`,
 logs it, and POSTs `OPENINTENT_STALE_WEBHOOK` if set — so you re-import
 deliberately. Set `OPENINTENT_AUTO_REGENERATE=true` to regenerate automatically
 instead.
+
+## The extension
+
+[`extension/`](extension/) is **UniFi Live for InnerSpace** — a Chrome (MV3)
+extension that overlays live clients and AP telemetry onto the InnerSpace floor
+plan inside the UniFi console. InnerSpace is a planning view and shows no live
+clients; this fills that gap. Load it unpacked from `extension/`; its own
+[README](extension/README.md) covers install and configuration.
+
+It lives here because it and this bridge are two ends of one contract.
+
+### Where it works, and when the bridge is required
+
+| Access path | On its own | With this bridge |
+|---|---|---|
+| Console on its LAN address (`https://192.168.x.x/…`) | ✅ | not needed |
+| `unifi.ui.com` proxied over HTTP (`/consoles/<id>/proxy/network/…`) | ✅ | not needed |
+| `unifi.ui.com` **WebRTC-relayed** | ❌ | ✅ |
+
+The extension prefers the console's own Network API, which is same-origin and
+needs nothing configured. A **WebRTC-relayed** `unifi.ui.com` session is the
+case it cannot serve alone: the page holds no HTTP API to call at all, only a
+signalling channel. There the bridge is not a fallback but the *only* source —
+a service worker fetches it out-of-page, which also sidesteps the
+mixed-content block a relayed HTTPS page would otherwise impose.
+
+### The contract
+
+The extension consumes three neutral endpoints, and nothing else here:
+
+| Endpoint | Used for |
+|---|---|
+| `GET /api/health` | the popup's reachability test |
+| `GET /api/access-points` | AP identity + per-radio channel, width, utilization, TX retries |
+| `GET /api/clients` | per-client `ap_mac` (the join key), band, signal, and `dev_id` for the fingerprint icon |
+
+**Changing the shape of those three is a breaking change for the extension in
+this repo.** APs join to the overlay by *name*, and clients join to APs by
+`ap_mac` — so renaming or dropping either field breaks the overlay silently
+rather than loudly: the fetch still succeeds and the overlay simply draws
+nothing. `tests/test_neutral_api.py` is the guard; extend it rather than
+loosening it.
+
+One bridge instance polls **one** console, so the extension stores its bridge
+URL **per console**. Pointing a console at a bridge that covers a different one
+yields a healthy-looking fetch whose AP names all miss; the extension detects
+that and says so instead of drawing an empty overlay.
 
 ## Configuration
 
@@ -230,7 +281,7 @@ pull the image via a Project, no on-NAS build needed.
 
 ```bash
 pip install -e '.[dev]'
-pytest                           # 21 tests, no network required
+pytest                           # 63 tests, no network required
 ```
 
 Tests run entirely off sample UniFi payloads (`tests/conftest.py`) through a
