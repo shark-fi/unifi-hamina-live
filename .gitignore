@@ -9,10 +9,15 @@ dist/
 venv/
 .env
 
+# Per-deployment compose override (copied from the .example, holds local paths).
+# Compose auto-merges it, so it is easy to edit and then commit by accident.
+docker-compose.override.yml
+
 # Runtime output
 exports/
 *.zip
 *.log
+*.patch
 
 # Tooling
 .pytest_cache/

@@ -1,5 +1,9 @@
-# Full-stack override: live API + dashboard, Catalyst facade + Cloudflare tunnel,
-# and the scheduled OpenIntent refresh (companion exporter mounted in).
+# Full-stack override: live API + dashboard (what the browser extension reads),
+# the scheduled OpenIntent refresh (companion exporter mounted in — it is NOT in
+# the image), and Cloudflare tunnel for reaching the bridge from outside the LAN.
+#
+# The Catalyst facade is deliberately not part of this: Hamina's vendor sync
+# against it fails for reasons on Hamina's side (see docs/CATALYST.md).
 #
 # Usage:
 #   git clone https://github.com/shark-fi/unifi-hamina-live.git

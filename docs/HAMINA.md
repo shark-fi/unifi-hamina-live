@@ -3,12 +3,30 @@
 This document exists so nobody is surprised. It explains why the **Meraki**
 route is blocked, and points to the route that actually works.
 
-> **Update — the Catalyst Center route works today.** Hamina's *Cisco Catalyst
-> (DNA) Center API* connector accepts a free-text **Instance URL**, a
-> **username/password**, and **self-signed / disable-TLS** options — none of
-> the Meraki blockers below apply to it. The bridge ships a Catalyst Center
-> facade for exactly this; see [CATALYST.md](CATALYST.md). The rest of this doc
-> explains why Meraki specifically can't be used, which is still worth knowing.
+> **Update (2026-07-24) — the Catalyst Center route was tried and does not
+> work.** An earlier version of this note said it did. It doesn't, and the
+> reason is worth knowing before you spend an evening on it.
+>
+> Hamina's *Cisco Catalyst (DNA) Center API* connector really does accept a
+> free-text **Instance URL**, a **username/password**, and **self-signed /
+> disable-TLS** options, so unlike Meraki it *can* be pointed at this bridge.
+> The facade was then pushed all the way to the vendor-sync gate: `maps/export`
+> task flow, v2 floors, `accessPointPositions`, the 94-field Assurance `values`
+> object and its 28-field `radios` — all matched field-for-field against a real
+> appliance, correctly floor-scoped, every call returning HTTP 200. Hamina still
+> answers *"Failed to synchronize vendor data."*
+>
+> The conclusion, recorded in
+> [issue #1](https://github.com/shark-fi/unifi-hamina-live/issues/1) and closed
+> **not planned**: the sync depends on a fuller Catalyst topology than a
+> UniFi-backed facade can fabricate — a real WLC, the switches APs uplink to, a
+> self-consistent cross-family device graph. Those aren't response shapes that
+> can be matched; a synthesized uplink switch made it *worse*, since the
+> reconciler rejects a dangling reference.
+>
+> **Use the OpenIntent path below.** The facade stays in the tree as a faithful
+> DNAC 2.3.7.x mock — see [CATALYST.md](CATALYST.md) — in case a capture of a
+> real successful Hamina↔Catalyst sync ever becomes available to diff against.
 
 ## How Hamina Live actually works
 
