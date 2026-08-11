@@ -95,8 +95,11 @@ class Settings(BaseSettings):
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)
+    # Baked into the image at a pinned commit (see the Dockerfile), so the
+    # refresh works with nothing mounted. Running from a source checkout rather
+    # than the image, point this at your own copy.
     openintent_exporter_path: str = Field(
-        default="../unifi-hamina-export/unifi_export.py"
+        default="/opt/exporter/unifi_export.py"
     )
     openintent_mode: str = Field(default="innerspace")
     # >0: regenerate the zip on that interval. 0: generate once at startup only
