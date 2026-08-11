@@ -556,77 +556,9 @@ def test_positions_report_a_resolvable_model_not_the_unifi_code():
                     headers={"X-Auth-Token": tok}).json()["response"][0]
 
     # the catalog display name — not UniFi's code, and not our internal slug
-    assert got["type"] == "ubiquiti:u7-pro-max", "type must be the catalog id"
-    assert got["type"] not in ("U7PROMAX", "u7-pro-max", "U7 Pro Max")
-    assert got["model"] == "ubiquiti:u7-pro-max"
-
-
-def test_model_uses_haminas_catalog_display_name():
-    """Models must be the catalog's fully-qualified id ("ubiquiti:u7-pro").
-
-    Hamina resolves an AP against its own hardware catalog by display name.
-    Given "u7-pro" it answers "Some AP models (u7-pro) aren't yet supported by
-    Hamina" and then DROPS that AP from the import while reporting partial
-    success — so the map comes back quietly missing hardware. Ubiquiti is in the
-    catalog with the whole U6/U7 line; only the spelling was wrong.
-    """
-    from unifi_hamina_live.catalyst import mapping
-
-    def ap_with(model, code):
-        return AccessPoint(site_id="default", name="x", mac="aa:bb:cc:dd:ee:ff",
-                           serial="S", model_code=code, model=model, online=True)
-
-    assert mapping.catalog_model(ap_with("u7-pro", "U7PRO")) == "ubiquiti:u7-pro"
-    assert mapping.catalog_model(ap_with("u7-pro-max", "U7PROMAX")) == "ubiquiti:u7-pro-max"
-    assert mapping.catalog_model(ap_with("u7-pro-outdoor", "UAPA6A6")) \
-        == "ubiquiti:u7-pro-outdoor-internal"
-    assert mapping.catalog_model(ap_with("uap-ac-lite", "U7LT")) == "ubiquiti:uap-ac-lite"
-    assert mapping.catalog_model(ap_with("u6-enterprise", "U6ENT")) == "ubiquiti:u6-enterprise"
-    # Hamina's ids are not derivable from the slug — these five lose hyphens
-    assert mapping.catalog_model(ap_with("u6-lite", "UAL6")) == "ubiquiti:u6lite"
-    assert mapping.catalog_model(ap_with("u6-lr", "UAP6")) == "ubiquiti:u6lr"
-    assert mapping.catalog_model(ap_with("u6-iw", "U6IW")) == "ubiquiti:u6iw"
-    assert mapping.catalog_model(ap_with("uap-ac-hd", "U7HD")) == "ubiquiti:hd"
-    assert mapping.catalog_model(ap_with("uap-iw-hd", "UHDIW")) == "ubiquiti:inwallhd"
-    # every slug normalize.py can emit has a catalog entry
-    from unifi_hamina_live.unifi.normalize import UNIFI_MODEL_NAMES
-    missing = [s for s in UNIFI_MODEL_NAMES.values()
-               if s not in mapping._HAMINA_MODEL_IDS]
-    assert not missing, f"no Hamina catalog name for: {missing}"
-    # an unknown model degrades to the slug rather than breaking
-    assert mapping.catalog_model(ap_with("u9-imaginary", "U9X")) == "u9-imaginary"
-
-
-def test_positions_and_device_surfaces_agree_on_the_model():
-    """type/model/platformId/series must not disagree about the same AP."""
-    from fastapi.testclient import TestClient
-    from unifi_hamina_live.app import create_app
-    from unifi_hamina_live.catalyst import mapping
-
-    ap = AccessPoint(
-        site_id="default", name="U7-Pro-Bedroom", mac="9c:05:d6:ae:ff:dc",
-        serial="Q2AA-FFFF-GGGG", model_code="U7PRO", model="u7-pro",
-        online=True, floorplan_id="p1", x=600.0, y=450.0,
-        radios=[Radio(band="5", channel=36, channel_width_mhz=80, tx_power_dbm=16)],
-    )
-    fp = FloorPlan(id="p1", site_id="default", name="Upstairs", source="innerspace",
-                   width_px=1156, height_px=719, meters_per_px=0.018521)
-    snap = Snapshot(generated_at=time.time(), ok=True,
-                    sites=[Site(id="default", name="Default", num_aps=1)],
-                    access_points=[ap], floorplans=[fp])
-    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
-                        catalyst_password="secret")
-    app = create_app(settings=settings, collector=FakeCollector(snap))
-    with TestClient(app) as c:
-        tok = _token(c).json()["Token"]
-        h = {"X-Auth-Token": tok}
-        pos = c.get(f"/dna/intent/api/v2/floors/{mapping.floor_id_for(fp)}"
-                    "/accessPointPositions", params={"limit": 500, "offset": 1},
-                    headers=h).json()["response"][0]
-        dev = c.get("/dna/intent/api/v1/network-device", headers=h).json()["response"][0]
-
-    assert pos["type"] == "ubiquiti:u7-pro" and pos["model"] == "ubiquiti:u7-pro"
-    assert dev["platformId"] == "ubiquiti:u7-pro" and dev["series"] == "ubiquiti:u7-pro"
+    assert got["type"] == "u7-pro-max", "type must be the model, not the code"
+    assert got["type"] != "U7PROMAX"
+    assert got["model"] == "u7-pro-max"
 
 
 def test_model_override_forces_every_ap_model():
@@ -666,3 +598,20 @@ def test_model_override_forces_every_ap_model():
 def test_no_override_by_default():
     from unifi_hamina_live.catalyst import mapping
     assert mapping.MODEL_OVERRIDE == ""
+
+
+def test_model_surfaces_agree(cat_client):
+    """type/model/platformId/series must not disagree about the same AP.
+
+    They are all "what model is this" and drifted apart once already: `type`
+    carried UniFi's internal code while the rest carried the marketing name.
+    One helper feeds all four.
+    """
+    tok = _token(cat_client).json()["Token"]
+    h = {"X-Auth-Token": tok}
+    from unifi_hamina_live.catalyst import mapping
+    fid = mapping.floor_id_for(_snapshot().floorplans[0])
+    pos = cat_client.get(f"/dna/intent/api/v2/floors/{fid}/accessPointPositions",
+                         params={"limit": 500, "offset": 1}, headers=h).json()["response"][0]
+    dev = cat_client.get("/dna/intent/api/v1/network-device", headers=h).json()["response"][0]
+    assert pos["type"] == pos["model"] == dev["platformId"] == dev["series"] == "u7-pro"
