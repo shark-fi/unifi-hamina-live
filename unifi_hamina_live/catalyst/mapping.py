@@ -20,6 +20,45 @@ from ..models import AccessPoint, FloorPlan, Snapshot
 
 log = logging.getLogger(__name__)
 
+# Hamina resolves an AP against its own hardware catalog by the catalog's
+# DISPLAY NAME ("U7 Pro"), not by the slug used internally here ("u7-pro") and
+# not by UniFi's code ("U7PRO"). Sending anything else makes it report
+#
+#     Import partially failed. Some AP models (...) aren't yet supported
+#
+# and — the part that bites — it then DROPS those APs and continues, so the
+# import "succeeds" with hardware missing from the map.
+#
+# Ubiquiti is one of ~92 makes in that catalog, with the whole U6/U7 line, so
+# this is a spelling problem rather than a support one. Names below are read
+# from Hamina's own `accessPointMakeModels` GraphQL query; keys are exactly the
+# slugs `unifi/normalize.py` emits. Anything unmapped falls through to the slug,
+# which is no worse than before.
+#
+# NOTE the outdoor AP is regional in Hamina's catalog — "U7 Pro Outdoor (US)"
+# and "(EU)" are separate entries. EU deployments must change _OUTDOOR_REGION.
+_OUTDOOR_REGION = "US"
+
+_HAMINA_MODEL_NAMES: dict[str, str] = {
+    "uap-ac-pro": "AC Pro", "uap-ac-lite": "AC Lite",
+    "uap-ac-lr": "AC Long-Range", "uap-ac-hd": "AC HD",
+    "uap-ac-shd": "AC SHD", "uap-nanohd": "nanoHD",
+    "uap-flexhd": "FlexHD", "uap-iw-hd": "inWall HD",
+    "uap-ac-iw": "AC In-Wall", "uap-ac-mesh": "AC Mesh",
+    "uap-ac-mesh-pro": "AC Mesh Pro",
+    "u6-lite": "U6 Lite", "u6-lr": "U6 LR", "u6-pro": "U6 Pro",
+    "u6-mesh": "U6 Mesh", "u6-iw": "U6 In-Wall",
+    "u6-enterprise": "U6 Enterprise", "u6-extender": "U6 Extender",
+    "u7-pro": "U7 Pro", "u7-pro-max": "U7 Pro Max",
+    "u7-pro-outdoor": f"U7 Pro Outdoor ({_OUTDOOR_REGION})",
+}
+
+
+def catalog_model(ap: AccessPoint) -> str | None:
+    """The model string a client resolves against its hardware catalog."""
+    return _HAMINA_MODEL_NAMES.get(ap.model or "") or ap.model or ap.model_code
+
+
 # DNA Center identifies every site with a UUID; a strict Catalyst client will
 # choke on plain strings like "global". Synthesize deterministic UUIDs, and let
 # floors reuse their InnerSpace/Maps UUID directly so a floor's id equals the
@@ -229,8 +268,8 @@ def network_device(ap: AccessPoint) -> dict:
         "hostname": ap.name,
         "managementIpAddress": ap.ip,
         "macAddress": ap.mac,
-        "platformId": ap.model,
-        "series": ap.model,
+        "platformId": catalog_model(ap),
+        "series": catalog_model(ap),
         "type": "Unified AP",
         "family": "Unified AP",
         "role": "ACCESS",
@@ -250,7 +289,7 @@ def device_detail(ap: AccessPoint, snap: Snapshot) -> dict:
     detail = {
         "nwDeviceName": ap.name,
         "macAddress": ap.mac,
-        "platformId": ap.model,
+        "platformId": catalog_model(ap),
         "nwDeviceId": ap_uuid(ap),
         "serialNumber": ap.serial,
         "family": "Unified AP",
@@ -386,7 +425,7 @@ def assurance_device(ap: AccessPoint, snap: Snapshot,
         "overallScore": score,
         "owningEntityId": mac,
         "parentSiteId": "",
-        "platformId": ap.model,
+        "platformId": catalog_model(ap),
         "policyTagName": "",
         "powerCalendarProfile": "",
         "powerMode": "HIGH_POWER",
@@ -592,8 +631,8 @@ def ap_positions(snap: Snapshot, floor_id: str, units: str = "feet") -> list[dic
             # fine: the companion OpenIntent exporter maps code -> "u7-pro-max"
             # before export and those imports land. Every other surface here
             # already uses ap.model (platformId, series); this was the outlier.
-            "type": ap.model or ap.model_code,
-            "model": ap.model,
+            "type": catalog_model(ap),
+            "model": catalog_model(ap),
             "position": {
                 "x": round((x_m or 0) * conv, 3),
                 "y": round((y_m or 0) * conv, 3),
