@@ -44,6 +44,28 @@ def floor_id_for(fp: FloorPlan) -> str:
     return _as_uuid(fp.id)
 
 
+def floor_number(snap: Snapshot, fp: FloorPlan) -> int:
+    """1-based position of a floor within its building.
+
+    A floor is identified inside a building by its number, so two floors that
+    both claim 1 are not a hierarchy a client can reconcile — it sees one
+    building with two different floor ids at the same position. This was
+    hard-coded to 1 in three places (the hierarchy's ``floorIndex``, get-floor's
+    ``floorNumber``, and the archive XML's ``Floor level``), which is invisible
+    on a single-floor site and breaks the moment a second plan exists.
+
+    Ordered by floorplan id rather than name or list order: ids are stable
+    across polls, so a floor keeps its number when a plan is renamed or the
+    console returns them in a different order. Every caller must use this, or
+    the surfaces disagree about the same floor.
+    """
+    plans = sorted(snap.floorplans_for_site(fp.site_id), key=lambda p: str(p.id))
+    for i, p in enumerate(plans, start=1):
+        if p.id == fp.id:
+            return i
+    return 1
+
+
 def _as_uuid(value) -> str:
     try:
         return str(uuid.UUID(str(value)))
@@ -136,7 +158,8 @@ def site_hierarchy(snap: Snapshot, advertise_maps: bool = True) -> list[dict]:
                     "width": _s(w_m) or "0", "length": _s(l_m) or "0",
                     "height": "3.0"}},
                 {"nameSpace": "mapsSummary", "attributes": {
-                    "rfModel": _RF_MODEL, "imageURL": "", "floorIndex": "1"}},
+                    "rfModel": _RF_MODEL, "imageURL": "",
+                    "floorIndex": str(floor_number(snap, fp))}},
             ] if advertise_maps else None
             sites.append(_site(
                 id=fid, name=fp.name,
@@ -443,7 +466,7 @@ def floor_v2(snap: Snapshot, floor_id: str, units: str = "feet") -> dict | None:
         "nameHierarchy": f"Global/{_AREA_NAME}/{site_name}/{fp.name}",
         "type": "floor",
         "name": fp.name,
-        "floorNumber": 1,
+        "floorNumber": floor_number(snap, fp),
         "rfModel": "Cubes And Walled Offices",
         "width": round((w_m or 0) * conv, 3),
         "length": round((l_m or 0) * conv, 3),
