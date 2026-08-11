@@ -153,6 +153,23 @@ def get_floor_ap_positions(floor_id: str, request: Request,
     return mapping.wrap(mapping.ap_positions(_snap(request), floor_id))
 
 
+@router.get("/dna/data/api/v1/clients")
+def assurance_clients(request: Request, siteId: str = "", type: str = "",
+                      limit: int = 500, offset: int = 1):
+    """Assurance clients for a floor — the last call Hamina 404ed on.
+
+    `siteId` is a floor id (Hamina asks per floor), and `type` is "Wireless".
+    Both are accepted rather than required: a client that sends neither should
+    get everything, not an error, and a 404 here reads to Hamina as "Resource
+    not found" with nothing naming the endpoint.
+    """
+    if not _require_token(request):
+        return _unauthorized()
+    rows = mapping.clients_v1(_snap(request), siteId) if siteId else []
+    start = max(offset - 1, 0)
+    return mapping.wrap(rows[start:start + limit])
+
+
 @router.get("/dna/intent/api/v2/floors/{floor_id}")
 def get_floor_v2(floor_id: str, request: Request,
                  units: str = Query("feet", alias="_unitsOfMeasure")):

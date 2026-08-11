@@ -676,3 +676,83 @@ def _uptime(seconds: int | None) -> str:
 
 def _s(v) -> str | None:
     return None if v is None else str(v)
+
+
+# --- Assurance clients ----------------------------------------------------
+# GET /dna/data/api/v1/clients?siteId=<floorId>&type=Wireless — the call Hamina
+# makes to place clients on a floor, and the last one still 404ing once device
+# sync worked ("Failed to synchronize client information — Resource not found").
+#
+# Unlike the networkDevices shape, this is NOT captured from a real appliance:
+# it follows Catalyst Center 2.3.7's documented Assurance client model. Field
+# names are therefore the least certain thing in this module. The request log
+# (GET /catalyst/_captured) will show whether Hamina stops asking; if it accepts
+# the response but shows nothing, the shape is what to revisit first.
+#
+# siteId is a FLOOR id here, not a building — Hamina asks per floor, so clients
+# are filtered to the APs placed on that floor. A client on an AP that is not on
+# this floor plan is not on this floor.
+_HEALTH_GOOD, _HEALTH_FAIR = -67, -75
+
+
+def _client_health(signal: int | None) -> int:
+    """DNAC reports a 1-10 client health score. Derive it from RSSI rather than
+    invent one: a client at -60 dBm is not "unknown", and Hamina may filter."""
+    if signal is None:
+        return 5
+    if signal >= _HEALTH_GOOD:
+        return 10
+    if signal >= _HEALTH_FAIR:
+        return 7
+    return 3
+
+
+def clients_v1(snap: Snapshot, floor_id: str) -> list[dict]:
+    fp = _floor_by_id(snap, floor_id)
+    if fp is None:
+        return []
+    aps_here = {ap.mac: ap for ap in snap.access_points if ap.floorplan_id == fp.id}
+    out = []
+    for c in snap.clients:
+        ap = aps_here.get(c.ap_mac or "")
+        if ap is None:
+            continue
+        signal = c.signal_dbm if c.signal_dbm is not None else c.rssi
+        out.append({
+            "id": str(uuid.uuid5(_NS, "client:" + c.mac)),
+            "macAddress": c.mac,
+            "type": "Wireless",
+            "name": c.name or c.hostname or c.mac,
+            "hostName": c.hostname or c.name or c.mac,
+            "userId": None,
+            "ipv4Address": c.ip,
+            "ipv6Addresses": [],
+            "vendor": c.vendor,
+            "deviceType": None,
+            "onboarding": {"averageRunDuration": None, "maxRunDuration": None},
+            "connection": {
+                "ssid": c.essid,
+                "band": c.band,
+                "channel": str(c.channel) if c.channel is not None else None,
+                "rssi": str(signal) if signal is not None else None,
+                "snr": (str(signal - c.noise_dbm)
+                        if signal is not None and c.noise_dbm is not None else None),
+                "apMac": ap.mac,
+                "apName": ap.name,
+                "apGroup": None,
+                "dataRate": (round(c.tx_rate_kbps / 1000, 1)
+                             if c.tx_rate_kbps else None),
+                "connectedNetworkDeviceId": ap_uuid(ap),
+                "connectedNetworkDeviceName": ap.name,
+                "frequency": c.band,
+            },
+            "health": {
+                "overallScore": _client_health(signal),
+                "connectedScore": _client_health(signal),
+                "linkErrorPercentage": None,
+            },
+            "siteId": floor_id,
+            "siteHierarchy": f"Global/{_AREA_NAME}/{_site_name(ap, snap)}/{fp.name}",
+            "lastUpdated": int(snap.generated_at * 1000),
+        })
+    return out
