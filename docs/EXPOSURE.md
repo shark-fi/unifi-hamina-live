@@ -85,10 +85,14 @@ that covers only the facade:
 2. Application domain: the same tunnel hostname, but **path `dna`** (the
    host-wide app leaves the path empty; that is what makes this one win for
    `/dna/*`).
-3. Policy: **Action = Bypass**. For *Include*, prefer **IP ranges** — Hamina
-   publishes its egress ranges (the "allowing traffic from Hamina" link under
-   the Instance URL field), so only their cloud skips Access. Use *Everyone*
-   only if you cannot get those ranges.
+3. Policy: **Action = Bypass**. For *Include*, prefer **IP ranges** over
+   *Everyone*, so only Hamina's cloud skips Access. Hamina publishes its egress
+   addresses per region — a handful of `/32`s, listed under *"which IP addresses
+   do I need to allow"* in their
+   [FAQ](https://docs.hamina.com/hamina/other/faqs) — and says to allow **all**
+   of those under the regional instance you use (`us.hamina.com` vs
+   `eu.hamina.com`). Read them from that page rather than from here: it is
+   someone else's list and it will change without this file noticing.
 4. Leave the host-wide application alone. `/api/*` and the dashboard stay behind
    Access, which is what the extension relies on.
 
