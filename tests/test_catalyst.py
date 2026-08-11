@@ -492,3 +492,28 @@ def test_positions_drop_radios_with_no_live_state():
     # and the AP itself is still reported — position matters even with one
     # band off air
     assert body["response"][0]["macAddress"] == "94:2a:6f:5c:41:dc"
+
+
+def test_capture_sees_facade_routes_served_under_api(cat_client):
+    """The facade serves /api/assurance/... and /api/v1/... — those must be
+    captured, while the neutral API's own paths stay out of the log.
+
+    A blanket "/api/" skip hid the assurance call entirely: six request captures
+    showed no device-data call at all, which read as "Hamina never asks for it"
+    when in fact the log could not see the request. The capture is the only
+    window onto what a client actually does, so a hole in it costs far more than
+    the noise it saves.
+    """
+    tok = _token(cat_client).json()["Token"]
+    h = {"X-Auth-Token": tok}
+
+    cat_client.post("/api/assurance/v2/networkDevices", headers=h, json={})
+    cat_client.get("/api/v1/task/does-not-exist", headers=h)
+    cat_client.get("/api/health")          # neutral — must NOT be captured
+    cat_client.get("/api/clients")         # neutral — must NOT be captured
+
+    paths = [r["path"] for r in cat_client.get("/catalyst/_captured").json()["requests"]]
+    assert "/api/assurance/v2/networkDevices" in paths, paths
+    assert "/api/v1/task/does-not-exist" in paths, paths
+    assert "/api/health" not in paths
+    assert "/api/clients" not in paths

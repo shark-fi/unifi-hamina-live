@@ -85,7 +85,21 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         app.state.catalyst_captured = deque(maxlen=500)
         app.include_router(catalyst_router)
 
-        _skip = ("/catalyst/_captured", "/api/", "/docs", "/openapi.json", "/redoc")
+        # Our own debug/doc routes, and the NEUTRAL API's paths — dashboard and
+        # extension polling would otherwise drown the log.
+        #
+        # Listed one by one rather than skipping "/api/" wholesale, because the
+        # Catalyst facade also serves routes under /api/: /api/assurance/... (the
+        # device sync) and /api/v1/task|file/... . A blanket "/api/" skip hid the
+        # assurance call completely — it looked, across six captures, as though
+        # Hamina never asked for device data, when the log simply could not see
+        # the request. Anything added to the neutral router belongs here; anything
+        # the facade serves must not.
+        _skip = (
+            "/catalyst/_captured", "/docs", "/openapi.json", "/redoc",
+            "/api/health", "/api/sites", "/api/access-points", "/api/clients",
+            "/api/floorplans", "/api/summary", "/api/map", "/api/refresh",
+        )
 
         @app.middleware("http")
         async def _capture_dna(request, call_next):
