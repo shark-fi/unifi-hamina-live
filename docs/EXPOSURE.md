@@ -68,6 +68,65 @@ headless callers need a **service token** (Zero Trust → Access → Service Aut
 sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`; add the token to the
 application's policy, and pass it to the checker via those env vars.
 
+### Access policy for a headless caller on `/dna/*` (Hamina's Catalyst connector)
+
+The host-wide application above is right for the extension and **wrong for
+Hamina**. Hamina's cloud calls the Catalyst facade headlessly: it follows the
+Access `302` and gets an HTML login page where it expected a DNA auth token,
+which surfaces in its UI as *"Connection to vendor system failed"* or
+*"An unexpected error occurred"*. A service token is not a way out either —
+Hamina's connector form offers only an Instance URL, a username, a password and
+two TLS checkboxes, with **no field for `CF-Access-Client-*` headers**.
+
+Access matches the **most specific path first**, so add a second application
+that covers only the facade:
+
+1. **Zero Trust → Access → Applications → Add → Self-hosted.**
+2. Application domain: the same tunnel hostname, but **path `dna`** (the
+   host-wide app leaves the path empty; that is what makes this one win for
+   `/dna/*`).
+3. Policy: **Action = Bypass**. For *Include*, prefer **IP ranges** over
+   *Everyone*, so only Hamina's cloud skips Access. Hamina publishes its egress
+   addresses per region — a handful of `/32`s, listed under *"which IP addresses
+   do I need to allow"* in their
+   [FAQ](https://docs.hamina.com/hamina/other/faqs) — and says to allow **all**
+   of those under the regional instance you use (`us.hamina.com` vs
+   `eu.hamina.com`). Read them from that page rather than from here: it is
+   someone else's list and it will change without this file noticing.
+4. Leave the host-wide application alone. `/api/*` and the dashboard stay behind
+   Access, which is what the extension relies on.
+
+**Before you do this, check `CATALYST_USERNAME` is set.** The facade
+authenticates `/dna/*` itself — Basic auth, then an issued `X-Auth-Token` — so
+bypassing Access does not leave the path open. But `check_basic()` falls into a
+dev mode when `CATALYST_USERNAME` is **empty**, accepting any non-empty
+username. Bypassing Access with an empty username genuinely does open it.
+
+Verify both halves:
+
+```bash
+curl -s -o /dev/null -w 'dna: %{http_code}\n' \
+  -X POST https://<hostname>/dna/system/api/v1/auth/token   # want 401
+curl -s -o /dev/null -w 'api: %{http_code}\n' \
+  https://<hostname>/api/health                             # want 302
+```
+
+`401` on the first means Access stepped aside and the facade's own auth
+answered; `302` means the bypass is not matching yet. `302` on the second is the
+answer you want — if it turns `200` or `401`, the new application is too broad
+and you have opened the extension's data path to the internet.
+
+### The Instance URL takes no port
+
+Give Hamina `https://<hostname>` with **no port**. `8080` is the port *inside*
+the Docker network, which `cloudflared` connects to; nothing outside the LAN
+ever names it. Cloudflare's edge serves **HTTPS on 443, 2053, 2083, 2087, 2096
+and 8443** — `8080` is one of its plain-**HTTP** ports, so `https://host:8080`
+fails at the TLS handshake and reads as the vendor system being unreachable.
+
+Leave both TLS checkboxes unticked: a Cloudflare Tunnel presents a real
+certificate, so there is nothing self-signed to accept.
+
 ### Verifying it
 
 ```bash
