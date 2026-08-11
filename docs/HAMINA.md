@@ -3,30 +3,18 @@
 This document exists so nobody is surprised. It explains why the **Meraki**
 route is blocked, and points to the route that actually works.
 
-> **Update (2026-07-24) — the Catalyst Center route was tried and does not
-> work.** An earlier version of this note said it did. It doesn't, and the
-> reason is worth knowing before you spend an evening on it.
+> **Update — the Catalyst Center route does work, with a caveat worth reading.**
+> This note has been wrong in both directions: it once said the route worked
+> when it did not, then that it could not work when it does. The accurate
+> version: Hamina's Catalyst connector syncs live UniFi data — APs, channels, TX
+> power, per-radio client counts, capacity analysis — **but only if every AP
+> declares a Cisco model**, because the connector resolves hardware against
+> Cisco only. The telemetry is real; the hardware identity is not, so coverage
+> simulation runs on the wrong antenna pattern. See [CATALYST.md](CATALYST.md).
 >
-> Hamina's *Cisco Catalyst (DNA) Center API* connector really does accept a
-> free-text **Instance URL**, a **username/password**, and **self-signed /
-> disable-TLS** options, so unlike Meraki it *can* be pointed at this bridge.
-> The facade was then pushed all the way to the vendor-sync gate: `maps/export`
-> task flow, v2 floors, `accessPointPositions`, the 94-field Assurance `values`
-> object and its 28-field `radios` — all matched field-for-field against a real
-> appliance, correctly floor-scoped, every call returning HTTP 200. Hamina still
-> answers *"Failed to synchronize vendor data."*
->
-> The conclusion, recorded in
-> [issue #1](https://github.com/shark-fi/unifi-hamina-live/issues/1) and closed
-> **not planned**: the sync depends on a fuller Catalyst topology than a
-> UniFi-backed facade can fabricate — a real WLC, the switches APs uplink to, a
-> self-consistent cross-family device graph. Those aren't response shapes that
-> can be matched; a synthesized uplink switch made it *worse*, since the
-> reconciler rejects a dangling reference.
->
-> **Use the OpenIntent path below.** The facade stays in the tree as a faithful
-> DNAC 2.3.7.x mock — see [CATALYST.md](CATALYST.md) — in case a capture of a
-> real successful Hamina↔Catalyst sync ever becomes available to diff against.
+> For live UniFi data in Hamina *without* misrepresenting your hardware, use the
+> browser extension. The rest of this document explains why **Meraki**
+> specifically cannot be used, which is still worth knowing.
 
 ## How Hamina Live actually works
 
