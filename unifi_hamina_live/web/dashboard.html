@@ -247,9 +247,9 @@ async function refreshMap() {
   const H = plan && plan.height_px;
   const aps = data.access_points || [];
   if (!H && aps.length) {
-  /* Without the plan height the flip cannot run, and plotting raw y draws
-   * every AP mirrored — silently, and indistinguishably from a correct map.
-   * Drawing nothing is the honest failure. */
+    /* Without the plan height the flip cannot run, and plotting raw y draws
+    * every AP mirrored — silently, and indistinguishably from a correct map.
+    * Drawing nothing is the honest failure. */
     mapS.aps = [];
     renderMap(plan, mapS.aps);
     $("mapHint").textContent =
