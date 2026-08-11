@@ -119,22 +119,49 @@ client needs, backed by live UniFi data. Auth via `X-Cisco-Meraki-API-Key` or
 `Authorization: Bearer`. Full endpoint list and field mapping in
 [docs/MERAKI_COMPAT.md](docs/MERAKI_COMPAT.md).
 
-### Catalyst Center (DNA Center) facade — `/dna/*` — **does not sync**
-Hamina's **Cisco Catalyst (DNA) Center API** connector takes an Instance URL +
-username/password and can disable TLS verification, so unlike Meraki it *can*
-be pointed at this bridge. It was, and **Hamina's vendor sync still fails** —
-closed **not planned** in [issue #1](https://github.com/shark-fi/unifi-hamina-live/issues/1),
-because the sync needs a fuller Catalyst topology (real WLC, uplink switches, a
-self-consistent device graph) than a UniFi-backed facade can fabricate. Don't
-enable it expecting a live heatmap; use the OpenIntent path.
+### Catalyst Center (DNA Center) facade — `/dna/*` — **works, at a cost**
 
-What remains true: the facade speaks the DNA Center Intent API backed by live
-UniFi data, is a faithful DNAC 2.3.7.x mock through the assurance layer, and its
-placement model (AP x,y in metres on a sized floor) maps natively from the
-placement layer. A request logger records every `/dna/*` call Hamina makes (read
-it at `/catalyst/_captured`). Set `CATALYST_ENABLED=true` +
-`CATALYST_USERNAME/PASSWORD`. Full walkthrough and the finding:
-[docs/CATALYST.md](docs/CATALYST.md).
+Hamina's **Cisco Catalyst (DNA) Center API** connector takes an Instance URL +
+username/password and can disable TLS verification, so unlike Meraki it can be
+pointed at this bridge. It syncs: APs land on a Hamina Live map with real MACs,
+per-radio channel, TX power, channel width, per-radio client counts, firmware,
+and Hamina's own capacity analysis running on those numbers.
+
+**The cost, and it is not small.** The connector resolves an AP against Cisco
+hardware only — a bare Cisco model token, with the make implied by the connector
+type. No UniFi model is accepted in any spelling (UniFi's code, our slug,
+Hamina's catalog display name, and Hamina's own fully-qualified
+`ubiquiti:` catalog id were all refused). So every AP must declare itself as
+Cisco hardware:
+
+```bash
+CATALYST_MODEL_OVERRIDE=CW9166      # every AP reports as a Cisco 9166i
+```
+
+Channels, power and client counts are then genuine, but the **hardware identity
+is not**, which means Hamina's coverage simulation runs on a CW9166's antenna
+pattern rather than your actual AP's. Acceptable for live monitoring — who is
+connected, on what channel, at what utilisation. **Misleading for planning**, and
+it does not announce itself on the map.
+
+If you want live UniFi data in Hamina *without* misrepresenting your hardware,
+use the browser extension instead ([The extension](#the-extension)): it draws
+the same telemetry over Hamina's map from the browser, with your APs correctly
+identified, and needs no vendor integration at all.
+
+**Still failing:** client sync. `GET /dna/data/api/v1/clients` returns 200 with
+well-formed clients and Hamina reports "Failed to synchronize client
+information". Three payload shapes were tried, including per-client coordinates
+after finding that a working Juniper Mist project returns them for 371 of 440
+clients. Per-radio client *counts* work regardless — they come from the
+assurance layer — so what is missing is the individual client list, which the
+extension does show.
+
+A request logger records every call Hamina makes, matched or not, at
+`GET /catalyst/_captured`; it is how all of the above was established. Set
+`CATALYST_ENABLED=true` + `CATALYST_USERNAME/PASSWORD`. Full walkthrough and the
+findings: [docs/CATALYST.md](docs/CATALYST.md) and
+[issue #1](https://github.com/shark-fi/unifi-hamina-live/issues/1).
 
 ### Neutral REST API — `/api`
 `/api/health`, `/api/sites`, `/api/access-points`, `/api/clients`,
