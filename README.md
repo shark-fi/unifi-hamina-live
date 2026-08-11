@@ -400,8 +400,18 @@ curl -s localhost:8080/api/access-points | jq '.[] | {name, model, online}'
 curl -s localhost:8080/api/floorplans   | jq '.[] | {name, width_px, meters_per_px}'
 ```
 
-Empty `floorplans` is normal and not an error — it means no plans in InnerSpace
-or classic Maps yet. APs still report; they just have no placement.
+**Empty `floorplans` means one of two things**, and they are worth telling
+apart. If this console genuinely has no plans in InnerSpace, `[]` is correct and
+APs simply have no placement. If it *does* have plans, the account cannot see
+InnerSpace — check the logs for the 403 from step 1:
+
+```bash
+docker compose logs --tail=200 | grep -i innerspace
+```
+
+Everything positional depends on this, and nothing else reports it: health stays
+`ok: true` either way. Repeated `rest/map` 400s and `stat/map` 404s in the log
+are normal on a modern console — classic Maps is gone; InnerSpace replaced it.
 
 Open <http://host:8080/> for the dashboard.
 
