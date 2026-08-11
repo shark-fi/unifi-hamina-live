@@ -1,6 +1,6 @@
 # Full-stack override: live API + dashboard (what the browser extension reads),
-# the scheduled OpenIntent refresh (companion exporter mounted in — it is NOT in
-# the image), and Cloudflare tunnel for reaching the bridge from outside the LAN.
+# the scheduled OpenIntent refresh (the exporter is baked into the image), and
+# Cloudflare tunnel for reaching the bridge from outside the LAN.
 #
 # The Catalyst facade is not part of this. It does sync — but only if every AP
 # declares a Cisco model, which misrepresents your hardware to Hamina's coverage
@@ -13,7 +13,6 @@
 #
 # Usage:
 #   git clone https://github.com/shark-fi/unifi-hamina-live.git
-#   git clone https://github.com/shark-fi/unifi-hamina-export.git   # sibling dir
 #   cd unifi-hamina-live
 #   cp docker-compose.override.example.yml docker-compose.override.yml
 #   cp .env.example .env      # fill it in (see the runbook)
@@ -23,10 +22,8 @@
 services:
   unifi-hamina-live:
     volumes:
-      # the companion exporter (stdlib-only) — read-only mount
-      - ../unifi-hamina-export:/exporter:ro
       # persist generated OpenIntent zips / CSVs on the host
       - ./exports:/app/exports
-    environment:
-      # must match the mount path above
-      OPENINTENT_EXPORTER_PATH: /exporter/unifi_export.py
+      # The exporter is BAKED INTO THE IMAGE at a pinned commit — you do not
+      # need to clone it. Uncomment only to run against your own checkout:
+      # - ../unifi-hamina-export/unifi_export.py:/opt/exporter/unifi_export.py:ro

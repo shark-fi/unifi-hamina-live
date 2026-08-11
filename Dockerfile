@@ -16,6 +16,24 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY unifi_hamina_live ./unifi_hamina_live
 RUN pip install --no-cache-dir --no-deps -e .
 
+# The companion OpenIntent exporter, baked in rather than mounted.
+#
+# It used to be a read-only mount of a sibling checkout, which had two costs. A
+# fresh `docker compose up` left the refresh silently inert — it reported
+# "exporter not found" on a status endpoint nobody thinks to read — and the two
+# repos could drift, which they did: a change here that stopped passing
+# --password needed an exporter new enough to read UNIFI_PASSWORD, and a stale
+# checkout would have prompted into the void.
+#
+# Pinned to a commit, not a branch, so an image is reproducible and the exporter
+# version is a deliberate bump rather than whatever main happened to be at build
+# time. The exporter is a single stdlib-only file, so this costs one layer and
+# no dependencies. Mount over /opt/exporter to develop against a local copy.
+ARG EXPORTER_REF=511471a597f8839c4cfeb77a89e8da144d71361e
+ADD https://raw.githubusercontent.com/shark-fi/unifi-hamina-export/${EXPORTER_REF}/unifi_export.py \
+    /opt/exporter/unifi_export.py
+RUN chmod 0444 /opt/exporter/unifi_export.py
+
 EXPOSE 8080
 ENV HOST=0.0.0.0 PORT=8080
 

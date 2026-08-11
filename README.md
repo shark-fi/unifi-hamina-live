@@ -417,17 +417,9 @@ Open <http://host:8080/> for the dashboard.
 
 ### 5. Optional: the OpenIntent refresh
 
-This is the path that gets UniFi floor plans into Hamina Planner, and it needs
-the companion exporter, which is **not in the image**:
-
-```bash
-cd .. && git clone https://github.com/shark-fi/unifi-hamina-export.git
-cd unifi-hamina-live
-cp docker-compose.override.example.yml docker-compose.override.yml
-```
-
-The override mounts that sibling checkout read-only at `/exporter`. Then in
-`.env`:
+The path that gets UniFi floor plans into Hamina Planner. The companion exporter
+is **baked into the image** at a pinned commit, so there is nothing to clone and
+nothing to mount — one setting turns it on:
 
 ```bash
 OPENINTENT_REFRESH_ENABLED=true
@@ -441,13 +433,20 @@ OPENINTENT_REFRESH_SECONDS=0     # build once at startup; AP moves flow live
 curl -s localhost:8080/openintent/status | jq
 ```
 
-`exporter not found` means the mount is missing — that is the step people skip.
 The zip lands at `/openintent/latest.zip` for import into Hamina.
+`exporter not found` now only happens if you have pointed
+`OPENINTENT_EXPORTER_PATH` somewhere else.
 
-Requires an exporter from
-[unifi-hamina-export#9](https://github.com/shark-fi/unifi-hamina-export/pull/9)
-onward: the password is passed in the environment, never on the command line,
-and an older exporter would not read it.
+To develop against your own exporter checkout, mount it over the baked-in copy:
+
+```yaml
+    volumes:
+      - ../unifi-hamina-export/unifi_export.py:/opt/exporter/unifi_export.py:ro
+```
+
+Bumping the baked version is a deliberate change to `EXPORTER_REF` in the
+Dockerfile — pinned to a commit rather than a branch, so two builds of the same
+Dockerfile ship the same exporter.
 
 ### 6. Reach it from outside the LAN — needed more often than it sounds
 

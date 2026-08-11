@@ -87,3 +87,38 @@ def test_password_never_reaches_the_subprocess_command_line():
     assert "--password" not in cmd
     # the parts that SHOULD be there still are
     assert "--host" in cmd and "-u" in cmd and "--openintent" in cmd
+
+
+def test_exporter_default_is_the_baked_in_path():
+    """The exporter is baked into the image, not mounted.
+
+    It used to default to a sibling checkout, so a fresh `docker compose up` left
+    the refresh inert — reporting "exporter not found" on a status endpoint
+    nobody thinks to read — and the two repos could drift, which they did: the
+    change that stopped passing --password needed an exporter new enough to read
+    UNIFI_PASSWORD.
+    """
+    from unifi_hamina_live.config import Settings
+
+    # _env_file=None so this asserts the CODE's default, not whatever .env the
+    # developer happens to have. Without it the suite reads a local .env that CI
+    # does not have — passing in CI and failing only on the machine that has one,
+    # which is the worst way for a test to be wrong.
+    assert Settings(_env_file=None).openintent_exporter_path \
+        == "/opt/exporter/unifi_export.py"
+
+
+def test_dockerfile_pins_the_exporter_to_a_commit():
+    """A branch would make the image unreproducible: two builds of the same
+    Dockerfile could ship different exporters. A commit makes the version a
+    deliberate bump."""
+    import pathlib
+    import re
+
+    df = pathlib.Path(__file__).resolve().parents[1] / "Dockerfile"
+    text = df.read_text()
+    m = re.search(r"ARG EXPORTER_REF=(\S+)", text)
+    assert m, "Dockerfile no longer pins EXPORTER_REF"
+    assert re.fullmatch(r"[0-9a-f]{40}", m.group(1)), \
+        f"EXPORTER_REF must be a full commit sha, got {m.group(1)!r}"
+    assert m.group(1) in text.split("ADD ", 1)[1] or "${EXPORTER_REF}" in text
