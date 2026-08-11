@@ -18,7 +18,7 @@ Hamina Catalyst export:
       <ns0:Maps>
         <ns0:Site name="...">
           <ns0:Building name="...">
-            <ns0:Floor name="..." level="1">
+            <ns0:Floor name="..." level="<n>">   (n = position in the building)
               <ns0:Dimension width="..." length="..." height="..."/>  (FEET)
               <ns0:ImageInfo imageName="....png" imageType="PNG"/>
             </ns0:Floor>
@@ -195,7 +195,8 @@ def build_maps_xml(snap: Snapshot, fp: FloorPlan, image_name: str,
         '  <ns0:Maps>\n'
         '    <ns0:Site name="Global">\n'
         f'      <ns0:Building name={quoteattr(building)}>\n'
-        f'        <ns0:Floor name={quoteattr(fp.name)} level="1">\n'
+        f'        <ns0:Floor name={quoteattr(fp.name)}'
+        f' level="{mapping.floor_number(snap, fp)}">\n'
         f'          <ns0:Dimension width="{_ft(w_m)}" length="{_ft(l_m)}"'
         f' height="{_ft(_CEILING_M)}"/>\n'
         f'          <ns0:ImageInfo imageName={quoteattr(image_name)}'

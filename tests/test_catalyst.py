@@ -1,10 +1,13 @@
 """Catalyst Center (DNA Center) facade: auth, endpoints, and request capture."""
 
 import base64
+import io
+import tarfile
 import time
 
 import pytest
 
+from unifi_hamina_live.catalyst import maps as maps_mod
 from unifi_hamina_live.config import Settings
 from unifi_hamina_live.models import AccessPoint, FloorPlan, Radio, Site, Snapshot
 from tests.conftest import FakeCollector
@@ -357,3 +360,84 @@ def test_facade_absent_when_disabled():
     with TestClient(app) as c:
         # not mounted -> auth token path 404s
         assert c.post("/dna/system/api/v1/auth/token").status_code == 404
+
+
+def _two_floor_snapshot() -> Snapshot:
+    """One building, two floors — the shape that exposed the hard-coded level.
+
+    A single-floor site cannot reveal it: every surface says "floor 1" and that
+    happens to be correct.
+    """
+    plans = [
+        FloorPlan(id="p2-upstairs", site_id="default", name="Upstairs",
+                  source="innerspace", width_px=1000, height_px=600,
+                  meters_per_px=0.0152),
+        FloorPlan(id="p1-basement", site_id="default", name="Basement",
+                  source="innerspace", width_px=1000, height_px=600,
+                  meters_per_px=0.0152),
+    ]
+    return Snapshot(generated_at=time.time(), ok=True,
+                    sites=[Site(id="default", name="Home", num_aps=0)],
+                    access_points=[], floorplans=plans)
+
+
+def test_two_floors_get_distinct_numbers_on_every_surface():
+    """Two floors in one building must not both be floor 1.
+
+    Hamina cross-references the hierarchy, the get-floor detail and the map
+    archive. If they all say level 1 for two different floor ids, the building
+    has two floors at the same position and the sync cannot reconcile them —
+    every call still returns 200, so the failure surfaces only as a refusal.
+    """
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+
+    snap = _two_floor_snapshot()
+    images = {p.id: _PNG for p in snap.floorplans}
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret", catalyst_export_delay_ms=0,
+                        catalyst_advertise_floor_maps=True)
+    app = create_app(settings=settings,
+                     collector=FakeCollector(snap, images=images))
+    with TestClient(app) as c:
+        tok = _token(c).json()["Token"]
+        h = {"X-Auth-Token": tok}
+
+        # 1. site hierarchy — mapsSummary.floorIndex
+        floors = c.get("/dna/intent/api/v2/site", params={"type": "floor"},
+                       headers=h).json()["response"]
+        assert len(floors) == 2
+        by_id = {}
+        for f in floors:
+            summary = next(a for a in f["additionalInfo"]
+                           if a["nameSpace"] == "mapsSummary")
+            by_id[f["id"]] = int(summary["attributes"]["floorIndex"])
+        assert sorted(by_id.values()) == [1, 2], f"hierarchy: {by_id}"
+
+        # 2. get-floor detail — floorNumber, and it must agree with the above
+        for fid, idx in by_id.items():
+            detail = c.get(f"/dna/intent/api/v2/floors/{fid}", headers=h).json()
+            assert detail["response"]["floorNumber"] == idx, fid
+
+        # 3. the map archive — <ns0:Floor level=...>, same again
+        for fp in snap.floorplans:
+            fid = mapping.floor_id_for(fp)
+            blob = maps_mod.build_archive(snap, fid, _PNG, created_ms=1)
+            with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as t:
+                xml = t.extractfile("xmlDir/MapsImportExport.xml").read().decode()
+            assert f'level="{by_id[fid]}"' in xml, xml
+
+
+def test_floor_number_is_stable_when_a_plan_is_renamed():
+    """Numbering keys off the plan id, so a rename does not renumber floors —
+    which would silently move a floor under Hamina after a sync."""
+    from unifi_hamina_live.catalyst import mapping
+
+    snap = _two_floor_snapshot()
+    before = {p.id: mapping.floor_number(snap, p) for p in snap.floorplans}
+    renamed = snap.model_copy(deep=True)
+    for p in renamed.floorplans:
+        p.name = "Renamed " + p.name
+    after = {p.id: mapping.floor_number(renamed, p) for p in renamed.floorplans}
+    assert before == after
