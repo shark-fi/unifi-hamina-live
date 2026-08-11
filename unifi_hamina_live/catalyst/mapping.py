@@ -13,9 +13,12 @@ the well-known endpoints and leaves room to extend.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from ..models import AccessPoint, FloorPlan, Snapshot
+
+log = logging.getLogger(__name__)
 
 # DNA Center identifies every site with a UUID; a strict Catalyst client will
 # choke on plain strings like "global". Synthesize deterministic UUIDs, and let
@@ -531,8 +534,27 @@ def _f(v) -> float:
 
 
 def _position_radios(ap: AccessPoint) -> list[dict]:
+    """Radios for accessPointPositions.
+
+    A radio with no live channel or TX power is **dropped**, not emitted with
+    nulls. A real appliance never reports null there, so a client deserialising
+    this into a typed model throws on it — and the failure surfaces as an opaque
+    "unexpected error" with nothing naming the radio, the AP, or the field. A UniFi
+    AP produces exactly this whenever a band is disabled or its radio has no live
+    state: the other radios on the same AP are fine, so the response looks healthy
+    apart from one object.
+
+    Dropping also matches the companion OpenIntent exporter, which omits radios
+    whose live state is not RUN rather than seeding coverage that does not exist.
+    Both surfaces of this platform now agree about a radio that is not on air.
+    """
     radios = []
     for r in ap.radios:
+        if r.channel is None or r.tx_power_dbm is None:
+            log.debug("catalyst: dropping %s radio %s GHz from positions "
+                      "(channel=%r txPower=%r — not on air)",
+                      ap.name, r.band, r.channel, r.tx_power_dbm)
+            continue
         try:
             band = float(r.band)
         except (TypeError, ValueError):
@@ -541,7 +563,7 @@ def _position_radios(ap: AccessPoint) -> list[dict]:
             "id": str(uuid.uuid5(_NS, f"radio:{ap.mac}:{r.band}")),
             "bands": [band],
             "channel": r.channel,
-            "txPower": int(r.tx_power_dbm) if r.tx_power_dbm is not None else None,
+            "txPower": int(r.tx_power_dbm),
             "antenna": {"elevation": 0, "name": "Internal", "azimuth": 0},
         })
     return radios

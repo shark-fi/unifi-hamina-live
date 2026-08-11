@@ -441,3 +441,54 @@ def test_floor_number_is_stable_when_a_plan_is_renamed():
         p.name = "Renamed " + p.name
     after = {p.id: mapping.floor_number(renamed, p) for p in renamed.floorplans}
     assert before == after
+
+
+def test_positions_drop_radios_with_no_live_state():
+    """A radio with no channel or TX power must be omitted, never emitted as null.
+
+    A real appliance never reports null there. A client deserialising these into
+    a typed model throws on the null, and the failure surfaces as an opaque
+    "unexpected error" naming neither the radio nor the AP — observed against
+    Hamina, whose sync stopped on exactly this response (issue #1). A UniFi AP
+    produces it whenever a band is disabled or has no live state, so the rest of
+    the payload looks perfectly healthy.
+    """
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+
+    ap = AccessPoint(
+        site_id="default", name="U7 Pro Outdoor", mac="94:2a:6f:5c:41:dc",
+        serial="Q2AA-BBBB-CCCC", model_code="UAPA6A6", model="u7-pro-outdoor",
+        online=True, floorplan_id="p1", x=600.0, y=450.0,
+        radios=[
+            Radio(band="2.4", channel=None, tx_power_dbm=None),   # not on air
+            Radio(band="5", channel=36, channel_width_mhz=80, tx_power_dbm=26),
+            Radio(band="6", channel=133, channel_width_mhz=160, tx_power_dbm=26),
+        ],
+    )
+    fp = FloorPlan(id="p1", site_id="default", name="Upstairs",
+                   source="innerspace", width_px=1156, height_px=719,
+                   meters_per_px=0.018521)
+    snap = Snapshot(generated_at=time.time(), ok=True,
+                    sites=[Site(id="default", name="Default", num_aps=1)],
+                    access_points=[ap], floorplans=[fp])
+
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret")
+    app = create_app(settings=settings, collector=FakeCollector(snap))
+    with TestClient(app) as c:
+        tok = _token(c).json()["Token"]
+        fid = mapping.floor_id_for(fp)
+        body = c.get(f"/dna/intent/api/v2/floors/{fid}/accessPointPositions",
+                     params={"limit": 500, "offset": 1},
+                     headers={"X-Auth-Token": tok}).json()
+
+    radios = body["response"][0]["radios"]
+    assert len(radios) == 2, "the 2.4 GHz radio with no live state must be dropped"
+    assert {r["bands"][0] for r in radios} == {5.0, 6.0}
+    for r in radios:
+        assert r["channel"] is not None and r["txPower"] is not None
+    # and the AP itself is still reported — position matters even with one
+    # band off air
+    assert body["response"][0]["macAddress"] == "94:2a:6f:5c:41:dc"
