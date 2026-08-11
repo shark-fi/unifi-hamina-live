@@ -556,13 +556,13 @@ def test_positions_report_a_resolvable_model_not_the_unifi_code():
                     headers={"X-Auth-Token": tok}).json()["response"][0]
 
     # the catalog display name — not UniFi's code, and not our internal slug
-    assert got["type"] == "U7 Pro Max", "type must be Hamina's catalog name"
-    assert got["type"] not in ("U7PROMAX", "u7-pro-max")
-    assert got["model"] == "U7 Pro Max"
+    assert got["type"] == "ubiquiti:u7-pro-max", "type must be the catalog id"
+    assert got["type"] not in ("U7PROMAX", "u7-pro-max", "U7 Pro Max")
+    assert got["model"] == "ubiquiti:u7-pro-max"
 
 
 def test_model_uses_haminas_catalog_display_name():
-    """Models must be the catalog's display name ("U7 Pro"), not our slug.
+    """Models must be the catalog's fully-qualified id ("ubiquiti:u7-pro").
 
     Hamina resolves an AP against its own hardware catalog by display name.
     Given "u7-pro" it answers "Some AP models (u7-pro) aren't yet supported by
@@ -576,16 +576,22 @@ def test_model_uses_haminas_catalog_display_name():
         return AccessPoint(site_id="default", name="x", mac="aa:bb:cc:dd:ee:ff",
                            serial="S", model_code=code, model=model, online=True)
 
-    assert mapping.catalog_model(ap_with("u7-pro", "U7PRO")) == "U7 Pro"
-    assert mapping.catalog_model(ap_with("u7-pro-max", "U7PROMAX")) == "U7 Pro Max"
+    assert mapping.catalog_model(ap_with("u7-pro", "U7PRO")) == "ubiquiti:u7-pro"
+    assert mapping.catalog_model(ap_with("u7-pro-max", "U7PROMAX")) == "ubiquiti:u7-pro-max"
     assert mapping.catalog_model(ap_with("u7-pro-outdoor", "UAPA6A6")) \
-        == "U7 Pro Outdoor (US)"
-    assert mapping.catalog_model(ap_with("uap-ac-lite", "U7LT")) == "AC Lite"
-    assert mapping.catalog_model(ap_with("u6-enterprise", "U6ENT")) == "U6 Enterprise"
+        == "ubiquiti:u7-pro-outdoor-internal"
+    assert mapping.catalog_model(ap_with("uap-ac-lite", "U7LT")) == "ubiquiti:uap-ac-lite"
+    assert mapping.catalog_model(ap_with("u6-enterprise", "U6ENT")) == "ubiquiti:u6-enterprise"
+    # Hamina's ids are not derivable from the slug — these five lose hyphens
+    assert mapping.catalog_model(ap_with("u6-lite", "UAL6")) == "ubiquiti:u6lite"
+    assert mapping.catalog_model(ap_with("u6-lr", "UAP6")) == "ubiquiti:u6lr"
+    assert mapping.catalog_model(ap_with("u6-iw", "U6IW")) == "ubiquiti:u6iw"
+    assert mapping.catalog_model(ap_with("uap-ac-hd", "U7HD")) == "ubiquiti:hd"
+    assert mapping.catalog_model(ap_with("uap-iw-hd", "UHDIW")) == "ubiquiti:inwallhd"
     # every slug normalize.py can emit has a catalog entry
     from unifi_hamina_live.unifi.normalize import UNIFI_MODEL_NAMES
     missing = [s for s in UNIFI_MODEL_NAMES.values()
-               if s not in mapping._HAMINA_MODEL_NAMES]
+               if s not in mapping._HAMINA_MODEL_IDS]
     assert not missing, f"no Hamina catalog name for: {missing}"
     # an unknown model degrades to the slug rather than breaking
     assert mapping.catalog_model(ap_with("u9-imaginary", "U9X")) == "u9-imaginary"
@@ -619,5 +625,5 @@ def test_positions_and_device_surfaces_agree_on_the_model():
                     headers=h).json()["response"][0]
         dev = c.get("/dna/intent/api/v1/network-device", headers=h).json()["response"][0]
 
-    assert pos["type"] == "U7 Pro" and pos["model"] == "U7 Pro"
-    assert dev["platformId"] == "U7 Pro" and dev["series"] == "U7 Pro"
+    assert pos["type"] == "ubiquiti:u7-pro" and pos["model"] == "ubiquiti:u7-pro"
+    assert dev["platformId"] == "ubiquiti:u7-pro" and dev["series"] == "ubiquiti:u7-pro"

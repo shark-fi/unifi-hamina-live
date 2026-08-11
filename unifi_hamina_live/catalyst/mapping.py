@@ -21,42 +21,65 @@ from ..models import AccessPoint, FloorPlan, Snapshot
 log = logging.getLogger(__name__)
 
 # Hamina resolves an AP against its own hardware catalog by the catalog's
-# DISPLAY NAME ("U7 Pro"), not by the slug used internally here ("u7-pro") and
-# not by UniFi's code ("U7PRO"). Sending anything else makes it report
+# fully-qualified ID ("ubiquiti:u7-pro") — not UniFi's code ("U7PRO"), not the
+# slug used internally here ("u7-pro", which is also the catalog's bare
+# `modelId` and is still rejected), and not the display name ("U7 Pro"). All
+# three were tried against a live instance and refused. Sending anything else
+# makes it report
 #
 #     Import partially failed. Some AP models (...) aren't yet supported
 #
 # and — the part that bites — it then DROPS those APs and continues, so the
 # import "succeeds" with hardware missing from the map.
 #
-# Ubiquiti is one of ~92 makes in that catalog, with the whole U6/U7 line, so
-# this is a spelling problem rather than a support one. Names below are read
-# from Hamina's own `accessPointMakeModels` GraphQL query; keys are exactly the
-# slugs `unifi/normalize.py` emits. Anything unmapped falls through to the slug,
-# which is no worse than before.
+# Ubiquiti is one of ~92 makes in that catalog, carrying the whole U6/U7 line —
+# so this was never a question of Hamina supporting the hardware, only of naming
+# it the way its catalog does. Ids below are transcribed from Hamina's own
+# `accessPointMakeModels` GraphQL query; keys are exactly the slugs
+# `unifi/normalize.py` emits. Anything unmapped falls through to the slug, which
+# is no worse than before.
 #
-# NOTE the outdoor AP is regional in Hamina's catalog — "U7 Pro Outdoor (US)"
-# and "(EU)" are separate entries. EU deployments must change _OUTDOOR_REGION.
-_OUTDOOR_REGION = "US"
+# The outdoor APs are regional AND split by antenna in Hamina's catalog:
+# "u7-pro-outdoor-internal" (US) vs "...-internal-eu". EU deployments set this
+# to "-eu". UniFi does not distinguish the external-antenna variant, so the
+# internal one is the honest default.
+_OUTDOOR_SUFFIX = ""
 
-_HAMINA_MODEL_NAMES: dict[str, str] = {
-    "uap-ac-pro": "AC Pro", "uap-ac-lite": "AC Lite",
-    "uap-ac-lr": "AC Long-Range", "uap-ac-hd": "AC HD",
-    "uap-ac-shd": "AC SHD", "uap-nanohd": "nanoHD",
-    "uap-flexhd": "FlexHD", "uap-iw-hd": "inWall HD",
-    "uap-ac-iw": "AC In-Wall", "uap-ac-mesh": "AC Mesh",
-    "uap-ac-mesh-pro": "AC Mesh Pro",
-    "u6-lite": "U6 Lite", "u6-lr": "U6 LR", "u6-pro": "U6 Pro",
-    "u6-mesh": "U6 Mesh", "u6-iw": "U6 In-Wall",
-    "u6-enterprise": "U6 Enterprise", "u6-extender": "U6 Extender",
-    "u7-pro": "U7 Pro", "u7-pro-max": "U7 Pro Max",
-    "u7-pro-outdoor": f"U7 Pro Outdoor ({_OUTDOOR_REGION})",
+# slug from unifi/normalize.py -> Hamina catalog id.
+#
+# Note how little of this is derivable: Hamina's own ids are inconsistent
+# ("u6lite" and "u6lr" and "u6iw" lose their hyphens, AC HD is just "hd",
+# inWall HD is "inwallhd"), so five of these twenty-one would not have matched
+# any slug-transform rule. They are transcribed from the live catalog, not
+# generated.
+_HAMINA_MODEL_IDS: dict[str, str] = {
+    "uap-ac-pro": "ubiquiti:uap-ac-pro",
+    "uap-ac-lite": "ubiquiti:uap-ac-lite",
+    "uap-ac-lr": "ubiquiti:uap-ac-lr",
+    "uap-ac-hd": "ubiquiti:hd",
+    "uap-ac-shd": "ubiquiti:uap-ac-shd",
+    "uap-nanohd": "ubiquiti:nanohd",
+    "uap-flexhd": "ubiquiti:flexhd",
+    "uap-iw-hd": "ubiquiti:inwallhd",
+    "uap-ac-iw": "ubiquiti:uap-ac-iw",
+    "uap-ac-mesh": "ubiquiti:uap-ac-mesh",
+    "uap-ac-mesh-pro": "ubiquiti:uap-ac-mesh-pro",
+    "u6-lite": "ubiquiti:u6lite",
+    "u6-lr": "ubiquiti:u6lr",
+    "u6-pro": "ubiquiti:u6-pro",
+    "u6-mesh": "ubiquiti:u6-mesh",
+    "u6-iw": "ubiquiti:u6iw",
+    "u6-enterprise": "ubiquiti:u6-enterprise",
+    "u6-extender": "ubiquiti:u6-extender",
+    "u7-pro": "ubiquiti:u7-pro",
+    "u7-pro-max": "ubiquiti:u7-pro-max",
+    "u7-pro-outdoor": f"ubiquiti:u7-pro-outdoor-internal{_OUTDOOR_SUFFIX}",
 }
 
 
 def catalog_model(ap: AccessPoint) -> str | None:
-    """The model string a client resolves against its hardware catalog."""
-    return _HAMINA_MODEL_NAMES.get(ap.model or "") or ap.model or ap.model_code
+    """The model identifier a client resolves against its hardware catalog."""
+    return _HAMINA_MODEL_IDS.get(ap.model or "") or ap.model or ap.model_code
 
 
 # DNA Center identifies every site with a UUID; a strict Catalyst client will
