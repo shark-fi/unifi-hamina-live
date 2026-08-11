@@ -5,7 +5,8 @@
   "description": "Live UniFi clients and AP telemetry on the InnerSpace floor plan, and on Hamina's map. Read-only (GETs only).",
   "permissions": [
     "storage",
-    "scripting"
+    "scripting",
+    "activeTab"
   ],
   "optional_host_permissions": [
     "https://*/*",

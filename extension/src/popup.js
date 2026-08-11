@@ -71,7 +71,14 @@ async function initBridge(stored) {
 
 /* Which of the two things this tab is. The console field used to take the tab
  * origin unconditionally, so opening the popup on a Hamina tab offered
- * "https://us.hamina.com" as your console — a value that can only fail. */
+ * "https://us.hamina.com" as your console — a value that can only fail.
+ *
+ * Reading tab.url needs `activeTab`, granted for the current tab when the user
+ * clicks the extension's action — which is exactly when this popup runs. Without
+ * it chrome.tabs.query still answers, but strips url and title unless host
+ * permission for that origin was already granted. So the prefill worked on
+ * consoles you had already enabled and silently did nothing on a new one: the
+ * case it exists for. */
 const HAMINA_RE = /(^|\.)hamina\.com$/i;
 
 function isHaminaUrl(u) {
