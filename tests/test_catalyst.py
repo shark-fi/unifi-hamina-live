@@ -135,8 +135,9 @@ def test_network_devices_and_ap_config(cat_client):
         params={"key": "aa:bb:cc:00:11:22"}, headers=h).json()["response"]
     radio = cfg[0]["radioDTOs"][0]
     assert radio["channelNumber"] == 36 and radio["txPowerLevel"] == 20
-    # AP placement converted to metres on the floor: 600px*0.05=30, 450*0.05=22.5
-    assert cfg[0]["location"] == {"xCoord": 30.0, "yCoord": 22.5, "unit": "meters"}
+    # 600px*0.05 = 30 m across; y flips against the floor's length:
+    # 800px*0.05 = 40 m long, AP at 450px*0.05 = 22.5 m down -> 17.5 m up
+    assert cfg[0]["location"] == {"xCoord": 30.0, "yCoord": 17.5, "unit": "meters"}
 
 
 def test_maps_export_task_flow_and_archive(cat_client):
@@ -717,3 +718,47 @@ def test_clients_carry_what_a_consumer_needs_to_place_them(cat_client):
         rssi = c["connection"]["rssi"]
         assert rssi is None or isinstance(rssi, int)
         assert c["type"] == "Wireless"   # echoes what was asked for
+
+
+def test_ap_y_is_flipped_from_image_pixels_to_floor_metres():
+    """Placement is image pixels (y down); a DNAC floor is y up.
+
+    Reported from a live Hamina map: APs appeared mirrored about the floor's
+    horizontal centre line — an AP by the front door drawn at the back. The
+    error is symmetric, so it reads as a plausible layout rather than a bug,
+    which is exactly why it wants a test rather than an eyeball.
+
+    Third surface in this platform to need this flip (unifi-hamina-export#7 for
+    the OpenIntent export, #7 here for the live map's SVG).
+    """
+    from unifi_hamina_live.catalyst import mapping
+
+    fp = FloorPlan(id="p1", site_id="default", name="F", source="innerspace",
+                   width_px=1000, height_px=800, meters_per_px=0.05)  # 50 x 40 m
+    top = AccessPoint(site_id="default", name="Top", mac="aa:00:00:00:00:01",
+                      serial="S1", model_code="U7PRO", model="u7-pro",
+                      online=True, floorplan_id="p1", x=100.0, y=0.0, radios=[])
+    bottom = AccessPoint(site_id="default", name="Bottom", mac="aa:00:00:00:00:02",
+                         serial="S2", model_code="U7PRO", model="u7-pro",
+                         online=True, floorplan_id="p1", x=100.0, y=800.0, radios=[])
+
+    # y=0 is the TOP of the image, which is the FAR edge of the floor: 40 m
+    assert mapping._ap_metres(top, fp) == (5.0, 40.0)
+    # y=800 is the BOTTOM of the image, i.e. the floor's origin: 0 m
+    assert mapping._ap_metres(bottom, fp) == (5.0, 0.0)
+    # x is untouched
+    assert mapping._ap_metres(top, fp)[0] == mapping._ap_metres(bottom, fp)[0]
+
+
+def test_ap_y_flip_survives_an_unscaled_plan():
+    """A plan with no metres-per-pixel still falls back to pixels — and must
+    still flip, or the fallback silently mirrors what the scaled path gets
+    right."""
+    from unifi_hamina_live.catalyst import mapping
+
+    fp = FloorPlan(id="p1", site_id="default", name="F", source="innerspace",
+                   width_px=1000, height_px=800, meters_per_px=None)
+    ap = AccessPoint(site_id="default", name="A", mac="aa:00:00:00:00:03",
+                     serial="S3", model_code="U7PRO", model="u7-pro",
+                     online=True, floorplan_id="p1", x=100.0, y=200.0, radios=[])
+    assert mapping._ap_metres(ap, fp) == (100.0, 600.0)
