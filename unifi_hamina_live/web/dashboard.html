@@ -244,9 +244,20 @@ async function refreshMap() {
    * top, so plotting it raw mirrored every AP about the middle of the plan —
    * the kitchen AP landed in the garage. Flip once here, where the coordinate
    * first meets the image, rather than at each of the five places it is drawn. */
-  const H = (plan && plan.height_px) || 0;
-  mapS.aps = (data.access_points || []).map(
-    (a) => (H && a.y != null ? { ...a, y: H - a.y } : a));
+  const H = plan && plan.height_px;
+  const aps = data.access_points || [];
+  if (!H && aps.length) {
+  /* Without the plan height the flip cannot run, and plotting raw y draws
+   * every AP mirrored — silently, and indistinguishably from a correct map.
+   * Drawing nothing is the honest failure. */
+    mapS.aps = [];
+    renderMap(plan, mapS.aps);
+    $("mapHint").textContent =
+      "Floor plan has no known image height, so AP positions cannot be placed "
+      + "(they would be drawn mirrored). Check the plan's image in InnerSpace.";
+  return;
+}
+mapS.aps = aps.map((a) => (a.y != null ? { ...a, y: H - a.y } : a));
   renderMap(plan, mapS.aps);
 }
 
