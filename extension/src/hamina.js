@@ -29,7 +29,7 @@
   window.__unifiLiveHamina = true;
 
   const NS = "unifi-live-hamina";
-  const BUILD = "h1";
+  const BUILD = "h2";
   const POLL_MS = 15000;
   const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
@@ -162,6 +162,7 @@
       #${NS} .rad { color: #9db2c9; margin-top: 3px; }
       #${NS} .rad b { color: #e6edf3; font-weight: 600; }
       #${NS} .warn { color: #d29922; }
+      #${NS} .dim { color: #6e7681; font-style: italic; }
       #${NS} .off { color: #f2544b; }
       #${NS} footer { padding: 7px 11px; color: #8b97a5; border-top: 1px solid #2a313c;
         position: sticky; bottom: 0; background: #171c24; }
@@ -190,12 +191,20 @@
           return `<div class="ap"><div class="nm"><span>${esc(r.name)}</span>` +
             `<span class="warn">not in UniFi</span></div></div>`;
         }
-        const radios = r.live.radios.map((x) =>
-          `<b>${esc(x.band)}G</b> ch${esc(x.channel ?? "?")}` +
-          (x.width ? `/${esc(x.width)}` : "") +
-          (x.power != null ? ` ${esc(x.power)}dBm` : "") +
-          (x.util != null ? ` · ${esc(Math.round(x.util))}% util` : "")
-        ).join("<br>");
+        const radios = r.live.radios.map((x) => {
+          // No channel means the band is not transmitting — disabled, or the
+          // radio has no live state yet. "ch?/20" read as a missing value we
+          // had failed to fetch; it is a real state and worth naming. The
+          // width/power/utilisation that follow are meaningless off air, so
+          // they are dropped rather than shown as stale.
+          if (x.channel == null) {
+            return `<b>${esc(x.band)}G</b> <span class="dim">off air</span>`;
+          }
+          return `<b>${esc(x.band)}G</b> ch${esc(x.channel)}` +
+            (x.width ? `/${esc(x.width)}` : "") +
+            (x.power != null ? ` ${esc(x.power)}dBm` : "") +
+            (x.util != null ? ` · ${esc(Math.round(x.util))}% util` : "");
+        }).join("<br>");
         const off = r.live.online ? "" : ` <span class="off">offline</span>`;
         return `<div class="ap"><div class="nm"><span>${esc(r.name)}${off}</span>` +
           `<span class="cl">${r.live.clients} client${r.live.clients === 1 ? "" : "s"}</span></div>` +
