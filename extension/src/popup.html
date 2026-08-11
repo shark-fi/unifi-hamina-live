@@ -73,7 +73,9 @@
   <section>
     <h2>UniFi console</h2>
     <label for="origin">Console URL</label>
-    <input id="origin" type="text" placeholder="https://192.168.1.1" />
+    <input id="origin" type="text" list="known-consoles"
+           placeholder="https://192.168.1.1" />
+    <datalist id="known-consoles"></datalist>
     <label for="site">Network site id <span class="opt">— optional</span></label>
     <input id="site" type="text" placeholder="default" />
     <div class="row">
@@ -114,7 +116,12 @@
   <section>
     <h2>Hamina overlay <span class="opt">optional</span></h2>
     <label for="haminaorigin">Hamina URL</label>
-    <input id="haminaorigin" type="text" placeholder="https://us.hamina.com" />
+    <input id="haminaorigin" type="text" list="known-hamina"
+           placeholder="https://us.hamina.com" />
+    <datalist id="known-hamina">
+      <option value="https://us.hamina.com"></option>
+      <option value="https://eu.hamina.com"></option>
+    </datalist>
     <div class="row">
       <button id="haminaenable" class="primary">Enable</button>
       <button id="haminadisable">Disable</button>
