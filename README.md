@@ -167,6 +167,13 @@ it re-runs the exporter on that interval; with `=0` it generates once at startup
 the live placement layer. The newest zip is served at `/openintent/latest.zip`
 for import into Hamina Planner — see [docs/HAMINA.md](docs/HAMINA.md).
 
+The exporter is run as a subprocess with the console password in its
+**environment**, never on its command line — argv is readable from `ps` by every
+user on the host, and this runs on a schedule. That requires an exporter from
+[unifi-hamina-export#9](https://github.com/shark-fi/unifi-hamina-export/pull/9)
+onward, which reads `UNIFI_PASSWORD`; an older one exits with a message rather
+than hanging on a prompt it cannot show.
+
 **Stale-import detection:** since the zip is baked once, a *map* change
 (rescale, resize, replaced image, plan added/removed — **not** an AP move) would
 leave Hamina's imported image out of date. The refresher watches the floor-plan
