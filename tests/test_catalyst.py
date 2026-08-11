@@ -627,3 +627,42 @@ def test_positions_and_device_surfaces_agree_on_the_model():
 
     assert pos["type"] == "ubiquiti:u7-pro" and pos["model"] == "ubiquiti:u7-pro"
     assert dev["platformId"] == "ubiquiti:u7-pro" and dev["series"] == "ubiquiti:u7-pro"
+
+
+def test_model_override_forces_every_ap_model():
+    """The diagnostic override replaces the reported model everywhere.
+
+    Exists to answer one question that inspection cannot: whether Hamina's
+    Catalyst connector resolves models through a Cisco-only mapping. Point it at
+    a real Cisco AP and re-sync — if the import completes, no UniFi string could
+    ever have worked. Not for normal use: every AP would be labelled as hardware
+    you do not own.
+    """
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret",
+                        catalyst_model_override="C9130AXI")
+    app = create_app(settings=settings,
+                     collector=FakeCollector(_snapshot(), images={"p1": _PNG}))
+    try:
+        with TestClient(app) as c:
+            tok = _token(c).json()["Token"]
+            h = {"X-Auth-Token": tok}
+            fid = mapping.floor_id_for(_snapshot().floorplans[0])
+            pos = c.get(f"/dna/intent/api/v2/floors/{fid}/accessPointPositions",
+                        params={"limit": 500, "offset": 1},
+                        headers=h).json()["response"][0]
+            dev = c.get("/dna/intent/api/v1/network-device",
+                        headers=h).json()["response"][0]
+        assert pos["type"] == "C9130AXI" and pos["model"] == "C9130AXI"
+        assert dev["platformId"] == "C9130AXI"
+    finally:
+        mapping.MODEL_OVERRIDE = ""   # module-level; don't leak into other tests
+
+
+def test_no_override_by_default():
+    from unifi_hamina_live.catalyst import mapping
+    assert mapping.MODEL_OVERRIDE == ""
