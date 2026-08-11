@@ -29,7 +29,7 @@
   window.__unifiLiveHamina = true;
 
   const NS = "unifi-live-hamina";
-  const BUILD = "h2";
+  const BUILD = "h3";
   const POLL_MS = 15000;
   const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
@@ -149,6 +149,7 @@
         font: 12px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
         box-shadow: 0 8px 28px rgba(0,0,0,.42); }
       #${NS} header { position: sticky; top: 0; background: #171c24;
+        user-select: none; touch-action: none;
         border-bottom: 1px solid #2a313c; padding: 8px 11px; display: flex;
         justify-content: space-between; align-items: center; gap: 8px; }
       #${NS} h1 { font-size: 11px; margin: 0; letter-spacing: .4px;
@@ -179,7 +180,61 @@
     body = panel.querySelector(".body");
     statusEl = panel.querySelector(".status");
     panel.querySelector(".x").addEventListener("click", teardown);
+    makeDraggable(panel.querySelector("header"));
+    restorePosition();
   }
+
+  /* Drag by the header. The panel defaults to bottom-right, which is exactly
+   * where Hamina puts its own AP detail card — so on any real floor plan one
+   * covers the other. */
+  function makeDraggable(handle) {
+    handle.style.cursor = "move";
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".x")) return;   // the close button is not a handle
+      e.preventDefault();
+      const r = panel.getBoundingClientRect();
+      const dx = e.clientX - r.left, dy = e.clientY - r.top;
+      // Switch from the right/bottom anchor to left/top before the first move,
+      // or the panel jumps by its own width the moment the pointer travels.
+      place(r.left, r.top);
+      handle.setPointerCapture(e.pointerId);
+
+      const move = (ev) => place(ev.clientX - dx, ev.clientY - dy);
+      const up = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        const box = panel.getBoundingClientRect();
+        chrome.storage.local.set({ haminaPanelPos: { x: box.left, y: box.top } });
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
+  }
+
+  /* Keep the header reachable. A position saved from a wider window, or a drag
+   * toward an edge, must not put the header outside the viewport — it is the
+   * only way to move the panel back. */
+  function place(x, y) {
+    const r = panel.getBoundingClientRect();
+    const maxX = window.innerWidth - Math.min(r.width, 120);
+    const maxY = window.innerHeight - 40;
+    panel.style.left = Math.max(0, Math.min(x, maxX)) + "px";
+    panel.style.top = Math.max(0, Math.min(y, maxY)) + "px";
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+  }
+
+  function restorePosition() {
+    chrome.storage.local.get("haminaPanelPos").then(({ haminaPanelPos }) => {
+      if (haminaPanelPos && panel) place(haminaPanelPos.x, haminaPanelPos.y);
+    });
+  }
+
+  // A window that shrinks below a saved position would strand the panel.
+  window.addEventListener("resize", () => {
+    if (!panel || !panel.style.left) return;
+    place(parseFloat(panel.style.left), parseFloat(panel.style.top));
+  });
 
   function render(rows, note) {
     if (!body) return;
