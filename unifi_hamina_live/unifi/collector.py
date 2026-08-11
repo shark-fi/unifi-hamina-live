@@ -179,7 +179,24 @@ class Collector:
     async def _innerspace_placement(self, client, ap_by_mac, floorplans, sites) -> None:
         try:
             project = await client.innerspace_project()
-        except UniFiError:
+        except UniFiError as exc:
+            # A 403 here is almost always a permissions problem rather than a
+            # broken console: InnerSpace is a separate UniFi application, and an
+            # admin scoped to Network alone authenticates fine, reads APs and
+            # clients fine, and is refused only here. Swallowing that silently
+            # leaves /api/health saying ok:true and /api/floorplans returning [],
+            # with nothing anywhere explaining why everything positional is
+            # missing — the extension has nothing to pin to, the OpenIntent
+            # export has no plans, and Hamina gets no floors.
+            if "403" in str(exc):
+                log.warning(
+                    "InnerSpace refused this account (403) — floor plans and AP "
+                    "placement will be unavailable. Grant %s access to the "
+                    "InnerSpace application as well as Network "
+                    "(UniFi -> Settings -> Admins & Users).",
+                    self._settings.unifi_username or "the configured admin")
+            else:
+                log.info("InnerSpace placement unavailable: %s", exc)
             project = None
         if not project:
             return
