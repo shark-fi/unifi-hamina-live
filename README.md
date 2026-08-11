@@ -265,6 +265,142 @@ sudo journalctl -u unifi-hamina-live -f      # live logs
 sudo systemctl restart unifi-hamina-live     # after editing .env
 ```
 
+## Deploy on a new host and a new console
+
+Start to finish on a machine that has never run this, against a console it has
+never seen. Roughly ten minutes, most of it waiting for the first poll.
+
+### 1. A local admin on the console
+
+UniFi → **Settings → Admins & Users → Add Admin**, and tick **"Restrict to local
+access only"**. Give it a password you are willing to put in a file.
+
+This is not optional politeness: a ui.com **cloud account cannot be used**. It
+hits MFA and the login fails from a script with an error that does not say so.
+Read-only is enough — everything here is GETs apart from the login POST.
+
+Note the console's URL as the host sees it (`https://192.168.1.1`,
+`https://10.0.0.1:8443`, a UDM's address, whatever it is). No trailing slash.
+
+### 2. Files on the host
+
+```bash
+git clone https://github.com/shark-fi/unifi-hamina-live.git
+cd unifi-hamina-live
+cp .env.example .env
+```
+
+Edit `.env` — four values matter to start:
+
+```bash
+UNIFI_HOST=https://192.168.1.1
+UNIFI_USERNAME=the-local-admin-you-just-made
+UNIFI_PASSWORD=its-password
+UNIFI_VERIFY_TLS=false        # local consoles use self-signed certs
+```
+
+Leave everything else at its default for now. `.env` is gitignored; keep it that
+way.
+
+### 3. Start it
+
+The image is **private**, so authenticate to GHCR first with a token that has
+`read:packages`:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
+docker compose pull && docker compose up -d
+```
+
+`docker compose up --build` will **not** pick up a newer published image — the
+compose file uses `image:`, so `--build` has nothing to build. It is always
+`pull` first.
+
+### 4. Check it actually reached the console
+
+```bash
+curl -s localhost:8080/api/health | jq
+```
+
+`ok: true` means a poll succeeded. `ok: false` with an `error` means it started
+but could not read the console — almost always credentials, the host URL, or a
+cloud account used by mistake. The container logs name which:
+
+```bash
+docker compose logs -f --tail=50
+```
+
+Then confirm there is real data behind it:
+
+```bash
+curl -s localhost:8080/api/access-points | jq '.[] | {name, model, online}'
+curl -s localhost:8080/api/floorplans   | jq '.[] | {name, width_px, meters_per_px}'
+```
+
+Empty `floorplans` is normal and not an error — it means no plans in InnerSpace
+or classic Maps yet. APs still report; they just have no placement.
+
+Open <http://host:8080/> for the dashboard.
+
+### 5. Optional: the OpenIntent refresh
+
+This is the path that gets UniFi floor plans into Hamina Planner, and it needs
+the companion exporter, which is **not in the image**:
+
+```bash
+cd .. && git clone https://github.com/shark-fi/unifi-hamina-export.git
+cd unifi-hamina-live
+cp docker-compose.override.example.yml docker-compose.override.yml
+```
+
+The override mounts that sibling checkout read-only at `/exporter`. Then in
+`.env`:
+
+```bash
+OPENINTENT_REFRESH_ENABLED=true
+OPENINTENT_MODE=innerspace
+OPENINTENT_REFRESH_SECONDS=0     # build once at startup; AP moves flow live
+```
+
+`docker compose up -d`, then:
+
+```bash
+curl -s localhost:8080/openintent/status | jq
+```
+
+`exporter not found` means the mount is missing — that is the step people skip.
+The zip lands at `/openintent/latest.zip` for import into Hamina.
+
+Requires an exporter from
+[unifi-hamina-export#9](https://github.com/shark-fi/unifi-hamina-export/pull/9)
+onward: the password is passed in the environment, never on the command line,
+and an older exporter would not read it.
+
+### 6. Optional: reach it from outside the LAN
+
+Only needed for a cloud consumer, or for the browser extension on a
+**WebRTC-relayed** `unifi.ui.com` session. See [docs/EXPOSURE.md](docs/EXPOSURE.md)
+— and read the access-policy part of it, because `/api/*` is unauthenticated by
+design and a tunnel without a policy publishes your whole client inventory to
+anyone who learns the hostname.
+
+### When something is wrong
+
+Ask the container what it is running before diagnosing anything else. A stale
+image has explained more "the fix did not work" reports here than every real
+bug combined:
+
+```bash
+C=$(docker ps --filter publish=8080 --format '{{.Names}}' | head -1)
+docker exec -i "$C" python -c "import unifi_hamina_live, sys; print(sys.version)"
+docker compose images
+```
+
+On a NAS your user is usually not in the `docker` group (prefix everything with
+`sudo`), and a stack created through the NAS UI often has a different compose
+service name than this repo's — find the container by published port rather than
+by name, as above.
+
 ## Run with Docker
 
 Build locally:
