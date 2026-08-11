@@ -313,6 +313,18 @@ This is not optional politeness: a ui.com **cloud account cannot be used**. It
 hits MFA and the login fails from a script with an error that does not say so.
 Read-only is enough — everything here is GETs apart from the login POST.
 
+**Give the account access to InnerSpace as well as Network.** InnerSpace is a
+separate UniFi application, and an admin scoped to Network alone authenticates
+fine, reads APs and clients fine, and gets **403 on every floor-plan request**.
+Nothing errors: `/api/health` still reports `ok: true`, and `/api/floorplans`
+just returns `[]`. Everything positional is then silently unavailable — the
+extension overlay has nothing to pin to, the OpenIntent export has no plans, and
+Hamina gets no floors. The logs are the only place it shows:
+
+```
+GET /proxy/innerspace/api/project?mode=2D "HTTP/1.1 403 Forbidden"
+```
+
 Note the console's URL as the host sees it (`https://192.168.1.1`,
 `https://10.0.0.1:8443`, a UDM's address, whatever it is). No trailing slash.
 
@@ -427,13 +439,39 @@ Requires an exporter from
 onward: the password is passed in the environment, never on the command line,
 and an older exporter would not read it.
 
-### 6. Optional: reach it from outside the LAN
+### 6. Reach it from outside the LAN — needed more often than it sounds
 
-Only needed for a cloud consumer, or for the browser extension on a
-**WebRTC-relayed** `unifi.ui.com` session. See [docs/EXPOSURE.md](docs/EXPOSURE.md)
-— and read the access-policy part of it, because `/api/*` is unauthenticated by
-design and a tunnel without a policy publishes your whole client inventory to
-anyone who learns the hostname.
+Marked optional because a LAN-only setup works without it. But **both of the
+things people usually want this for require it**:
+
+- The browser extension on a **WebRTC-relayed** `unifi.ui.com` session. That
+  page holds no HTTP API at all, so the bridge is the only possible source —
+  and the bridge has to be reachable from the browser over HTTPS. A LAN address
+  is blocked as mixed content on an HTTPS page.
+- **Hamina** reaching the bridge. Its cloud calls *in* to your Instance URL;
+  there is no path from Hamina to a private address.
+
+The built-in profile is the shortest route — put `CF_TUNNEL_TOKEN` in `.env`
+after creating a tunnel in the Cloudflare Zero Trust dashboard, point its public
+hostname at `http://unifi-hamina-live:8080`, then:
+
+```bash
+docker compose --profile tunnel up -d
+```
+
+**Then put an access policy in front of it, before you use it.** `/api/*` is
+unauthenticated by design, assuming a LAN. Tunnelled without a policy it
+publishes your entire client inventory — MACs, hostnames, IPs, SSIDs — to anyone
+who learns the hostname.
+
+The extension needs no credentials of its own: sign in to the tunnel hostname
+once in a tab and its service worker reuses that session cookie. A headless
+caller like Hamina cannot, so it needs a path-scoped bypass — and scope that
+bypass to **every** path the facade serves, not just `/dna`, which is a mistake
+that cost a day here.
+
+Full walkthrough, alternatives to Cloudflare, and the exact policy setup:
+[docs/EXPOSURE.md](docs/EXPOSURE.md).
 
 ### When something is wrong
 
