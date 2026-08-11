@@ -338,17 +338,34 @@ way.
 
 ### 3. Start it
 
-The image is **private**, so authenticate to GHCR first with a token that has
-`read:packages`:
+This repo's `docker-compose.yml` **builds from source** — no registry, no
+credentials:
 
 ```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
+docker compose up -d --build
+```
+
+If port 8080 is already taken on this host, set `HOST_PORT=8081` in `.env`
+rather than adding a `ports:` key to an override file: compose *appends* to
+sequences instead of replacing them, so an override publishes both and collides
+anyway. The container always listens on 8080 internally.
+
+<details>
+<summary>Running the prebuilt image instead</summary>
+
+The published image is **private**, so authenticate to GHCR with a token that
+has `read:packages`, and point compose at `image:` rather than `build:`:
+
+```bash
+read -rsp "GHCR token: " T; echo; echo "$T" | docker login ghcr.io -u <github-user> --password-stdin; unset T
 docker compose pull && docker compose up -d
 ```
 
-`docker compose up --build` will **not** pick up a newer published image — the
-compose file uses `image:`, so `--build` has nothing to build. It is always
-`pull` first.
+On that path `docker compose up --build` will **not** pick up a newer image —
+there is nothing to build — so it is always `pull` first. Log in as the same
+user you pull as: credentials are per-user, and `sudo docker compose pull` reads
+root's, not yours.
+</details>
 
 ### 4. Check it actually reached the console
 

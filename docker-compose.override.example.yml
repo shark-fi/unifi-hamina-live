@@ -2,8 +2,14 @@
 # the scheduled OpenIntent refresh (companion exporter mounted in — it is NOT in
 # the image), and Cloudflare tunnel for reaching the bridge from outside the LAN.
 #
-# The Catalyst facade is deliberately not part of this: Hamina's vendor sync
-# against it fails for reasons on Hamina's side (see docs/CATALYST.md).
+# The Catalyst facade is not part of this. It does sync — but only if every AP
+# declares a Cisco model, which misrepresents your hardware to Hamina's coverage
+# simulation. Enable it deliberately if you want that trade-off; see
+# docs/CATALYST.md.
+#
+# To publish on a different host port, set HOST_PORT in .env. Do NOT add a
+# `ports:` key here: compose APPENDS to sequences rather than replacing them, so
+# you would publish both and collide with whatever already holds 8080.
 #
 # Usage:
 #   git clone https://github.com/shark-fi/unifi-hamina-live.git
