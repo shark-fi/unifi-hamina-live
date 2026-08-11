@@ -79,6 +79,14 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         from .catalyst.auth import TokenStore
         from .catalyst.maps import MapExportJobs
         from .catalyst.router import router as catalyst_router
+        from .catalyst import mapping as catalyst_mapping
+
+        # diagnostic: force every AP's reported model (see Settings)
+        catalyst_mapping.MODEL_OVERRIDE = settings.catalyst_model_override
+        if settings.catalyst_model_override:
+            logging.getLogger(__name__).warning("catalyst: MODEL OVERRIDE active — every AP reports %r. "
+                        "Diagnostic only; unset CATALYST_MODEL_OVERRIDE.",
+                        settings.catalyst_model_override)
 
         app.state.catalyst_tokens = TokenStore()
         app.state.catalyst_maps = MapExportJobs()

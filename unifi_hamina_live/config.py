@@ -77,6 +77,21 @@ class Settings(BaseSettings):
     # Hamina's side. Left configurable for experimentation; default reports the
     # faithful success-shaped task.
     catalyst_maps_export_error: bool = Field(default=False)
+    # Force every AP to report this model string, whatever it actually is.
+    #
+    # Purely diagnostic. Hamina refuses UniFi APs at import with "Some AP models
+    # (...) aren't yet supported" for every spelling tried — UniFi's code, our
+    # slug, Hamina's catalog display name, and Hamina's fully-qualified catalog
+    # id (see catalyst/mapping.py). That points at its Catalyst connector
+    # resolving models through a Cisco-only mapping rather than the catalog its
+    # planner uses, but "points at" is not "proves".
+    #
+    # Set this to a real Cisco AP (e.g. "C9130AXI") and re-sync: if the import
+    # completes, the vendor path is Cisco-only and no UniFi string could ever
+    # have worked. NOT for normal use — every AP would then be labelled as
+    # hardware you do not own, with the wrong antenna pattern driving the RF
+    # model. Leave empty.
+    catalyst_model_override: str = Field(default="")
 
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)

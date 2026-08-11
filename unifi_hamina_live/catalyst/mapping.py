@@ -77,8 +77,15 @@ _HAMINA_MODEL_IDS: dict[str, str] = {
 }
 
 
+# Diagnostic override (CATALYST_MODEL_OVERRIDE); set from create_app. Empty
+# means "report the AP's real model", which is the only sane production value.
+MODEL_OVERRIDE: str = ""
+
+
 def catalog_model(ap: AccessPoint) -> str | None:
     """The model identifier a client resolves against its hardware catalog."""
+    if MODEL_OVERRIDE:
+        return MODEL_OVERRIDE
     return _HAMINA_MODEL_IDS.get(ap.model or "") or ap.model or ap.model_code
 
 
