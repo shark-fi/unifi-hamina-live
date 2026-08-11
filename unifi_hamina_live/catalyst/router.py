@@ -165,9 +165,15 @@ def assurance_clients(request: Request, siteId: str = "", type: str = "",
     """
     if not _require_token(request):
         return _unauthorized()
-    rows = mapping.clients_v1(_snap(request), siteId) if siteId else []
+    rows = mapping.clients_v1(_snap(request), siteId, type) if siteId else []
     start = max(offset - 1, 0)
-    return mapping.wrap(rows[start:start + limit])
+    page = rows[start:start + limit]
+    # The data API pages differently from the Intent API: a `page` block, not the
+    # Intent envelope's bare `version`. A consumer reading page.count to decide
+    # whether to keep fetching finds nothing without it.
+    return {"response": page, "version": "1.0",
+            "page": {"limit": limit, "offset": offset, "count": len(rows),
+                     "sortBy": []}}
 
 
 @router.get("/dna/intent/api/v2/floors/{floor_id}")

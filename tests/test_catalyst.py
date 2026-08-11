@@ -684,4 +684,36 @@ def test_assurance_clients_exclude_other_floors():
                      params={"siteId": mapping.floor_id_for(fp1)},
                      headers={"X-Auth-Token": tok}).json()["response"]
     assert [r["macAddress"] for r in rows] == ["de:ad:00:00:00:01"]
-    assert rows[0]["connection"]["snr"] == "37"   # -58 signal, -95 noise
+    assert rows[0]["connection"]["snr"] == 37     # -58 signal, -95 noise
+    assert rows[0]["connection"]["rssi"] == -58   # numeric, not a string
+
+
+def test_clients_carry_what_a_consumer_needs_to_place_them(cat_client):
+    """The fields whose absence is the likeliest reason a consumer accepts the
+    response (HTTP 200) and still reports "an unexpected error".
+
+    Each of these was missing from the first attempt: a client with no
+    connection state may be filtered out as not connected; the AP is a nested
+    object, not just an apMac, and is how a client is tied to the AP it sits on;
+    and a freshness check keyed on lastUpdatedTime finds nothing under any other
+    spelling.
+    """
+    tok = _token(cat_client).json()["Token"]
+    from unifi_hamina_live.catalyst import mapping
+    fid = mapping.floor_id_for(_snapshot().floorplans[0])
+    body = cat_client.get("/dna/data/api/v1/clients",
+                          params={"siteId": fid, "type": "Wireless"},
+                          headers={"X-Auth-Token": tok}).json()
+
+    # the data API pages with a `page` block, not the Intent envelope
+    assert body["page"]["count"] == len(body["response"])
+    assert body["page"]["limit"] and body["page"]["offset"]
+
+    for c in body["response"]:
+        assert c["connectionStatus"] == "CONNECTED"
+        assert c["connectedNetworkDevice"]["connectedNetworkDeviceMac"]
+        assert c["connectedNetworkDevice"]["connectedNetworkDeviceName"]
+        assert isinstance(c["lastUpdatedTime"], int)
+        rssi = c["connection"]["rssi"]
+        assert rssi is None or isinstance(rssi, int)
+        assert c["type"] == "Wireless"   # echoes what was asked for
