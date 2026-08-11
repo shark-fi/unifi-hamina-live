@@ -70,12 +70,22 @@ class OpenIntentRefresher:
 
         Path(self._s.openintent_output_dir).mkdir(parents=True, exist_ok=True)
         env = dict(os.environ)
-        # unifi_export.py reads the password from --password or a prompt; pass it
-        # via env so it never lands on the process argv / in `ps` output. The
-        # exporter also honours UNIFI_PASSWORD when present.
+        # The password goes in the environment, never on the command line: argv
+        # is readable from `ps` by every user on the host, and this runs on a
+        # schedule, so it would be exposed continuously rather than briefly.
+        #
+        # This used to ALSO pass --password, with a comment claiming the env var
+        # was what the exporter read. It was not — the exporter read nothing but
+        # UNIFI_SM_BASE from the environment, so the flag was load-bearing and
+        # the secret was in argv every refresh. Fixed in unifi-hamina-export#9,
+        # which resolves --password, then UNIFI_PASSWORD, then a prompt.
+        #
+        # NOTE this now requires an exporter at or after that change. An older
+        # checkout finds no password and, since it has no terminal here, exits
+        # with a message rather than hanging on a prompt — which is why the
+        # ordering of those two changes mattered.
         env["UNIFI_PASSWORD"] = self._s.unifi_password
-        cmd = self._command() + (["--password", self._s.unifi_password]
-                                 if self._s.unifi_password else [])
+        cmd = self._command()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

@@ -64,3 +64,26 @@ def test_added_plan_goes_stale():
     r.evaluate([_fp("p1")])
     assert r.evaluate([_fp("p1"), _fp("p2")]) == "became_stale"
     assert r.stale_detail["added"] == ["p2"]
+
+
+def test_password_never_reaches_the_subprocess_command_line():
+    """argv is readable from `ps` by every user on the host.
+
+    The exporter runs on a schedule, so a password on that command line is
+    exposed continuously, not briefly. It goes in the environment instead
+    (unifi-hamina-export#9 resolves --password, then UNIFI_PASSWORD, then a
+    prompt). This asserts the flag does not come back: the old code passed both,
+    behind a comment claiming it passed only the env var.
+    """
+    from unifi_hamina_live.config import Settings
+    from unifi_hamina_live.refresh.openintent import OpenIntentRefresher
+
+    secret = "correct-horse-battery-staple"
+    s = Settings(unifi_host="https://192.168.1.1", unifi_username="admin",
+                 unifi_password=secret, openintent_exporter_path="/x/unifi_export.py")
+    cmd = OpenIntentRefresher(s)._command()
+    assert secret not in cmd
+    assert not any(secret in str(part) for part in cmd), cmd
+    assert "--password" not in cmd
+    # the parts that SHOULD be there still are
+    assert "--host" in cmd and "-u" in cmd and "--openintent" in cmd
