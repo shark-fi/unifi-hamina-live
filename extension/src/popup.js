@@ -69,16 +69,73 @@ async function initBridge(stored) {
     : "Open the console's tab first — this is stored per console.";
 }
 
+/* Which of the two things this tab is. The console field used to take the tab
+ * origin unconditionally, so opening the popup on a Hamina tab offered
+ * "https://us.hamina.com" as your console — a value that can only fail.
+ *
+ * Reading tab.url needs `activeTab`, granted for the current tab when the user
+ * clicks the extension's action — which is exactly when this popup runs. Without
+ * it chrome.tabs.query still answers, but strips url and title unless host
+ * permission for that origin was already granted. So the prefill worked on
+ * consoles you had already enabled and silently did nothing on a new one: the
+ * case it exists for. */
+const HAMINA_RE = /(^|\.)hamina\.com$/i;
+
+function isHaminaUrl(u) {
+  try { return HAMINA_RE.test(new URL(u).hostname); } catch (_e) { return false; }
+}
+
+/* A console is anything that is not Hamina and looks like a UniFi surface:
+ * unifi.ui.com, a console tunnel host, or a page with /network/ or /innerspace/
+ * in its path. Deliberately loose — a wrong guess costs one edit, and refusing
+ * to guess costs a retype every time. */
+function isConsoleUrl(u) {
+  try {
+    const url = new URL(u);
+    if (HAMINA_RE.test(url.hostname)) return false;
+    return /(^|\.)ui\.com$/i.test(url.hostname)
+      || /\.id\.ui\.direct$/i.test(url.hostname)
+      || /\/(network|innerspace|consoles)\//.test(url.pathname);
+  } catch (_e) { return false; }
+}
+
+/* Consoles you have enabled before, most recent first. Retyping a gateway
+ * address on every switch is the single most tedious part of using this. */
+async function rememberConsole(origin) {
+  if (!origin) return;
+  const { consoles } = await chrome.storage.local.get("consoles");
+  const next = [origin, ...(consoles || []).filter((c) => c !== origin)].slice(0, 8);
+  await chrome.storage.local.set({ consoles: next });
+}
+
+async function fillConsoleList() {
+  const { consoles } = await chrome.storage.local.get("consoles");
+  const dl = $("known-consoles");
+  dl.innerHTML = (consoles || [])
+    .map((c) => `<option value="${c.replace(/"/g, "&quot;")}"></option>`).join("");
+}
+
 async function init() {
   const stored = await chrome.storage.local.get(["origin", "site", "bridge", "bridges"]);
   const tab = await activeTab();
-  // Prefer the tab's own origin: on a console page that is exactly the answer,
-  // and it stops a previously stored (or mistyped) value from being re-offered.
-  const tabOrigin =
-    tab && tab.url ? (() => { try { return new URL(tab.url).origin; } catch { return ""; } })() : "";
-  const prefill = tabOrigin || stored.origin || "";
-  $("origin").value = prefill || "";
+  const tabUrl = (tab && tab.url) || "";
+  const tabOrigin = (() => {
+    try { return new URL(tabUrl).origin; } catch (_e) { return ""; }
+  })();
+
+  // Prefer the tab's own origin ONLY when the tab is actually a console: on a
+  // console page that is exactly the answer, and it stops a stored (or
+  // mistyped) value being re-offered. On a Hamina tab it is the wrong answer.
+  $("origin").value =
+    (isConsoleUrl(tabUrl) ? tabOrigin : "") || stored.origin || "";
   $("site").value = stored.site || "";
+
+  // …and fill the Hamina field from the tab when that is where you are.
+  const haminaStored = (await chrome.storage.local.get("haminaOrigin")).haminaOrigin;
+  $("haminaorigin").value =
+    (isHaminaUrl(tabUrl) ? tabOrigin : "") || haminaStored || "";
+
+  await fillConsoleList();
   if (stored.origin) setStatus(`Enabled for ${stored.origin}`);
   await initBridge(stored);
 }
@@ -128,6 +185,8 @@ $("enable").addEventListener("click", async () => {
       /* not an injectable page; it'll load on next navigation */
     }
   }
+  await rememberConsole(origin);
+  await fillConsoleList();
   setStatus(tabOrigin && tabOrigin !== origin
     ? `Enabled for ${origin} — but this tab is ${tabOrigin}, so nothing will `
       + "appear here. Did you mean this tab's address?"
