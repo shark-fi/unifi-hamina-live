@@ -42,6 +42,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILT_AT=${{ github.event.repository.updated_at }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

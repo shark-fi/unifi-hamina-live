@@ -1,5 +1,12 @@
 FROM python:3.12-slim
 
+# Stamped by CI so a running container can say which commit it is. Every
+# "the fix didn't work" report here has started with a container that predated
+# the fix, and answering that took an exec and a guess. Now it takes a curl.
+ARG GIT_SHA=unknown
+ARG BUILT_AT=unknown
+ENV BUILD_SHA=$GIT_SHA BUILD_TIME=$BUILT_AT
+
 WORKDIR /app
 
 # Install deps first for layer caching.

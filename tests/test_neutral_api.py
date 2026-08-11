@@ -50,3 +50,55 @@ def test_dashboard_served(client):
 
 def test_openintent_disabled_returns_404(client):
     assert client.get("/openintent/status").status_code == 404
+
+
+def test_version_endpoint_reports_the_build():
+    """A build that cannot say what it is makes every diagnosis provisional.
+
+    Every "the fix didn't work" report against this project has begun with a
+    container that predated the fix — and answering that meant exec'ing in and
+    inferring from behaviour. `sha` is stamped by CI at image build time; a local
+    build or a source checkout reports "unknown", which is itself the answer to
+    "am I running the published image?".
+    """
+    import os
+
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.config import Settings
+    from tests.conftest import FakeCollector, build_snapshot
+
+    app = create_app(settings=Settings(),
+                     collector=FakeCollector(build_snapshot()))
+    with TestClient(app) as c:
+        body = c.get("/version").json()
+    assert body["name"] == "unifi-hamina-live"
+    for key in ("version", "sha", "built_at", "python"):
+        assert key in body and body[key], key
+
+    # stamped from the environment, so an image can report its own commit
+    os.environ["BUILD_SHA"] = "deadbee"
+    try:
+        app2 = create_app(settings=Settings(),
+                          collector=FakeCollector(build_snapshot()))
+        with TestClient(app2) as c:
+            assert c.get("/version").json()["sha"] == "deadbee"
+    finally:
+        os.environ.pop("BUILD_SHA", None)
+
+
+def test_version_is_not_in_the_request_capture():
+    """The capture answers "what did the client call". /version is ours."""
+    from unifi_hamina_live.config import Settings
+    from unifi_hamina_live.app import create_app
+    from fastapi.testclient import TestClient
+    from tests.conftest import FakeCollector, build_snapshot
+
+    app = create_app(settings=Settings(catalyst_enabled=True,
+                                       catalyst_username="hamina",
+                                       catalyst_password="secret"),
+                     collector=FakeCollector(build_snapshot()))
+    with TestClient(app) as c:
+        c.get("/version")
+        paths = [r["path"] for r in c.get("/catalyst/_captured").json()["requests"]]
+    assert "/version" not in paths

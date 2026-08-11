@@ -13,6 +13,8 @@ scheduled OpenIntent refresher into the app lifespan, and mounts:
 from __future__ import annotations
 
 import logging
+import os
+import platform
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -58,6 +60,14 @@ async def lifespan(app: FastAPI):
             await refresher.stop()
 
 
+def _pkg_version() -> str:
+    try:
+        from importlib.metadata import version as _v
+        return _v("unifi-hamina-live")
+    except Exception:
+        return "unknown"
+
+
 def create_app(settings: Settings | None = None, collector: Collector | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(
@@ -68,6 +78,27 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     )
     app.state.settings = settings
     app.state.collector = collector or Collector(settings)
+
+    @app.get("/version", include_in_schema=False)
+    def version():
+        """Which build is this, really.
+
+        Every "the fix didn't work" report against this project has begun with a
+        container that predated the fix — three times in one day at worst — and
+        answering it meant exec'ing in and inferring from behaviour. A build that
+        cannot say what it is makes every other diagnosis provisional.
+
+        `sha` is stamped by CI at image build time. A local build, or a source
+        checkout run directly, reports "unknown" — which is itself the answer to
+        "am I running the published image?".
+        """
+        return {
+            "name": "unifi-hamina-live",
+            "version": _pkg_version(),
+            "sha": os.environ.get("BUILD_SHA", "unknown"),
+            "built_at": os.environ.get("BUILD_TIME", "unknown"),
+            "python": platform.python_version(),
+        }
 
     app.include_router(neutral_router)
     app.include_router(meraki_router)
@@ -104,7 +135,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         # the request. Anything added to the neutral router belongs here; anything
         # the facade serves must not.
         _skip = (
-            "/catalyst/_captured", "/docs", "/openapi.json", "/redoc",
+            "/catalyst/_captured", "/version", "/docs", "/openapi.json", "/redoc",
             "/api/health", "/api/sites", "/api/access-points", "/api/clients",
             "/api/floorplans", "/api/summary", "/api/map", "/api/refresh",
         )
