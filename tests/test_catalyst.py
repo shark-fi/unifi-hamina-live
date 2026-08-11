@@ -615,3 +615,73 @@ def test_model_surfaces_agree(cat_client):
                          params={"limit": 500, "offset": 1}, headers=h).json()["response"][0]
     dev = cat_client.get("/dna/intent/api/v1/network-device", headers=h).json()["response"][0]
     assert pos["type"] == pos["model"] == dev["platformId"] == dev["series"] == "u7-pro"
+
+
+def test_assurance_clients_for_a_floor(cat_client):
+    """GET /dna/data/api/v1/clients — the endpoint Hamina 404ed on.
+
+    Once the device sync worked, this was the only call still failing:
+    "Failed to synchronize client information — Resource not found", six times
+    in one capture. Clients are filtered to the APs on the requested floor,
+    because Hamina asks per floor and a client on an AP elsewhere is not on it.
+    """
+    tok = _token(cat_client).json()["Token"]
+    h = {"X-Auth-Token": tok}
+    from unifi_hamina_live.catalyst import mapping
+    fid = mapping.floor_id_for(_snapshot().floorplans[0])
+
+    r = cat_client.get("/dna/data/api/v1/clients",
+                       params={"siteId": fid, "type": "Wireless",
+                               "limit": 500, "offset": 1}, headers=h)
+    assert r.status_code == 200, "a 404 here reads to Hamina as 'Resource not found'"
+    rows = r.json()["response"]
+    assert isinstance(rows, list)
+    for c in rows:
+        assert c["type"] == "Wireless"
+        assert c["macAddress"] and c["connection"]["apMac"]
+        assert c["siteId"] == fid
+
+    # unauthenticated is rejected like every other Intent route
+    assert cat_client.get("/dna/data/api/v1/clients").status_code == 401
+
+
+def test_assurance_clients_exclude_other_floors():
+    """A client on an AP that is not on this floor plan is not on this floor."""
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+    from unifi_hamina_live.models import Client
+
+    ap_here = AccessPoint(site_id="default", name="Here", mac="aa:aa:aa:00:00:01",
+                          serial="S1", model_code="U7PRO", model="u7-pro",
+                          online=True, floorplan_id="p1", x=10.0, y=10.0, radios=[])
+    ap_elsewhere = AccessPoint(site_id="default", name="Elsewhere",
+                               mac="bb:bb:bb:00:00:02", serial="S2",
+                               model_code="U7PRO", model="u7-pro", online=True,
+                               floorplan_id="p2", x=10.0, y=10.0, radios=[])
+    fp1 = FloorPlan(id="p1", site_id="default", name="One", source="innerspace",
+                    width_px=1000, height_px=800, meters_per_px=0.05)
+    fp2 = FloorPlan(id="p2", site_id="default", name="Two", source="innerspace",
+                    width_px=1000, height_px=800, meters_per_px=0.05)
+    snap = Snapshot(
+        generated_at=time.time(), ok=True,
+        sites=[Site(id="default", name="HQ", num_aps=2)],
+        access_points=[ap_here, ap_elsewhere], floorplans=[fp1, fp2],
+        clients=[
+            Client(mac="de:ad:00:00:00:01", site_id="default",
+                   ap_mac="aa:aa:aa:00:00:01", essid="Corp", band="5",
+                   channel=36, signal_dbm=-58, noise_dbm=-95),
+            Client(mac="de:ad:00:00:00:02", site_id="default",
+                   ap_mac="bb:bb:bb:00:00:02", essid="Corp", band="5",
+                   channel=36, signal_dbm=-61),
+        ])
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret")
+    app = create_app(settings=settings, collector=FakeCollector(snap))
+    with TestClient(app) as c:
+        tok = _token(c).json()["Token"]
+        rows = c.get("/dna/data/api/v1/clients",
+                     params={"siteId": mapping.floor_id_for(fp1)},
+                     headers={"X-Auth-Token": tok}).json()["response"]
+    assert [r["macAddress"] for r in rows] == ["de:ad:00:00:00:01"]
+    assert rows[0]["connection"]["snr"] == "37"   # -58 signal, -95 noise
