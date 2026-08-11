@@ -1,4 +1,26 @@
-# Catalyst Center (DNA Center) facade — get UniFi into Hamina today
+# Catalyst Center (DNA Center) facade
+
+> ## ⚠️ This does not get UniFi into Hamina Live
+>
+> **Hamina's vendor sync against this facade fails, and the cause is on
+> Hamina's side.** Closed **not planned** in
+> [issue #1](https://github.com/shark-fi/unifi-hamina-live/issues/1) on
+> 2026-07-24. Do not enable this expecting a live heatmap — use the
+> **OpenIntent path** in [HAMINA.md](HAMINA.md) instead.
+>
+> Everything below is accurate and the facade works as described: it was driven
+> to field-for-field parity with a real appliance, every call answering HTTP 200,
+> and Hamina *still* returns "Failed to synchronize vendor data." The sync
+> appears to need a fuller Catalyst topology — a real WLC, uplink switches, a
+> self-consistent cross-family device graph — which are devices and
+> relationships a UniFi-backed facade cannot fabricate, not response shapes that
+> can be matched.
+>
+> **What it's still good for:** a faithful DNAC 2.3.7.x mock through the
+> assurance layer, and a reference implementation if a capture of a *real*
+> successful Hamina↔Catalyst sync ever becomes available to diff against.
+> Recommended even then: `CATALYST_ADVERTISE_FLOOR_MAPS=false`, since geometry
+> comes from OpenIntent.
 
 Unlike the Meraki connector (fixed Region dropdown, cloud-only, cert-pinned),
 Hamina's **Cisco Catalyst (DNA) Center API** connector accepts:
@@ -7,10 +29,12 @@ Hamina's **Cisco Catalyst (DNA) Center API** connector accepts:
 - a **username / password**, and
 - **Use self-signed certificate** / **Disable TLS verification** checkboxes.
 
-That means it can be pointed at *this bridge*. This facade speaks the DNA Center
-Intent API (auth token + Intent endpoints) backed by live UniFi data, so Hamina
-can pull UniFi APs, floor plans, and placement as if talking to a Catalyst
-Center appliance — **no change needed from Hamina**.
+That means it can be pointed at *this bridge* — the connector accepts it and the
+facade answers correctly. This facade speaks the DNA Center Intent API (auth
+token + Intent endpoints) backed by live UniFi data, so Hamina can pull UniFi
+APs, floor plans, and placement as if talking to a Catalyst Center appliance —
+**no change needed from Hamina**. What it cannot do is complete the vendor sync;
+see the banner above.
 
 DNA Center's placement model (AP x,y in **metres** on a floor of known
 width/length) also maps cleanly from the bridge's placement layer
