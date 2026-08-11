@@ -41,16 +41,46 @@ function normBridge(v) {
   }
 }
 
-async function init() {
-  const stored = await chrome.storage.local.get(["origin", "site", "bridge"]);
-  $("bridge").value = stored.bridge || "";
+/* One bridge instance polls one console, so a bridge URL belongs to a console
+ * rather than to the extension. A cloud console is identified by its
+ * /consoles/<id> segment — minus the :epoch suffix, which changes — and a LAN
+ * console by its origin. Must stay identical to consoleKey() in content.js. */
+function consoleKeyFromUrl(u) {
+  try {
+    const url = new URL(u);
+    const m = url.pathname.match(/\/consoles\/([^/]+)/);
+    return url.origin + (m ? "/consoles/" + m[1].split(":")[0] : "");
+  } catch (_e) {
+    return "";
+  }
+}
+
+let bridgeKey = "";
+
+async function initBridge(stored) {
   const tab = await activeTab();
-  const prefill =
-    stored.origin ||
-    (tab && tab.url ? (() => { try { return new URL(tab.url).origin; } catch { return ""; } })() : "");
+  bridgeKey = consoleKeyFromUrl(tab && tab.url) || normOrigin($("origin").value) || "";
+  const map = stored.bridges || {};
+  // carry a pre-per-console value over, but only while nothing else is stored
+  $("bridge").value = map[bridgeKey]
+    || (Object.keys(map).length ? "" : (stored.bridge || ""));
+  $("bridgeFor").textContent = bridgeKey
+    ? "Applies to " + bridgeKey.replace(/^https?:\/\//, "")
+    : "Open the console's tab first — this is stored per console.";
+}
+
+async function init() {
+  const stored = await chrome.storage.local.get(["origin", "site", "bridge", "bridges"]);
+  const tab = await activeTab();
+  // Prefer the tab's own origin: on a console page that is exactly the answer,
+  // and it stops a previously stored (or mistyped) value from being re-offered.
+  const tabOrigin =
+    tab && tab.url ? (() => { try { return new URL(tab.url).origin; } catch { return ""; } })() : "";
+  const prefill = tabOrigin || stored.origin || "";
   $("origin").value = prefill || "";
   $("site").value = stored.site || "";
   if (stored.origin) setStatus(`Enabled for ${stored.origin}`);
+  await initBridge(stored);
 }
 
 function setStatus(msg) {
@@ -60,6 +90,19 @@ function setStatus(msg) {
 $("enable").addEventListener("click", async () => {
   const origin = normOrigin($("origin").value);
   if (!origin) return setStatus("Enter a valid console URL.");
+  /* Two URL fields sitting one above the other, and the bridge is the one you
+   * were last asked to paste — so it lands here. Registering against it means
+   * the overlay never runs on the console at all, and the symptom is simply
+   * nothing happening, which reads like the extension being broken. */
+  if (normBridge($("bridge").value) === origin) {
+    return setStatus(
+      "That's the bridge, not a console. Console URL is the page you want the "
+      + "overlay drawn on — your console's own address.");
+  }
+  const tab = await activeTab();
+  const tabOrigin = (() => {
+    try { return new URL(tab && tab.url).origin; } catch (_e) { return ""; }
+  })();
   const site = $("site").value.trim();
   setStatus("Requesting permission…");
   let granted;
@@ -76,7 +119,6 @@ $("enable").addEventListener("click", async () => {
   if (!res?.ok) return setStatus("Register failed: " + (res?.error || "unknown"));
 
   // Inject now so the current tab lights up without a reload (if it's the console).
-  const tab = await activeTab();
   if (tab && tab.url && tab.url.startsWith(origin)) {
     try {
       await chrome.scripting.executeScript({
@@ -86,7 +128,10 @@ $("enable").addEventListener("click", async () => {
       /* not an injectable page; it'll load on next navigation */
     }
   }
-  setStatus(`Enabled for ${origin}. Open the InnerSpace map.`);
+  setStatus(tabOrigin && tabOrigin !== origin
+    ? `Enabled for ${origin} — but this tab is ${tabOrigin}, so nothing will `
+      + "appear here. Did you mean this tab's address?"
+    : `Enabled for ${origin}. Open the InnerSpace map.`);
 });
 
 /* Verify the load-bearing assumption for bridge support: that the service
@@ -118,7 +163,14 @@ $("testbridge").addEventListener("click", async () => {
   if (!reply?.ok || !r) return setBridgeStatus("Worker error: " + (reply?.error || "no reply"), "bad");
 
   if (r.ok) {
-    await chrome.storage.local.set({ bridge: base });
+    if (!bridgeKey) {
+      return setBridgeStatus(
+        "Reachable, but there's no console to attach it to — open the console's "
+        + "tab and press Test bridge again. A bridge is stored per console.", "bad");
+    }
+    const map = (await chrome.storage.local.get("bridges")).bridges || {};
+    map[bridgeKey] = base;
+    await chrome.storage.local.set({ bridges: map });
     // /api/health reports the collector's own state, so the same call tells us
     // whether the bridge is reachable AND whether it has data worth overlaying
     const j = r.json || {};
@@ -130,10 +182,9 @@ $("testbridge").addEventListener("click", async () => {
         + `itself isn't collecting: ${j.error || "unknown error"}. `
         + "Fix its console credentials; the transport is fine.", "bad");
     }
-    const scheme = base.startsWith("https:") ? "HTTPS" : "plain HTTP";
     return setBridgeStatus(
-      `Works — HTTP ${r.status} in ${r.ms} ms · ${counts}${age}. `
-      + `Worker fetch over ${scheme} is allowed; bridge saved.`, "ok");
+      `Works — HTTP ${r.status} in ${r.ms} ms · ${counts}${age}. Saved for `
+      + bridgeKey.replace(/^https?:\/\//, "") + ".", "ok");
   }
   if (r.stage === "access") {
     return setBridgeStatus(

@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b28";        // shown in the status chip; bump on every change
+  const BUILD = "b30";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -174,10 +174,25 @@
    * — a Hamina plan, once the overlay runs there — printing them would hand
    * over where the console or the bridge lives. So URLs are shown only when the
    * page IS the console you enabled, and redacted everywhere else. */
+  /* A bridge belongs to a console, not to the extension: one instance polls one
+   * console, and pointing the wrong one at a plan yields a healthy-looking fetch
+   * whose AP names all miss. A cloud console is identified by its /consoles/<id>
+   * segment — minus the :epoch suffix, which changes — and a LAN console by its
+   * origin. Must stay identical to consoleKeyFromUrl() in popup.js. */
+  function consoleKey() {
+    const m = location.pathname.match(/\/consoles\/([^/]+)/);
+    return location.origin + (m ? "/consoles/" + m[1].split(":")[0] : "");
+  }
   let consoleOrigin = null, bridgeBase = null, usingBridge = false;
   try {
-    chrome.storage.local.get(["origin", "bridge"]).then(
-      (s) => { consoleOrigin = s.origin || null; bridgeBase = s.bridge || null; },
+    chrome.storage.local.get(["origin", "bridge", "bridges"]).then(
+      (s) => {
+        consoleOrigin = s.origin || null;
+        const map = s.bridges || {};
+        // fall back to the pre-per-console value only while nothing else is set
+        bridgeBase = map[consoleKey()]
+          || (Object.keys(map).length ? null : (s.bridge || null));
+      },
       () => {});
   } catch (_e) { /* storage unavailable; stay redacted */ }
   const onConsolePage = () => consoleOrigin != null && location.origin === consoleOrigin;

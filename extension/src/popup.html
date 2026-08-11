@@ -43,10 +43,12 @@
   <hr />
   <label for="bridge">Bridge URL (optional, experimental)</label>
   <input id="bridge" type="text" placeholder="http://192.168.1.50:8000" />
+  <p class="sub" id="bridgeFor" style="margin:6px 0 0"></p>
   <p class="sub" style="margin:6px 0 0">
-    A <code>unifi-hamina-live</code> instance on your LAN. Lets the overlay get
-    data without the page's own API — the only way to cover a relayed
-    <code>unifi.ui.com</code> session. Test it before relying on it.</p>
+    A <code>unifi-hamina-live</code> instance covering <em>this</em> console.
+    Lets the overlay get data without the page's own API — the only way to cover
+    a relayed <code>unifi.ui.com</code> session. One bridge polls one console,
+    so this is stored per console. Test it before relying on it.</p>
   <div class="row">
     <button id="testbridge">Test bridge</button>
   </div>

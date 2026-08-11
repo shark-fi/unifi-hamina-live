@@ -4,16 +4,22 @@ A Chrome (MV3) extension that overlays **live UniFi Network clients and AP
 telemetry onto the InnerSpace floor plan**, inside the UniFi console. InnerSpace
 is a planning view and shows no live clients; this fills that gap.
 
-It is **read-only and same-origin**: the content script runs on your console and
-reads the console's own Network API with your logged-in session — no bridge, no
-cloud, no CORS, no CSRF, GETs only.
+It is **read-only**: GETs only, no writes, ever.
+
+By default it needs nothing configured. The content script runs on your console
+and reads the console's own Network API with your logged-in session — same
+origin, no CORS, no CSRF, nothing to install:
 
 - `GET <base>/proxy/network/api/s/<site>/stat/device` — live AP state
 - `GET <base>/proxy/network/api/s/<site>/stat/sta` — clients (joined to APs by MAC)
 
-`<base>` and `<site>` are derived from the URL, so it works both on a local
-console (`https://192.168.1.1/network/…`) and via Ubiquiti remote access
-(`https://unifi.ui.com/consoles/<id>/network/…`).
+`<base>` and `<site>` are derived from the URL, so this covers a local console
+(`https://192.168.1.1/network/…`) and Ubiquiti remote access
+(`https://unifi.ui.com/consoles/<id>/network/…`) alike.
+
+Where that API can't be reached — see [Where it works](#where-it-works) — an
+optional [`unifi-hamina-live`](https://github.com/shark-fi/unifi-hamina-live)
+bridge can supply the same data from outside the page.
 
 ## What it shows
 
@@ -57,52 +63,95 @@ standing.
 
 ## Where it works
 
-| Access path | Works | Why |
+| Access path | On its own | With a bridge |
 |---|---|---|
-| Console on its LAN address (`https://192.168.x.x/...`) | ✅ | API is same-origin |
-| `unifi.ui.com` with an HTTP proxy path (`/consoles/<id>/proxy/network/...`) | ✅ | API is reachable over HTTP |
-| `unifi.ui.com` with a **WebRTC-relayed** session | ❌ | No HTTP API exists to call |
+| Console on its LAN address (`https://192.168.x.x/…`) | ✅ | not needed |
+| `unifi.ui.com` proxied over HTTP (`/consoles/<id>/proxy/network/…`) | ✅ | not needed |
+| `unifi.ui.com` **WebRTC-relayed** | ❌ | ✅ |
 
 Some remote sessions don't proxy the console over HTTP at all — they tunnel it
 through a **WebRTC data channel** (UniFi's own telemetry calls this
 `Rtc-Cloudflare` / `Ok-Relay`, negotiated via `RTCSignaling`). In that mode the
 page issues no request to the console's API; the `<console-id>.id.ui.direct`
 host it contacts serves only the SSO handshake and answers API paths with the
-app shell. There is nothing for an extension to fetch, short of re-implementing
-UniFi's signalling and speaking the data channel.
+app shell.
 
-**Which of the two you get is UniFi's decision, not a setting** — not in this
+**Which mode you get is UniFi's decision, not a setting** — not in this
 extension, and not anywhere in the UniFi UI. It depends on whether the console
 is reachable directly from your browser; the relay is the fallback when it
-isn't. So a `unifi.ui.com` session that lands on the relay cannot be talked into
-working, and the row above is a description of what happens, not something to
-configure.
+isn't. To tell which you're on: DevTools → Network, and look for any request to
+a `/proxy/network/` path. Present, it's proxied. None at all, it's relayed.
 
-To tell which one a session is using: open DevTools → Network on the console and
-look for any request to a `/proxy/network/` path. Requests present, it's proxied
-and the overlay works. None at all, it's relayed.
+What a relayed session still does is **render the map** — and the overlay pins
+to the DOM markers InnerSpace draws, not to any API. So the markers were always
+there; only the data was missing. It never had to come from that page.
 
-The overlay detects the relayed case and says so, rather than reporting a path
-error. Open the same console on its **LAN address** and it works normally.
+## The bridge (optional)
+
+[`unifi-hamina-live`](https://github.com/shark-fi/unifi-hamina-live) polls your
+console over the LAN and serves neutral JSON. Point the extension at one and it
+becomes a second source for exactly the data the page can't supply:
+
+```
+GET <bridge>/api/access-points   name, online, radios (channel, width, utilisation, TX retries)
+GET <bridge>/api/clients         ap_mac, name, band, channel, signal, rates, dev_id, vendor
+```
+
+The console's own API stays **preferred** and is tried first. The bridge is used
+when it fails, and directly when the session is relayed, where there is nothing
+to try. The status chip says `via bridge` when the data came from there.
+
+Set it in the popup's **Bridge URL** field and press **Test bridge** — it fetches
+`/api/health` from the service worker, the same path the overlay uses, and
+reports which stage failed rather than a bare failure.
+
+A few things worth knowing:
+
+- **It's stored per console.** One bridge instance polls one console, so pointing
+  the wrong one at a plan produces a healthy-looking fetch whose AP names all
+  miss. The popup keys the setting to the console in the active tab, and the
+  overlay says so when the bridge covers a different one.
+- **Reach it over HTTPS.** A LAN address (`http://192.168.1.50:8080`) works, but
+  publishing the bridge through a **Cloudflare Tunnel** gives it a real
+  certificate and works from anywhere — which is the point on a remote session.
+  The scheme is guessed from the address: an IP or `localhost` gets `http`, a
+  hostname gets `https`.
+- **Put an Access policy in front of it.** The bridge's `/api` routes are
+  unauthenticated by design, expecting a LAN. Tunnelled bare they publish your
+  whole client inventory to anyone who learns the hostname. With Cloudflare
+  Access, the extension needs no credential of its own: sign in once in a tab and
+  the service worker reuses that session cookie. The bridge repo ships
+  `scripts/check-tunnel.sh` to verify the policy actually took — see its
+  `docs/EXPOSURE.md`.
 
 ## Status
 
-Confirmed working against two live consoles: a 3-AP site over an HTTP-proxied
-`unifi.ui.com` session, and a 14-AP site on its LAN address showing 57 clients
-(2.4 GHz 10 · 5 GHz 35 · 6 GHz 12). The status chip reports what it resolved
-(and any failure) so problems are diagnosable from the page rather than by
-guesswork.
+Confirmed against three live consoles:
+
+- a 14-AP site on its LAN address — 57 clients (2.4 GHz 10 · 5 GHz 35 · 6 GHz 12)
+- a 3-AP site over an HTTP-proxied `unifi.ui.com` session
+- a **relayed** `unifi.ui.com` session **through a tunnelled bridge** — 58 clients
+  on 3 APs, 57 of them with UniFi's own fingerprint icons
+
+That last one is the case this README used to call impossible. It isn't the
+relay that changed: a relayed session still has no HTTP API. What changed is
+where the data comes from.
+
+The status chip reports what it resolved, which source it used, and any failure,
+so problems are diagnosable from the page rather than by guesswork.
 
 ## Load it (unpacked)
 
 1. Chrome → `chrome://extensions` → enable **Developer mode**.
 2. **Load unpacked** → select this folder.
-3. Click the extension's icon → enter your **Console URL** (the origin, e.g.
-   `https://192.168.1.1` or `https://unifi.ui.com`) → **Enable**. Approve the
-   host-permission prompt.
+3. Open your console's tab, then click the extension's icon. **Console URL**
+   prefills from that tab — it is the page you want the overlay drawn on, not a
+   bridge. → **Enable**, and approve the host-permission prompt.
 4. Open the **InnerSpace** floor plan. Client icons appear pinned around each AP
    with per-band chips; a status chip sits bottom-left. Click an icon for
    details, click a band chip to filter.
+5. *Optional, and only if the console's own API can't be reached:* fill in
+   **Bridge URL** and press **Test bridge**.
 
 **Disable** from the popup and reload the console tab to remove it.
 
@@ -121,7 +170,7 @@ guesswork.
   API prefix can be discovered. It always calls the originals through and reads
   no bodies or responses.
 - `src/content.js` — resolves the API base/site, polls for clients and radio
-  state, and renders the overlay.
+  state (falling back to a bridge), and renders the overlay.
 
 Client icons come straight from UniFi's CDN at
 `https://static.ui.com/fingerprint/0/<dev_id>_101x101.png`, keyed by the
@@ -141,9 +190,9 @@ notes, including two related overlay targets that build on the same technique.
 ## Privacy / safety
 
 The extension **only ever reads** — it never writes to the console. No
-analytics, no telemetry, and nothing is sent anywhere.
+analytics, no telemetry.
 
-Two things worth stating precisely rather than as a blanket claim:
+Three things worth stating precisely rather than as a blanket claim:
 
 **One external host.** Client icons are `<img>` tags pointing at UniFi's own CDN,
 `static.ui.com/fingerprint/0/<dev_id>_101x101.png` — the same images the console
@@ -163,6 +212,17 @@ Relatedly, discovery accepts an API address only from the page's own origin or a
 `<console-id>.id.ui.direct` tunnel host. The page-context probe reports URLs over
 a `window` event, which a page could forge; the host check means a forged one is
 ignored.
+
+**A configured bridge is contacted, and a tunnelled one transits Cloudflare.**
+Only if you set one — by default the extension talks to nothing but the console
+in front of it. When set, the service worker fetches that origin with
+credentials, so a Cloudflare Access session cookie goes with the request (that is
+what avoids storing a credential here). It sends nothing about you or your
+browsing; it asks for two endpoints and reads the reply. If the bridge is
+published through a tunnel, that traffic crosses Cloudflare's edge like any other
+request to it — your own inventory, on your own hostname, but not a LAN-only path
+any more. A bridge on a plain LAN address avoids that entirely and works
+wherever the console's own API would have.
 
 ## Related
 
