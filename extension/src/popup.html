@@ -3,71 +3,132 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  body { width: 300px; margin: 0; padding: 14px;
+  /* Three independent things live here — the console overlay, the bridge, and
+     the Hamina overlay — and only the first is needed by most people. Each is a
+     titled section, and the explanation each one used to shout on load now sits
+     behind a disclosure. The prose was worth keeping; showing all of it at once
+     was not. */
+  /* Chrome sizes a popup to its content's scroll width, so ONE unbreakable
+     string makes the whole window wide and fills the rest with background —
+     which is exactly what happened: the per-console line prints
+     "…/consoles/68D79A50EAF10000…", a 60-character token with nothing to break
+     on, and the status elements embed bare URLs. Hence the hard cap here and
+     `overflow-wrap: anywhere` on every element that can hold a URL or an id. */
+  * { box-sizing: border-box; }
+  html { width: 320px; max-width: 320px; overflow-x: hidden; }
+  body { width: 320px; max-width: 320px; overflow-x: hidden;
+    margin: 0; padding: 0 0 14px;
     font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     background: #131722; color: #e6e9ef; }
-  h1 { font-size: 14px; margin: 0 0 4px; }
-  p.sub { margin: 0 0 12px; color: #8b93a7; font-size: 12px; }
-  label { display: block; margin: 10px 0 4px; color: #8b93a7; font-size: 12px; }
+  header { padding: 13px 14px 11px; border-bottom: 1px solid #232a3a; }
+  h1 { font-size: 13px; margin: 0; letter-spacing: .2px; }
+  header p { margin: 3px 0 0; color: #8b93a7; font-size: 11.5px; }
+
+  section { padding: 12px 14px; border-bottom: 1px solid #1c2230; }
+  section:last-of-type { border-bottom: 0; }
+  h2 { font-size: 10.5px; margin: 0 0 9px; color: #7c86a0; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .5px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  h2 .opt { text-transform: none; letter-spacing: 0; font-weight: 400;
+    color: #5d677e; }
+
+  label { display: block; margin: 8px 0 4px; color: #8b93a7; font-size: 11.5px; }
+  label:first-of-type { margin-top: 0; }
   input { width: 100%; box-sizing: border-box; padding: 7px 9px; border-radius: 7px;
     border: 1px solid #232a3a; background: #0b0e14; color: #e6e9ef; font: inherit; }
-  .row { display: flex; gap: 8px; margin-top: 12px; }
-  button { flex: 1; padding: 8px; border-radius: 7px; border: 1px solid #232a3a;
+  input::placeholder { color: #4a5468; }
+
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  button { flex: 1; padding: 7px; border-radius: 7px; border: 1px solid #232a3a;
     background: #1b2130; color: #e6e9ef; font: inherit; cursor: pointer; }
+  button:hover { background: #222a3c; }
   button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
-  #status, #bridgestatus { margin-top: 10px; font-size: 12px; color: #8b93a7;
-    min-height: 16px; word-break: break-word; }
-  #bridgestatus.ok { color: #4ade80; }
-  #bridgestatus.bad { color: #f87171; }
-  hr { border: 0; border-top: 1px solid #232a3a; margin: 16px 0 0; }
-  code { font-size: 11px; background: #0b0e14; padding: 1px 4px; border-radius: 4px; }
+  button.primary:hover { background: #1d4ed8; }
+
+  .msg { margin-top: 8px; font-size: 11.5px; color: #8b93a7;
+    overflow-wrap: anywhere; }
+  .msg:empty { margin: 0; }
+  .msg.ok { color: #4ade80; }
+  .msg.bad { color: #f87171; }
+
+  /* the long explanations, out of the way until wanted */
+  details { margin-top: 9px; }
+  summary { cursor: pointer; color: #6b7488; font-size: 11.5px; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "› "; display: inline-block; transition: transform .12s; }
+  details[open] summary::before { content: "⌄ "; }
+  details p { margin: 6px 0 0; color: #8b93a7; font-size: 11.5px;
+    overflow-wrap: anywhere; }
+  code { font-size: 11px; background: #0b0e14; padding: 1px 4px; border-radius: 4px;
+    overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
-  <h1>UniFi Live for InnerSpace</h1>
-  <p class="sub">Overlays live clients &amp; AP telemetry onto the InnerSpace floor
-    plan. Read-only; runs only on the console you specify.</p>
+  <header>
+    <h1>UniFi Live</h1>
+    <p>Live clients and AP telemetry on your floor plans. Read-only — GETs only,
+       no writes, ever.</p>
+  </header>
 
-  <label for="origin">Console URL</label>
-  <input id="origin" type="text" placeholder="https://192.168.1.1" />
+  <section>
+    <h2>UniFi console</h2>
+    <label for="origin">Console URL</label>
+    <input id="origin" type="text" placeholder="https://192.168.1.1" />
+    <label for="site">Network site id <span class="opt">— optional</span></label>
+    <input id="site" type="text" placeholder="default" />
+    <div class="row">
+      <button id="enable" class="primary">Enable</button>
+      <button id="disable">Disable</button>
+    </div>
+    <div class="msg" id="status"></div>
+    <details>
+      <summary>What this does</summary>
+      <p>Draws live clients and AP telemetry onto the InnerSpace floor plan
+        inside your console. On a LAN console it reads the console's own API
+        directly and needs nothing else configured.</p>
+    </details>
+  </section>
 
-  <label for="site">Network site id (optional)</label>
-  <input id="site" type="text" placeholder="default" />
+  <section>
+    <h2>Bridge <span class="opt">optional</span></h2>
+    <label for="bridge">Bridge URL</label>
+    <input id="bridge" type="text" placeholder="http://192.168.1.50:8080" />
+    <div class="msg" id="bridgeFor"></div>
+    <div class="row">
+      <button id="testbridge">Test bridge</button>
+    </div>
+    <div class="msg" id="bridgestatus"></div>
+    <details>
+      <summary>When do I need a bridge?</summary>
+      <p>On a <strong>WebRTC-relayed</strong> <code>unifi.ui.com</code> session
+        the page has no HTTP API to read, so a
+        <code>unifi-hamina-live</code> instance is the only way to get data.
+        A LAN console or an HTTP-proxied <code>unifi.ui.com</code> session needs
+        none.</p>
+      <p>One bridge polls one console, so this is stored per console. Test it
+        before relying on it — pointing at a bridge covering a different console
+        looks healthy and draws nothing.</p>
+    </details>
+  </section>
 
-  <div class="row">
-    <button id="enable" class="primary">Enable</button>
-    <button id="disable">Disable</button>
-  </div>
-  <div id="status"></div>
-
-  <hr />
-  <label for="bridge">Bridge URL (optional, experimental)</label>
-  <input id="bridge" type="text" placeholder="http://192.168.1.50:8000" />
-  <p class="sub" id="bridgeFor" style="margin:6px 0 0"></p>
-  <p class="sub" style="margin:6px 0 0">
-    A <code>unifi-hamina-live</code> instance covering <em>this</em> console.
-    Lets the overlay get data without the page's own API — the only way to cover
-    a relayed <code>unifi.ui.com</code> session. One bridge polls one console,
-    so this is stored per console. Test it before relying on it.</p>
-  <div class="row">
-    <button id="testbridge">Test bridge</button>
-  </div>
-  <div id="bridgestatus"></div>
-
-  <hr />
-  <label for="haminaorigin">Hamina overlay (optional)</label>
-  <input id="haminaorigin" type="text" placeholder="https://us.hamina.com" />
-  <p class="sub" style="margin:6px 0 0">
-    Draws this bridge's live UniFi data as a panel on Hamina's map. Hamina Live
-    cannot pull UniFi itself, so nothing is sent to Hamina — the panel is built
-    in your browser from Hamina's own map API plus the bridge. Use
-    <code>https://us.hamina.com</code> or <code>https://eu.hamina.com</code>,
-    whichever you sign in to. Needs a bridge configured above.</p>
-  <div class="row">
-    <button id="haminaenable" class="primary">Enable on Hamina</button>
-    <button id="haminadisable">Disable</button>
-  </div>
-  <div id="haminastatus"></div>
+  <section>
+    <h2>Hamina overlay <span class="opt">optional</span></h2>
+    <label for="haminaorigin">Hamina URL</label>
+    <input id="haminaorigin" type="text" placeholder="https://us.hamina.com" />
+    <div class="row">
+      <button id="haminaenable" class="primary">Enable</button>
+      <button id="haminadisable">Disable</button>
+    </div>
+    <div class="msg" id="haminastatus"></div>
+    <details>
+      <summary>What this does</summary>
+      <p>Shows the bridge's live UniFi data as a panel on Hamina's map. Nothing
+        is sent to Hamina — the panel is built in your browser from Hamina's own
+        map API plus the bridge.</p>
+      <p>Use <code>us.hamina.com</code> or <code>eu.hamina.com</code>, whichever
+        you sign in to. Needs a bridge configured above.</p>
+    </details>
+  </section>
 
   <script src="popup.js"></script>
 </body>
