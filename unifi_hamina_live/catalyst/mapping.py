@@ -707,52 +707,99 @@ def _client_health(signal: int | None) -> int:
     return 3
 
 
-def clients_v1(snap: Snapshot, floor_id: str) -> list[dict]:
+def clients_v1(snap: Snapshot, floor_id: str, req_type: str = "") -> list[dict]:
+    """Assurance clients for a floor.
+
+    Second pass at the shape. The first was accepted (HTTP 200, confirmed in the
+    request log) and still produced "Failed to synchronize client information —
+    An unexpected error occurred", so Hamina parsed the body and rejected it.
+    Four things it lacked against Catalyst Center's documented client model, any
+    of which would do it:
+
+      * ``connectionStatus`` — a client with no connection state is arguably not
+        connected, and a consumer filtering for CONNECTED sees an empty list.
+      * ``connectedNetworkDevice`` — the AP is a nested object of its own, not
+        just an apMac inside ``connection``. This is how a client is tied to the
+        AP it is on, which is the entire point for a map.
+      * numeric ``rssi``/``snr`` — sent as strings before.
+      * ``lastUpdatedTime`` — spelled ``lastUpdated``, so a freshness check
+        finds nothing and may treat every client as stale.
+
+    Still not captured from a real appliance, so still a guess — just a better
+    informed one. If it fails again, the next move is to ask Hamina for a client
+    payload rather than iterate a third time.
+    """
     fp = _floor_by_id(snap, floor_id)
     if fp is None:
         return []
     aps_here = {ap.mac: ap for ap in snap.access_points if ap.floorplan_id == fp.id}
+    now_ms = int(snap.generated_at * 1000)
     out = []
     for c in snap.clients:
         ap = aps_here.get(c.ap_mac or "")
         if ap is None:
             continue
         signal = c.signal_dbm if c.signal_dbm is not None else c.rssi
+        snr = (signal - c.noise_dbm
+               if signal is not None and c.noise_dbm is not None else None)
         out.append({
             "id": str(uuid.uuid5(_NS, "client:" + c.mac)),
             "macAddress": c.mac,
-            "type": "Wireless",
+            "type": req_type or "WIRELESS",
             "name": c.name or c.hostname or c.mac,
             "hostName": c.hostname or c.name or c.mac,
             "userId": None,
+            "username": None,
             "ipv4Address": c.ip,
             "ipv6Addresses": [],
             "vendor": c.vendor,
-            "deviceType": None,
-            "onboarding": {"averageRunDuration": None, "maxRunDuration": None},
-            "connection": {
-                "ssid": c.essid,
-                "band": c.band,
-                "channel": str(c.channel) if c.channel is not None else None,
-                "rssi": str(signal) if signal is not None else None,
-                "snr": (str(signal - c.noise_dbm)
-                        if signal is not None and c.noise_dbm is not None else None),
-                "apMac": ap.mac,
-                "apName": ap.name,
-                "apGroup": None,
-                "dataRate": (round(c.tx_rate_kbps / 1000, 1)
-                             if c.tx_rate_kbps else None),
-                "connectedNetworkDeviceId": ap_uuid(ap),
-                "connectedNetworkDeviceName": ap.name,
-                "frequency": c.band,
-            },
+            "osType": None,
+            "osVersion": None,
+            "formFactor": None,
+            "deviceForm": None,
+            "connectionStatus": "CONNECTED",
+            "isPrivateMacAddress": False,
+            "tracked": "No",
             "health": {
                 "overallScore": _client_health(signal),
+                "onboardingScore": _client_health(signal),
                 "connectedScore": _client_health(signal),
                 "linkErrorPercentage": None,
             },
+            "traffic": {
+                "usage": (c.tx_bytes or 0) + (c.rx_bytes or 0),
+                "rxBytes": c.rx_bytes,
+                "txBytes": c.tx_bytes,
+            },
+            "connectedNetworkDevice": {
+                "connectedNetworkDeviceId": ap_uuid(ap),
+                "connectedNetworkDeviceName": ap.name,
+                "connectedNetworkDeviceMac": ap.mac,
+                "connectedNetworkDeviceManagementIp": ap.ip,
+                "connectedNetworkDeviceType": "Unified AP",
+            },
+            "connection": {
+                "ssid": c.essid,
+                "band": c.band,
+                "channel": c.channel,
+                "channelWidth": None,
+                "protocol": None,
+                "rssi": signal,
+                "snr": snr,
+                "dataRate": (round(c.tx_rate_kbps / 1000, 1)
+                             if c.tx_rate_kbps else None),
+                "apMac": ap.mac,
+                "apEthernetMac": ap.mac,
+                "apMode": "Local",
+                "sessionDuration": c.uptime_seconds,
+                "vlanId": None,
+                "wlcName": None,
+            },
+            "onboarding": {"averageRunDuration": None, "maxRunDuration": None},
             "siteId": floor_id,
             "siteHierarchy": f"Global/{_AREA_NAME}/{_site_name(ap, snap)}/{fp.name}",
-            "lastUpdated": int(snap.generated_at * 1000),
+            "siteHierarchyId": f"{GLOBAL_ID}/{AREA_ID}/"
+                               f"{building_id(ap.site_id)}/{floor_id}",
+            "lastUpdatedTime": now_ms,
         })
     return out
