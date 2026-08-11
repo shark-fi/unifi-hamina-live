@@ -585,7 +585,14 @@ def ap_positions(snap: Snapshot, floor_id: str, units: str = "feet") -> list[dic
             "id": ap_uuid(ap),
             "name": ap.name,
             "macAddress": ap.mac,
-            "type": ap.model_code or ap.model,
+            # `type` must be a model string the client can resolve to a real AP,
+            # not UniFi's internal code. Hamina reads THIS field and reported
+            # "Some AP models (U7PROMAX, U7PRO, UAPA6A6) aren't yet supported"
+            # — those are `model_code` values. It resolves the marketing names
+            # fine: the companion OpenIntent exporter maps code -> "u7-pro-max"
+            # before export and those imports land. Every other surface here
+            # already uses ap.model (platformId, series); this was the outlier.
+            "type": ap.model or ap.model_code,
             "model": ap.model,
             "position": {
                 "x": round((x_m or 0) * conv, 3),

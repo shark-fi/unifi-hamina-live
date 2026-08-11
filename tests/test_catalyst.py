@@ -517,3 +517,44 @@ def test_capture_sees_facade_routes_served_under_api(cat_client):
     assert "/api/v1/task/does-not-exist" in paths, paths
     assert "/api/health" not in paths
     assert "/api/clients" not in paths
+
+
+def test_positions_report_a_resolvable_model_not_the_unifi_code():
+    """`type` must carry the marketing model name, not UniFi's internal code.
+
+    Hamina reads this field to resolve the AP against its own hardware catalog
+    and reported "Some AP models (U7PROMAX, U7PRO, UAPA6A6) aren't yet supported
+    by Hamina" — those are model_code values. It resolves the marketing names
+    (the OpenIntent exporter maps code -> "u7-pro-max" before export and those
+    imports land), and every other field here already uses ap.model.
+    """
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.catalyst import mapping
+
+    ap = AccessPoint(
+        site_id="default", name="U7-Pro-Max-Kitchen", mac="94:2a:6f:32:ad:de",
+        serial="Q2AA-DDDD-EEEE", model_code="U7PROMAX", model="u7-pro-max",
+        online=True, floorplan_id="p1", x=600.0, y=450.0,
+        radios=[Radio(band="5", channel=132, channel_width_mhz=80, tx_power_dbm=15)],
+    )
+    fp = FloorPlan(id="p1", site_id="default", name="Upstairs",
+                   source="innerspace", width_px=1156, height_px=719,
+                   meters_per_px=0.018521)
+    snap = Snapshot(generated_at=time.time(), ok=True,
+                    sites=[Site(id="default", name="Default", num_aps=1)],
+                    access_points=[ap], floorplans=[fp])
+
+    settings = Settings(catalyst_enabled=True, catalyst_username="hamina",
+                        catalyst_password="secret")
+    app = create_app(settings=settings, collector=FakeCollector(snap))
+    with TestClient(app) as c:
+        tok = _token(c).json()["Token"]
+        fid = mapping.floor_id_for(fp)
+        got = c.get(f"/dna/intent/api/v2/floors/{fid}/accessPointPositions",
+                    params={"limit": 500, "offset": 1},
+                    headers={"X-Auth-Token": tok}).json()["response"][0]
+
+    assert got["type"] == "u7-pro-max", "type must be resolvable, not the code"
+    assert got["type"] != "U7PROMAX"
+    assert got["model"] == "u7-pro-max"
