@@ -29,13 +29,13 @@
   window.__unifiLiveHamina = true;
 
   const NS = "unifi-live-hamina";
-  const BUILD = "h3";
+  const BUILD = "h4";
   const POLL_MS = 15000;
   const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
   let bridgeBase = null;
   let panel = null, body = null, statusEl = null;
-  let timer = null, lastMapId = null, lastErr = null;
+  let timer = null, lastMapId = null, lastErr = null, lastRows = null;
 
   /* ---------- helpers ---------------------------------------------------- */
 
@@ -126,12 +126,29 @@
           util: r.channel_utilization_pct,
           retries: r.tx_retries_pct,
         })),
-        clients: 0,
+        clients: [],
+        perBand: {},
       };
     }
     for (const c of clients || []) {
       const ap = String(c.ap_mac || "").toLowerCase().replace(/[^0-9a-f]/g, "");
-      if (byMac[ap]) byMac[ap].clients += 1;
+      const a = byMac[ap];
+      if (!a) continue;
+      a.clients.push({
+        name: c.name || c.hostname || c.mac,
+        mac: c.mac,
+        ip: c.ip,
+        ssid: c.essid,
+        band: c.band,
+        channel: c.channel,
+        signal: c.signal_dbm != null ? c.signal_dbm : c.rssi,
+        tx: c.tx_rate_kbps,
+      });
+      if (c.band) a.perBand[c.band] = (a.perBand[c.band] || 0) + 1;
+    }
+    // strongest first: the ones nearest the AP are the ones you are looking for
+    for (const a of Object.values(byMac)) {
+      a.clients.sort((x, y) => (y.signal ?? -999) - (x.signal ?? -999));
     }
     return Object.values(byMac);
   }
@@ -164,6 +181,30 @@
       #${NS} .rad b { color: #e6edf3; font-weight: 600; }
       #${NS} .warn { color: #d29922; }
       #${NS} .dim { color: #6e7681; font-style: italic; }
+      #${NS} .rrow { display: flex; justify-content: space-between; gap: 8px; }
+      #${NS} .rc { color: #58a6ff; font-variant-numeric: tabular-nums; flex: none; }
+      #${NS} .cl { cursor: pointer; text-decoration: underline dotted; }
+      #${NS} .cl:hover { color: #79c0ff; }
+      #${NS}-clients { position: fixed; z-index: 2147483001; width: 360px;
+        max-height: 60vh; overflow: auto; background: #12161c; color: #e6edf3;
+        border: 1px solid #2a313c; border-radius: 10px;
+        font: 12px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+        box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+      #${NS}-clients header { position: sticky; top: 0; background: #171c24;
+        border-bottom: 1px solid #2a313c; padding: 8px 11px; display: flex;
+        justify-content: space-between; gap: 8px; align-items: center;
+        user-select: none; }
+      #${NS}-clients h2 { font-size: 11px; margin: 0; letter-spacing: .4px;
+        text-transform: uppercase; color: #9db2c9; font-weight: 600; }
+      #${NS}-clients .row { padding: 7px 11px; border-bottom: 1px solid #1d232c;
+        display: flex; justify-content: space-between; gap: 10px; }
+      #${NS}-clients .row:last-child { border-bottom: 0; }
+      #${NS}-clients .who { min-width: 0; }
+      #${NS}-clients .who b { display: block; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap; }
+      #${NS}-clients .meta { color: #8b97a5; }
+      #${NS}-clients .sig { text-align: right; flex: none;
+        font-variant-numeric: tabular-nums; }
       #${NS} .off { color: #f2544b; }
       #${NS} footer { padding: 7px 11px; color: #8b97a5; border-top: 1px solid #2a313c;
         position: sticky; bottom: 0; background: #171c24; }
@@ -180,6 +221,12 @@
     body = panel.querySelector(".body");
     statusEl = panel.querySelector(".status");
     panel.querySelector(".x").addEventListener("click", teardown);
+    // delegated: the rows are re-rendered on every poll, so binding per row
+    // would leak listeners and break the moment a name changes
+    body.addEventListener("click", (e) => {
+      const el = e.target.closest(".cl");
+      if (el) showClients(el.dataset.ap);
+    });
     makeDraggable(panel.querySelector("header"));
     restorePosition();
   }
@@ -238,6 +285,7 @@
 
   function render(rows, note) {
     if (!body) return;
+    lastRows = rows;
     if (!rows.length) {
       body.innerHTML = `<div class="ap warn">No APs matched between Hamina and UniFi.</div>`;
     } else {
@@ -246,27 +294,80 @@
           return `<div class="ap"><div class="nm"><span>${esc(r.name)}</span>` +
             `<span class="warn">not in UniFi</span></div></div>`;
         }
+        const perBand = r.live.perBand || {};
         const radios = r.live.radios.map((x) => {
+          const n = perBand[x.band] || 0;
+          const count = `<span class="rc">${n}</span>`;
           // No channel means the band is not transmitting — disabled, or the
           // radio has no live state yet. "ch?/20" read as a missing value we
           // had failed to fetch; it is a real state and worth naming. The
           // width/power/utilisation that follow are meaningless off air, so
           // they are dropped rather than shown as stale.
           if (x.channel == null) {
-            return `<b>${esc(x.band)}G</b> <span class="dim">off air</span>`;
+            return `<div class="rrow"><span><b>${esc(x.band)}G</b> ` +
+              `<span class="dim">off air</span></span>${count}</div>`;
           }
-          return `<b>${esc(x.band)}G</b> ch${esc(x.channel)}` +
+          const detail = `<b>${esc(x.band)}G</b> ch${esc(x.channel)}` +
             (x.width ? `/${esc(x.width)}` : "") +
             (x.power != null ? ` ${esc(x.power)}dBm` : "") +
             (x.util != null ? ` · ${esc(Math.round(x.util))}% util` : "");
-        }).join("<br>");
+          return `<div class="rrow"><span>${detail}</span>${count}</div>`;
+        }).join("");
         const off = r.live.online ? "" : ` <span class="off">offline</span>`;
+        const n = r.live.clients.length;
         return `<div class="ap"><div class="nm"><span>${esc(r.name)}${off}</span>` +
-          `<span class="cl">${r.live.clients} client${r.live.clients === 1 ? "" : "s"}</span></div>` +
+          `<span class="cl" data-ap="${esc(r.name)}" title="show clients">` +
+          `${n} client${n === 1 ? "" : "s"}</span></div>` +
           `<div class="rad">${radios || "no radios on air"}</div></div>`;
       }).join("");
     }
     statusEl.innerHTML = esc(note) + ` <code>${BUILD}</code>`;
+    renderClients();   // follow the poll while the card is open
+  }
+
+  /* Client detail for one AP. Kept as a separate card rather than expanding
+   * inline: the panel is narrow and already scrolls, and an accordion that
+   * grows mid-poll pushes the row you just clicked out from under the cursor. */
+  let openAp = null;
+
+  function showClients(apName) {
+    openAp = openAp === apName ? null : apName;   // clicking again closes it
+    renderClients();
+  }
+
+  function renderClients() {
+    const existing = document.getElementById(NS + "-clients");
+    if (!openAp) { existing?.remove(); return; }
+    const live = (lastRows || []).find((r) => r.name === openAp)?.live;
+    let card = existing;
+    if (!card) {
+      card = document.createElement("div");
+      card.id = NS + "-clients";
+      document.body.appendChild(card);
+      // sit beside the panel, not on top of it
+      const p = panel.getBoundingClientRect();
+      const left = p.left - 372 > 8 ? p.left - 372 : Math.min(p.right + 12,
+        window.innerWidth - 372);
+      card.style.left = Math.max(8, left) + "px";
+      card.style.top = Math.max(8, p.top) + "px";
+    }
+    const rows = (live?.clients || []).map((c) => {
+      const where = [c.ssid, c.band ? c.band + "G" : null,
+                     c.channel ? "ch" + c.channel : null]
+        .filter(Boolean).map(esc).join(" · ");
+      const rate = c.tx ? ` · ${Math.round(c.tx / 1000)}M` : "";
+      return `<div class="row"><span class="who"><b>${esc(c.name)}</b>` +
+        `<span class="meta">${where}</span></span>` +
+        `<span class="sig">${c.signal != null ? esc(c.signal) + " dBm" : "—"}` +
+        `<span class="meta">${rate}</span></span></div>`;
+    }).join("");
+    card.innerHTML =
+      `<header><h2>${esc(openAp)} — ${(live?.clients || []).length} client(s)</h2>` +
+      `<span class="x" style="cursor:pointer;color:#8b97a5">✕</span></header>` +
+      (rows || `<div class="row meta">No clients on this AP.</div>`);
+    card.querySelector(".x").addEventListener("click", () => {
+      openAp = null; renderClients();
+    });
   }
 
   function fail(msg) {
@@ -318,7 +419,9 @@
     clearInterval(timer);
     timer = null;
     panel?.remove();
+    document.getElementById(NS + "-clients")?.remove();
     document.getElementById(NS + "-style")?.remove();
+    openAp = null;
     panel = body = statusEl = null;
   }
 
