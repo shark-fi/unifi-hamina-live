@@ -20,73 +20,38 @@ from ..models import AccessPoint, FloorPlan, Snapshot
 
 log = logging.getLogger(__name__)
 
-# Hamina resolves an AP against its own hardware catalog by the catalog's
-# fully-qualified ID ("ubiquiti:u7-pro") — not UniFi's code ("U7PRO"), not the
-# slug used internally here ("u7-pro", which is also the catalog's bare
-# `modelId` and is still rejected), and not the display name ("U7 Pro"). All
-# three were tried against a live instance and refused. Sending anything else
-# makes it report
+# The model string a client resolves an AP against.
 #
-#     Import partially failed. Some AP models (...) aren't yet supported
+# Hamina rejects EVERY value here — "Import partially failed. Some AP models
+# (...) aren't yet supported" — for six different strings across two vendors:
+# UniFi's code (U7PROMAX), our slug (u7-pro-max, which is also Hamina's own bare
+# modelId), Hamina's catalog display name (U7 Pro Max), Hamina's fully-qualified
+# catalog id (ubiquiti:u7-pro-max), a bare Cisco model (C9130AXI), and Hamina's
+# catalog id for the Cisco make its own connector is configured for
+# (ciscoCatalystEnt:CW9166). It quotes back whatever we send, so it reads this
+# field; it resolves against something we cannot reach. See issue #1.
 #
-# and — the part that bites — it then DROPS those APs and continues, so the
-# import "succeeds" with hardware missing from the map.
+# A table mapping our slugs onto Hamina's catalog ids lived here briefly. It is
+# gone: it coupled this facade to another product's catalog, needed maintaining
+# against a list only that product controls, and bought nothing, because the
+# model string is not what the import is refusing. Report the AP's real model
+# and let the client resolve it.
 #
-# Ubiquiti is one of ~92 makes in that catalog, carrying the whole U6/U7 line —
-# so this was never a question of Hamina supporting the hardware, only of naming
-# it the way its catalog does. Ids below are transcribed from Hamina's own
-# `accessPointMakeModels` GraphQL query; keys are exactly the slugs
-# `unifi/normalize.py` emits. Anything unmapped falls through to the slug, which
-# is no worse than before.
-#
-# The outdoor APs are regional AND split by antenna in Hamina's catalog:
-# "u7-pro-outdoor-internal" (US) vs "...-internal-eu". EU deployments set this
-# to "-eu". UniFi does not distinguish the external-antenna variant, so the
-# internal one is the honest default.
-_OUTDOOR_SUFFIX = ""
-
-# slug from unifi/normalize.py -> Hamina catalog id.
-#
-# Note how little of this is derivable: Hamina's own ids are inconsistent
-# ("u6lite" and "u6lr" and "u6iw" lose their hyphens, AC HD is just "hd",
-# inWall HD is "inwallhd"), so five of these twenty-one would not have matched
-# any slug-transform rule. They are transcribed from the live catalog, not
-# generated.
-_HAMINA_MODEL_IDS: dict[str, str] = {
-    "uap-ac-pro": "ubiquiti:uap-ac-pro",
-    "uap-ac-lite": "ubiquiti:uap-ac-lite",
-    "uap-ac-lr": "ubiquiti:uap-ac-lr",
-    "uap-ac-hd": "ubiquiti:hd",
-    "uap-ac-shd": "ubiquiti:uap-ac-shd",
-    "uap-nanohd": "ubiquiti:nanohd",
-    "uap-flexhd": "ubiquiti:flexhd",
-    "uap-iw-hd": "ubiquiti:inwallhd",
-    "uap-ac-iw": "ubiquiti:uap-ac-iw",
-    "uap-ac-mesh": "ubiquiti:uap-ac-mesh",
-    "uap-ac-mesh-pro": "ubiquiti:uap-ac-mesh-pro",
-    "u6-lite": "ubiquiti:u6lite",
-    "u6-lr": "ubiquiti:u6lr",
-    "u6-pro": "ubiquiti:u6-pro",
-    "u6-mesh": "ubiquiti:u6-mesh",
-    "u6-iw": "ubiquiti:u6iw",
-    "u6-enterprise": "ubiquiti:u6-enterprise",
-    "u6-extender": "ubiquiti:u6-extender",
-    "u7-pro": "ubiquiti:u7-pro",
-    "u7-pro-max": "ubiquiti:u7-pro-max",
-    "u7-pro-outdoor": f"ubiquiti:u7-pro-outdoor-internal{_OUTDOOR_SUFFIX}",
-}
-
-
 # Diagnostic override (CATALYST_MODEL_OVERRIDE); set from create_app. Empty
 # means "report the AP's real model", which is the only sane production value.
 MODEL_OVERRIDE: str = ""
 
 
 def catalog_model(ap: AccessPoint) -> str | None:
-    """The model identifier a client resolves against its hardware catalog."""
+    """The model string a client resolves against its hardware catalog.
+
+    Prefers the marketing name over UniFi's internal code — every other surface
+    here (platformId, series) already used it, and the code is in nobody's
+    catalog. One helper so the surfaces cannot disagree about the same AP.
+    """
     if MODEL_OVERRIDE:
         return MODEL_OVERRIDE
-    return _HAMINA_MODEL_IDS.get(ap.model or "") or ap.model or ap.model_code
+    return ap.model or ap.model_code
 
 
 # DNA Center identifies every site with a UUID; a strict Catalyst client will
