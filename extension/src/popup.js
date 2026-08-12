@@ -115,6 +115,28 @@ async function fillConsoleList() {
     .map((c) => `<option value="${c.replace(/"/g, "&quot;")}"></option>`).join("");
 }
 
+/* The overlay needs to know WHICH console to read, and a Hamina tab carries no
+   hint. One configured bridge is unambiguous and gets filled in silently. Two
+   are not: the overlay used to fall back to whichever console was set up first
+   and say nothing, so the panel read the wrong site and reported every AP as
+   "not in UniFi" — indistinguishable from a name-matching bug. */
+async function fillHaminaBridge(stored, haminaBridge) {
+  const map = stored.bridges || {};
+  const known = [...new Set(
+    [...Object.values(map), stored.bridge].filter(Boolean))];
+  $("known-bridges").innerHTML = known
+    .map((b) => `<option value="${b.replace(/"/g, "&quot;")}"></option>`).join("");
+
+  $("haminabridge").value =
+    haminaBridge || (known.length === 1 ? known[0] : "") || "";
+
+  if (!haminaBridge && known.length > 1) {
+    setHaminaStatus(
+      `${known.length} bridges configured — choose which console this overlay `
+      + "reads, or it will not know.", "bad");
+  }
+}
+
 async function init() {
   const stored = await chrome.storage.local.get(["origin", "site", "bridge", "bridges"]);
   const tab = await activeTab();
@@ -131,9 +153,10 @@ async function init() {
   $("site").value = stored.site || "";
 
   // …and fill the Hamina field from the tab when that is where you are.
-  const haminaStored = (await chrome.storage.local.get("haminaOrigin")).haminaOrigin;
+  const hs = await chrome.storage.local.get(["haminaOrigin", "haminaBridge"]);
   $("haminaorigin").value =
-    (isHaminaUrl(tabUrl) ? tabOrigin : "") || haminaStored || "";
+    (isHaminaUrl(tabUrl) ? tabOrigin : "") || hs.haminaOrigin || "";
+  await fillHaminaBridge(stored, hs.haminaBridge);
 
   await fillConsoleList();
   if (stored.origin) setStatus(`Enabled for ${stored.origin}`);
@@ -290,10 +313,11 @@ $("haminaenable").addEventListener("click", async () => {
     return setHaminaStatus("That is not a URL.", "bad");
   }
 
-  // Carry the bridge over explicitly. The overlay can fall back to a lone
-  // console bridge, but being explicit avoids surprises once a second console
-  // is configured and "the only one" stops being unambiguous.
-  const bridge = ($("bridge").value || "").trim().replace(/\/+$/, "");
+  // The overlay can fall back to a lone console bridge, but "the only one"
+  // stops being an answer the moment a second console exists — so this field is
+  // the one that counts, and the console field is only a convenience fallback.
+  const bridge = (($("haminabridge").value || $("bridge").value || "")
+    .trim().replace(/\/+$/, ""));
 
   setHaminaStatus("Requesting permission…");
   let granted;
@@ -304,8 +328,10 @@ $("haminaenable").addEventListener("click", async () => {
   }
   if (!granted) return setHaminaStatus("Permission denied for " + origin, "bad");
 
+  // Always send the field, including empty: clearing it has to be able to undo
+  // a stored choice, or a wrong bridge is sticky and unexplainable.
   const reply = await chrome.runtime.sendMessage(
-    { type: "enableHamina", origin, bridge: bridge || undefined });
+    { type: "enableHamina", origin, bridge });
   if (!reply?.ok) return setHaminaStatus("Failed: " + (reply?.error || "?"), "bad");
   setHaminaStatus("Enabled for " + origin + " — reload the Hamina tab.", "ok");
 });

@@ -153,6 +153,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         haminaOrigin: msg.origin,
         ...(msg.bridge ? { haminaBridge: msg.bridge } : {}),
       });
+      // An empty field means "stop overriding", not "keep what you had". Left
+      // sticky, a wrong bridge cannot be cleared from the UI at all.
+      if (msg.bridge === "") await chrome.storage.local.remove("haminaBridge");
       sendResponse({ ok: true, matches });
 
     } else if (msg?.type === "disableHamina") {
