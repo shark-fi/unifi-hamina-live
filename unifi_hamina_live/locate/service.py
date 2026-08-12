@@ -117,14 +117,24 @@ class LocateService:
         area_m = (0.0, 0.0,
                   (plan.width_px or 0.0) * plan.meters_per_px,
                   (plan.height_px or 0.0) * plan.meters_per_px)
+        # The one flip. Sensors are configured in image pixels (y down, read off
+        # the plan); placements from the console are plan space (y up). Emitting
+        # image space here would put every located AP mirrored about the middle
+        # of the plan, in the same field name /api/access-points uses -- correct
+        # looking, and wrong. Converted once, here, where the height is known.
+        height_px = plan.height_px or 0.0
         targets = []
         for t in self.store.solve(area_m):
-            x_px, y_px = m_to_px(t.x_m, t.y_m, plan.meters_per_px)
+            x_px, y_img_px = m_to_px(t.x_m, t.y_m, plan.meters_per_px)
+            y_px = height_px - y_img_px if height_px else y_img_px
             targets.append({
                 "mac": t.mac, "name": t.name, "kind": t.kind,
                 "channel": t.channel,
+                # Plan space (y up), the same frame as /api/access-points, so
+                # both layers can be drawn by the same code.
                 "x": round(x_px, 1), "y": round(y_px, 1),
-                "x_m": t.x_m, "y_m": t.y_m,
+                "x_m": t.x_m,
+                "y_m": round(y_px * plan.meters_per_px, 2),
                 # Fitting error, in metres. NOT a confidence interval: sensors
                 # in a near-straight line fit beautifully and are still
                 # ambiguous between two mirrored positions. Small residual plus
@@ -138,9 +148,13 @@ class LocateService:
         return {
             "ok": True, "error": None,
             "plan_id": plan.id, "plan_name": plan.name,
+            "width_px": plan.width_px, "height_px": plan.height_px,
             "meters_per_px": plan.meters_per_px,
             "estimated": True,   # never confuse these with surveyed placements
-            "sensors": [{"id": s.id, "x": s.x_px, "y": s.y_px}
+            # Sensors are configured in image space; flipped here too, or the
+            # markers would sit mirrored against the targets they produced.
+            "sensors": [{"id": s.id, "x": s.x_px,
+                         "y": (height_px - s.y_px) if height_px else s.y_px}
                         for s in self.layout.sensors],
             "tracked": self.store.tracked,
             "targets": targets,

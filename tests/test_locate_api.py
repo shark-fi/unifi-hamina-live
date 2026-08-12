@@ -171,3 +171,37 @@ def test_every_anchor_is_reported_with_the_fix():
         anchors = c.get("/api/located").json()["targets"][0]["anchors"]
         assert [a["sensor"] for a in anchors] == ["pi-1", "pi-2", "pi-3", "pi-4"]
         assert all(a["dist_m"] > 0 for a in anchors)
+
+
+def test_a_fix_uses_the_same_y_convention_as_a_placed_ap():
+    """The mirroring bug, pinned.
+
+    Sensors are configured in image pixels (y down, read off the plan); the
+    console reports placements in plan space (y up). Emitting image space under
+    the same field name would draw every located AP mirrored about the middle of
+    the plan -- correct-looking, and wrong. The dashboard's own comment records
+    this happening once already: "the kitchen AP landed in the garage".
+    """
+    with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
+        # 3 m down from the top of a 15 m plan, i.e. image y = 60 px of 300
+        send(c, 10.0, 3.0)
+        t = c.get("/api/located").json()["targets"][0]
+        assert t["y"] > 200.0, (
+            "plan-space y must be measured from the BOTTOM: a target near the "
+            "top of the image should be a LARGE y, got %s" % t["y"])
+        assert abs(t["y"] - 240.0) < 15.0, t
+
+
+def test_sensor_markers_are_flipped_with_the_targets():
+    """Otherwise the sensors sit mirrored against the fixes they produced."""
+    with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
+        by_id = {s["id"]: s for s in c.get("/api/located").json()["sensors"]}
+        # pi-1 is configured at image (0,0) -- the TOP-left corner
+        assert by_id["pi-1"]["y"] == 300.0, by_id["pi-1"]
+        assert by_id["pi-4"]["y"] == 0.0, by_id["pi-4"]
+
+
+def test_the_plan_extent_is_reported_so_a_client_can_draw_it():
+    with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
+        b = c.get("/api/located").json()
+        assert (b["width_px"], b["height_px"]) == (400.0, 300.0)

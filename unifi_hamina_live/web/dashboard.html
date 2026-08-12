@@ -94,8 +94,21 @@
   .cli .m { color: var(--muted); }
   .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px;
     margin-top: 8px; flex-wrap: wrap; }
+  .legend i.loc-key { border-radius: 50%; background: none; border: 1.5px dashed #eab308; }
   .legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
     margin-right: 5px; vertical-align: middle; }
+    /* Located transmitters are ESTIMATES from signal strength, metres wrong on
+       a good day. Nothing here may read as a surveyed placement: no filled
+       core like an AP, a dashed ring whose radius IS the fitting error, and a
+       label that says so. If these ever look like the AP dots, someone will
+       plan a network on them. */
+    .loc-halo { fill: rgba(234,179,8,.10); stroke: #eab308; stroke-width: 1.5;
+      stroke-dasharray: 5 4; }
+    .loc-core { fill: none; stroke: #eab308; stroke-width: 2.5; }
+    .loc-x { stroke: #eab308; stroke-width: 2.5; }
+    .loc-label { fill: #eab308; font-weight: 600; }
+    .sensor { fill: #38bdf8; opacity: .9; }
+    .sensor-label { fill: #7dd3fc; }
 </style>
 </head>
 <body>
@@ -125,6 +138,7 @@
         <svg id="map" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet"
              role="img" aria-label="Floor plan with access points and clients">
           <image id="mapImg" x="0" y="0" width="1000" height="600" href="" />
+          <g id="locLayer"></g>
           <g id="apLayer"></g>
           <g id="cliLayer"></g>
         </svg>
@@ -134,6 +148,9 @@
           <span><i style="background:var(--ok)"></i>AP online</span>
           <span><i style="background:var(--off)"></i>AP offline</span>
           <span class="hint">clients cluster at their AP (UniFi reports no client x,y)</span>
+          <span id="locLegend" hidden><i class="loc-key"></i>estimated from RSSI
+            — ring is the fitting error, not a placement</span>
+          <span id="senLegend" hidden><i style="background:#38bdf8;border-radius:2px"></i>RSSI sensor</span>
         </div>
       </div>
       <aside class="side">
@@ -227,6 +244,7 @@ function clientPositions(ap, R) {
 }
 
 async function refreshMap() {
+  await refreshLocated();
   let url = "/api/map";
   if (mapS.selected) url += "?floorplan=" + encodeURIComponent(mapS.selected);
   let data;
@@ -261,21 +279,76 @@ mapS.aps = aps.map((a) => (a.y != null ? { ...a, y: H - a.y } : a));
   renderMap(plan, mapS.aps);
 }
 
+/* Located transmitters, when sensor support is on. A 404 means it is off, and
+ * that is not an error worth reporting on a dashboard nobody enabled it for. */
+async function refreshLocated() {
+  let d;
+  try {
+    const r = await fetch("/api/located");
+    if (r.status === 404) { mapS.loc = null; return; }
+    d = await r.json();
+  } catch (e) { mapS.loc = null; return; }
+  mapS.loc = d;
+}
+
+function renderLocated(plan) {
+  const d = mapS.loc, L = $("locLayer");
+  const on = d && d.ok && plan && d.plan_id === plan.id;
+  $("senLegend").hidden = !on;
+  $("locLegend").hidden = !on || !(d.targets || []).length;
+  if (!on) { L.innerHTML = ""; return; }
+  const W = plan.width_px || 1000, H = plan.height_px || 600;
+  const R = Math.min(Math.max(Math.max(W, H) * 0.012, 9), 26);
+  const mpp = d.meters_per_px || 0;
+
+  const sensors = (d.sensors || []).map(s => `
+    <g><rect class="sensor" x="${s.x - R * 0.45}" y="${H - s.y - R * 0.45}"
+        width="${R * 0.9}" height="${R * 0.9}" rx="${R * 0.2}"></rect>
+      <text class="sensor-label" x="${s.x}" y="${H - s.y - R * 0.9}"
+        font-size="${R * 0.85}" text-anchor="middle">${esc(s.id)}</text></g>`).join("");
+
+  const targets = (d.targets || []).map(t => {
+    /* The ring is the residual, drawn to scale. A fix reported as a point
+       invites reading a metre of confidence into ten metres of error. */
+    const rad = mpp ? Math.max(t.residual_m / mpp, R * 0.8) : R * 1.5;
+    const y = H - t.y;
+    return `<g><title>${esc(t.name)} — estimated, ±${t.residual_m} m from ${t.sensors_used} sensors</title>
+      <circle class="loc-halo" cx="${t.x}" cy="${y}" r="${rad}"></circle>
+      <circle class="loc-core" cx="${t.x}" cy="${y}" r="${R * 0.55}"></circle>
+      <line class="loc-x" x1="${t.x - R * 0.32}" y1="${y}" x2="${t.x + R * 0.32}" y2="${y}"></line>
+      <line class="loc-x" x1="${t.x}" y1="${y - R * 0.32}" x2="${t.x}" y2="${y + R * 0.32}"></line>
+      <text class="loc-label" x="${t.x}" y="${y - rad - R * 0.35}"
+        font-size="${R * 0.95}" text-anchor="middle">${esc(t.name)} ~${t.residual_m}m</text></g>`;
+  }).join("");
+  L.innerHTML = sensors + targets;
+}
+
+function locatedHint() {
+  const d = mapS.loc;
+  if (!d) return "";
+  if (!d.ok) return " · locating: " + d.error;
+  const n = (d.targets || []).length;
+  return n ? ` · ${n} estimated (dashed)`
+    : ` · locating: 0 of ${d.tracked} transmitters heard by ${"\u2265"}3 sensors`;
+}
+
 function renderMap(plan, aps) {
   const svg = $("map"), img = $("mapImg");
   const W = (plan && plan.width_px) || 1000, H = (plan && plan.height_px) || 600;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   img.setAttribute("width", W); img.setAttribute("height", H);
   const total = aps.reduce((n, a) => n + a.clients.length, 0);
-  $("mapHint").textContent = !plan ? "No floor plans with placed APs yet."
+  $("mapHint").textContent = (!plan ? "No floor plans with placed APs yet."
     : !aps.length ? "No APs placed on this plan — place them in UniFi InnerSpace."
-    : `${aps.length} AP${aps.length === 1 ? "" : "s"} · ${total} client${total === 1 ? "" : "s"}`;
+    : `${aps.length} AP${aps.length === 1 ? "" : "s"} · ${total} client${total === 1 ? "" : "s"}`)
+    + locatedHint();
   const wantImg = plan && plan.has_image
     ? `/api/floorplans/${encodeURIComponent(plan.id)}/image` : "";
   if (mapS.imgFor !== (plan && plan.id)) {
     img.setAttribute("href", wantImg); mapS.imgFor = plan && plan.id;
   }
   const R = Math.min(Math.max(Math.max(W, H) * 0.012, 9), 26);
+  renderLocated(plan);
 
   $("apLayer").innerHTML = aps.map(a => {
     const s = a.serial === mapS.selAp ? " sel" : "";
