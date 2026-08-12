@@ -51,6 +51,10 @@ async def test_a_lockout_does_not_claim_the_password_is_wrong():
     assert "NOT proof the password is wrong" in msg
     assert "wait" in msg, "volume is the likelier cause and waiting clears it"
     assert "LOCAL admin" in msg, "but still name the credentials case"
+    assert "role" in msg, (
+        "the cause that actually produced this: the right password on an "
+        "account whose role does not reach the Network application"
+    )
 
 
 async def test_a_lockout_does_not_trigger_a_second_failed_login():
