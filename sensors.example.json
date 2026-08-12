@@ -1,0 +1,13 @@
+{
+  "_comment": "Where each WLAN Pi sits ON THE FLOOR PLAN, in image pixels. Read them off the plan; the plan's meters_per_px converts them. plan_id comes from GET /api/floorplans.",
+  "plan_id": "replace-with-a-floorplan-id",
+  "sensors": [
+    { "id": "pi-1", "x_px": 40,   "y_px": 40,  "rssi_offset": 0.0 },
+    { "id": "pi-2", "x_px": 1180, "y_px": 40,  "rssi_offset": 0.0 },
+    { "id": "pi-3", "x_px": 1180, "y_px": 720, "rssi_offset": 0.0 },
+    { "id": "pi-4", "x_px": 40,   "y_px": 720, "rssi_offset": 0.0 }
+  ],
+  "targets": [
+    { "mac": "aa:bb:cc:dd:ee:01", "name": "Rogue by the loading bay" }
+  ]
+}
