@@ -1,9 +1,13 @@
 """Login failures, and saying which kind they are.
 
-A locked-out console and a busy one both answer 429. Only the body distinguishes
-them, and reporting the bare status code cost an hour of chasing a rate limit
-that was never the problem — the console had been saying "these credentials are
-wrong" the whole time.
+Only the response body explains a 429, and we reported the bare status code —
+so "login failed: HTTP 429" was all anyone had to work with.
+
+The body is not the whole answer either. AUTHENTICATION_FAILED_LIMIT_REACHED
+reads like a rejected password and is not: UniFi OS returns it for the
+login-attempt limiter generally, so valid credentials used too often trip it.
+Reading it as "wrong password" led to a working admin account nearly being
+recreated. The message has to carry both causes.
 """
 import httpx
 
@@ -26,8 +30,13 @@ LOCKED_OUT = {
 }
 
 
-async def test_a_lockout_says_the_credentials_are_wrong():
-    """The failure mode this exists for: 429 that means "rejected", not "busy"."""
+async def test_a_lockout_does_not_claim_the_password_is_wrong():
+    """The code names authentication, but the cause is often just volume.
+
+    This bridge tripped it with correct credentials by authenticating ~120
+    times an hour. A message asserting "the credentials are REFUSED" would be
+    confidently wrong in exactly the case that produced it.
+    """
     async def handler(request):
         return httpx.Response(429, json=LOCKED_OUT)
 
@@ -39,8 +48,9 @@ async def test_a_lockout_says_the_credentials_are_wrong():
         raise AssertionError("a 429 must not look like a successful login")
 
     assert "AUTHENTICATION_FAILED_LIMIT_REACHED" in msg
-    assert "REFUSED" in msg, "must not read as throttling — waiting never helps"
-    assert "LOCAL admin" in msg, "must name the actual fix"
+    assert "NOT proof the password is wrong" in msg
+    assert "wait" in msg, "volume is the likelier cause and waiting clears it"
+    assert "LOCAL admin" in msg, "but still name the credentials case"
 
 
 async def test_a_lockout_does_not_trigger_a_second_failed_login():
@@ -72,7 +82,7 @@ async def test_a_plain_429_still_reports_the_console_wording():
         await _client(handler).login()
     except UniFiError as exc:
         assert "Too many requests" in str(exc)
-        assert "LOCAL admin" not in str(exc), "not a credentials problem"
+        assert "LOCAL admin" not in str(exc), "no credentials advice here"
 
 
 async def test_a_non_json_body_falls_back_to_the_status_code():

@@ -108,15 +108,22 @@ class UniFiClient:
             # we dug the hole.
             detail = _error_detail(resp)
             if "AUTHENTICATION_FAILED_LIMIT_REACHED" in detail:
+                # This code does NOT mean the password is wrong. UniFi OS
+                # returns it for the login-attempt limiter generally, so a
+                # client authenticating too often trips it with entirely valid
+                # credentials — which is what happened here, and the wrong half
+                # of this message sent someone off to recreate a working admin
+                # account. Name both causes; the lockout is account-wide, so
+                # "my browser is locked out too" is the tell for volume.
                 raise UniFiError(
-                    "login rejected and now rate-limited: the console has "
-                    "locked this account out after repeated failed logins "
-                    f"({detail}). The credentials are being REFUSED, not "
-                    "throttled — waiting will not fix it. Use a LOCAL admin "
-                    "account (console Settings -> Admins & Users -> Local "
-                    "Access Only); a ui.com cloud account cannot authenticate "
-                    "here, and a new console has no local admin until you "
-                    "create one."
+                    f"the console has hit its login attempt limit ({detail}). "
+                    "This is NOT proof the password is wrong — UniFi OS reports "
+                    "the same code when something simply authenticated too "
+                    "often. Stop everything that logs into this console, "
+                    "including browser sign-ins, and wait ~15 minutes. If it "
+                    "still refuses, then check the credentials: they must be a "
+                    "LOCAL admin (Settings -> Admins & Users), not a ui.com "
+                    "cloud account."
                 )
             raise UniFiError(f"login failed: HTTP 429 — {detail}")
         # Non-auth error on the UniFi OS path — fall back to classic.
