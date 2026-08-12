@@ -97,6 +97,17 @@ class Store:
         self._last_seen: dict = {}
         self._seq = 0
 
+    def set_sensors(self, sensors) -> None:
+        """Replace sensor positions, keeping every sample already collected.
+
+        Positions are configured in floor-plan pixels and only become metres
+        once the plan's ``meters_per_px`` is known, which arrives with a poll.
+        Samples are keyed by sensor id, not position, so a rescale re-aims the
+        anchors without discarding history — and ingest can run before the
+        scale is known at all.
+        """
+        self.sensors = {s.id: s for s in sensors}
+
     # -- ingest -----------------------------------------------------------
     def ingest(self, sensor_id: str, detections, now: float | None = None) -> int:
         """Record one sensor's batch. Returns how many samples were kept.

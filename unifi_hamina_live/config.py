@@ -93,6 +93,35 @@ class Settings(BaseSettings):
     # model. Leave empty.
     catalyst_model_override: str = Field(default="")
 
+    # --- RSSI sensors (WLAN Pi multilateration) ---------------------------
+    # OFF by default, and not merely as a courtesy: this is the only thing in
+    # the service that ACCEPTS data. Everything else is read-only, and the
+    # browser extension says so in as many words ("GETs only, no writes,
+    # ever"). Turning this on opens a POST endpoint, so it is opt-in and
+    # refuses to start without a token.
+    sensors_enabled: bool = Field(default=False)
+    # Shared secret the sensors present as X-Sensor-Token. Required when
+    # sensors_enabled — an ingest endpoint that anyone on the network can post
+    # to is a way to move every located AP wherever an attacker likes.
+    sensor_token: str = Field(default="")
+    # JSON: which plan the sensors cover, and where each one sits ON THAT PLAN
+    # in image pixels. Pixels rather than metres because that is what you can
+    # actually read off a floor plan; the plan's meters_per_px converts them.
+    sensor_config_path: str = Field(default="./sensors.json")
+    # Path loss. Guesses until calibrated for the site (rssi_sensor.py
+    # --calibrate); an uncalibrated exponent biases every distance the same
+    # way, which a least-squares fit absorbs into a confident wrong position.
+    sensor_rssi_at_1m: float = Field(default=-40.0)
+    sensor_pathloss_exponent: float = Field(default=3.0, gt=0.0)
+    # Samples older than this do not count toward a fix.
+    sensor_window_seconds: float = Field(default=6.0, gt=0.0)
+    # Below this many sensors hearing a transmitter, no position is reported.
+    # Two circles intersect at two points; three are needed to choose.
+    sensor_min_sensors: int = Field(default=3, ge=3)
+    # Forget a transmitter unheard this long. A busy site produces a steady
+    # stream of MACs heard once, and this service runs for months.
+    sensor_forget_seconds: float = Field(default=300.0, gt=0.0)
+
     # --- OpenIntent refresh ----------------------------------------------
     openintent_refresh_enabled: bool = Field(default=False)
     # Baked into the image at a pinned commit (see the Dockerfile), so the

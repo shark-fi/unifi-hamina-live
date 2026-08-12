@@ -27,3 +27,4 @@ exports/
 
 # macOS
 .DS_Store
+sensors.json

@@ -130,6 +130,30 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             "python": platform.python_version(),
         }
 
+    # Sensor ingest: opt-in, and refuses to start without a token. A running
+    # service that quietly accepts unauthenticated writes because a variable
+    # was blank is worse than one that will not start.
+    if settings.sensors_enabled:
+        from .api.locate import router as locate_router
+        from .locate.service import LocateService, Layout
+
+        if not (settings.sensor_token or "").strip():
+            raise RuntimeError(
+                "SENSORS_ENABLED=true needs SENSOR_TOKEN set — ingest writes "
+                "positions that get drawn on a floor plan, so it is not left "
+                "open")
+        try:
+            layout = Layout.load(settings.sensor_config_path)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(
+                "SENSORS_ENABLED=true but %s could not be read: %s"
+                % (settings.sensor_config_path, exc)) from exc
+        app.state.locate = LocateService(settings, layout)
+        app.include_router(locate_router)
+        logging.getLogger(__name__).info(
+            "sensor ingest on: %d sensor(s) on plan %s",
+            len(layout.sensors), layout.plan_id)
+
     app.include_router(neutral_router)
     app.include_router(meraki_router)
     app.include_router(openintent_router)
@@ -166,6 +190,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         # the facade serves must not.
         _skip = (
             "/catalyst/_captured", "/version", "/docs", "/openapi.json", "/redoc",
+            "/report", "/api/located",
             "/api/health", "/api/sites", "/api/access-points", "/api/clients",
             "/api/floorplans", "/api/summary", "/api/map", "/api/refresh",
         )
