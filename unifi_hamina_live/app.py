@@ -34,6 +34,7 @@ logging.basicConfig(
 )
 
 _DASHBOARD = (Path(__file__).parent / "web" / "dashboard.html").read_text(encoding="utf-8")
+_SENSORS = (Path(__file__).parent / "web" / "sensors.html").read_text(encoding="utf-8")
 
 
 @asynccontextmanager
@@ -218,6 +219,16 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
                     "accept": h.get("accept"),
                 })
             return response
+
+    @app.get("/sensors", response_class=HTMLResponse, include_in_schema=False)
+    def sensor_placement() -> str:
+        """Click sensors onto the plan instead of reading pixels off an image.
+
+        Deliberately available whether or not sensor support is switched on:
+        the config this produces is what you need BEFORE enabling it, and a
+        setup page you cannot reach until you are set up is no use.
+        """
+        return _SENSORS
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard() -> str:

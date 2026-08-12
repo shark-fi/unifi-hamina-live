@@ -135,3 +135,29 @@ def test_version_identifies_a_locally_built_image():
 
     # and it must not be confusable with the git sha beside it
     assert len(code) == 12
+
+
+def test_the_sensor_placement_page_works_before_sensors_are_enabled():
+    """The config it produces is the prerequisite for enabling them.
+
+    Gating this behind SENSORS_ENABLED would make it reachable only once you no
+    longer need it — and the alternative is reading pixel coordinates off an
+    image by hand, where a mistake in y is invisible.
+    """
+    from fastapi.testclient import TestClient
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.config import Settings
+    from tests.conftest import FakeCollector, build_snapshot
+
+    app = create_app(settings=Settings(_env_file=None),
+                     collector=FakeCollector(build_snapshot()))
+    with TestClient(app) as c:
+        assert not app.state.settings.sensors_enabled
+        r = c.get("/sensors")
+        assert r.status_code == 200
+        body = r.text
+        # it has to reach the plans and their images to be of any use
+        assert "/api/floorplans" in body
+        assert "sensor_config" in body.lower() or "SENSOR_CONFIG_PATH" in body
+        # and it must emit the key the loader requires
+        assert "plan_id" in body
