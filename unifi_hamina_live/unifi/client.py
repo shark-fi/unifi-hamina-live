@@ -22,6 +22,25 @@ class UniFiAuthError(UniFiError):
     pass
 
 
+def _error_detail(resp: httpx.Response) -> str:
+    """The console's own explanation, which we used to throw away.
+
+    UniFi OS returns a JSON body naming the cause — the difference between
+    "too many requests" and "too many FAILED logins" lives there, and only
+    there. Reporting the bare status code sent us chasing a rate limit for an
+    hour when the console had been saying "these credentials are wrong" all
+    along.
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        return f"HTTP {resp.status_code}"
+    if not isinstance(body, dict):
+        return f"HTTP {resp.status_code}"
+    parts = [str(body[k]) for k in ("message", "code") if body.get(k)]
+    return " / ".join(parts) or f"HTTP {resp.status_code}"
+
+
 class UniFiClient:
     def __init__(
         self,
@@ -81,6 +100,25 @@ class UniFiClient:
                 "login rejected. Use a LOCAL admin account (not a ui.com cloud "
                 "account with MFA)."
             )
+        if resp.status_code == 429:
+            # Deliberately NOT falling back to the classic path. UniFi OS
+            # counts failed logins, and the classic attempt is a second failed
+            # login against a console already locked out — so the fallback that
+            # exists to support old controllers was doubling the rate at which
+            # we dug the hole.
+            detail = _error_detail(resp)
+            if "AUTHENTICATION_FAILED_LIMIT_REACHED" in detail:
+                raise UniFiError(
+                    "login rejected and now rate-limited: the console has "
+                    "locked this account out after repeated failed logins "
+                    f"({detail}). The credentials are being REFUSED, not "
+                    "throttled — waiting will not fix it. Use a LOCAL admin "
+                    "account (console Settings -> Admins & Users -> Local "
+                    "Access Only); a ui.com cloud account cannot authenticate "
+                    "here, and a new console has no local admin until you "
+                    "create one."
+                )
+            raise UniFiError(f"login failed: HTTP 429 — {detail}")
         # Non-auth error on the UniFi OS path — fall back to classic.
         if await self._try_classic_login(body):
             return
