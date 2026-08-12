@@ -83,11 +83,18 @@ def multilaterate(points, area, coarse: int = 41):
 # read from the console are already in the same frame -- there is no transform
 # to derive and nothing to calibrate.
 #
-# Floor-plan y grows DOWNWARD (image convention) and so does the metre value
-# derived from it. That is deliberate: it matches how placements are already
-# reported, so a located target and a placed AP can be drawn by the same code.
-# Flipping here would make this module disagree with every other coordinate in
-# the service.
+# TWO conventions meet here, and getting them backwards is invisible.
+#
+# A sensor position is read off a floor-plan IMAGE, so it is measured from the
+# top-left with y growing DOWN, like every image editor. An AP placement coming
+# out of the console is in plan space, where y grows UP from the bottom -- see
+# scene_to_pixels in the exporter, and the flip the dashboard applies before
+# drawing. Mixing them mirrors a position about the middle of the plan, which
+# looks exactly like a correct map with the kitchen AP in the garage.
+#
+# So: everything in this module is IMAGE space (y down), because that is what
+# the configured sensors are. The single flip to plan space happens once, at
+# the API boundary in service.py, where the plan height is known.
 
 
 def px_to_m(x_px: float, y_px: float, meters_per_px: float):
