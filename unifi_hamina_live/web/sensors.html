@@ -1,0 +1,190 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Sensor placement — UniFi Live</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --bg:#0b0e14; --panel:#131722; --line:#232a3a; --fg:#e6e9ef;
+    --muted:#8b93a7; --accent:#38bdf8; --warn:#eab308; --bad:#f87171; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:15px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:12.5px; }
+  main { display:grid; grid-template-columns:1fr 380px; gap:16px; padding:16px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:14px; }
+  .wrap { position:relative; line-height:0; overflow:auto; max-height:78vh;
+    border:1px solid var(--line); border-radius:8px; background:#0e1420; }
+  #img { width:100%; display:block; cursor:crosshair; }
+  #dots { position:absolute; inset:0; pointer-events:none; }
+  select, input, button { background:#0b0e14; color:var(--fg);
+    border:1px solid var(--line); border-radius:7px; padding:6px 8px; font:inherit; }
+  button { cursor:pointer; }
+  button.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:11px;
+    text-transform:uppercase; letter-spacing:.4px; padding:4px 4px; }
+  td { padding:3px 4px; border-top:1px solid var(--line); }
+  td input { width:100%; padding:4px 6px; }
+  pre { background:#0b0e14; border:1px solid var(--line); border-radius:8px;
+    padding:10px; overflow:auto; font-size:12px; max-height:230px; }
+  .muted { color:var(--muted); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  .note { font-size:12.5px; margin-top:8px; }
+</style>
+
+<header>
+  <h1>Sensor placement</h1>
+  <p>Click the plan where each WLAN Pi physically sits. Coordinates are read off
+     the image, so there is no y convention to get wrong — the bridge converts
+     them.</p>
+</header>
+
+<main>
+  <div class="panel">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <select id="plan"></select>
+      <span class="muted" id="planInfo"></span>
+    </div>
+    <div class="wrap"><img id="img" alt="floor plan" /><svg id="dots"></svg></div>
+    <div class="note muted" id="hint">Click to add a sensor.</div>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th>id</th><th>x_px</th><th>y_px</th><th>offset</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="note" id="geom"></div>
+    <div style="display:flex;gap:8px;margin:12px 0 8px">
+      <button class="primary" id="copy">Copy JSON</button>
+      <button id="clear">Clear</button>
+    </div>
+    <pre id="out">{}</pre>
+    <div class="note muted">Save as the file named by <code>SENSOR_CONFIG_PATH</code>
+      (default <code>./sensors.json</code>), then set <code>SENSORS_ENABLED=true</code>
+      and <code>SENSOR_TOKEN</code>, and restart.</div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let plans = [], sensors = [], nat = { w: 0, h: 0 };
+
+async function load() {
+  plans = (await fetch("/api/floorplans").then(r => r.json())).filter(p => p.width_px);
+  $("plan").innerHTML = plans.map(p =>
+    `<option value="${p.id}">${p.name || p.id}</option>`).join("")
+    || `<option>no floor plans</option>`;
+  choose();
+}
+
+function plan() { return plans.find(p => p.id === $("plan").value) || null; }
+
+function choose() {
+  const p = plan();
+  if (!p) return;
+  $("img").src = `/api/floorplans/${encodeURIComponent(p.id)}/image`;
+  /* Without a scale the bridge cannot turn pixels into metres and will refuse
+     to locate anything — say so here rather than after three Pis are deployed. */
+  $("planInfo").innerHTML = p.meters_per_px
+    ? `${p.width_px}×${p.height_px} px · ${p.meters_per_px.toFixed(4)} m/px ·
+       ${(p.width_px * p.meters_per_px).toFixed(1)} × ${(p.height_px * p.meters_per_px).toFixed(1)} m`
+    : `<span class="bad">no scale set in InnerSpace — locating will refuse this plan</span>`;
+  render();
+}
+
+$("img").addEventListener("load", e => {
+  nat = { w: e.target.naturalWidth, h: e.target.naturalHeight };
+  render();
+});
+
+$("img").addEventListener("click", e => {
+  const r = e.target.getBoundingClientRect();
+  // displayed size != natural size; scale the click back to image pixels
+  const x = (e.clientX - r.left) / r.width * nat.w;
+  const y = (e.clientY - r.top) / r.height * nat.h;
+  sensors.push({ id: `pi-${sensors.length + 1}`, x_px: Math.round(x),
+                 y_px: Math.round(y), rssi_offset: 0 });
+  render();
+});
+
+function render() {
+  const p = plan(), mpp = (p && p.meters_per_px) || 0;
+  const svg = $("dots");
+  svg.setAttribute("viewBox", `0 0 ${nat.w || 1} ${nat.h || 1}`);
+  svg.style.width = "100%"; svg.style.height = "100%";
+  svg.setAttribute("preserveAspectRatio", "none");
+  const R = Math.max(nat.w, nat.h) * 0.012 || 8;
+  svg.innerHTML = sensors.map(s => `
+    <circle cx="${s.x_px}" cy="${s.y_px}" r="${R}" fill="#38bdf8" opacity=".9"/>
+    <text x="${s.x_px}" y="${s.y_px - R * 1.4}" fill="#7dd3fc" font-size="${R * 1.6}"
+      text-anchor="middle" font-family="system-ui">${s.id}</text>`).join("");
+
+  $("rows").innerHTML = sensors.map((s, i) => `
+    <tr><td><input data-i="${i}" data-k="id" value="${s.id}"></td>
+      <td><input data-i="${i}" data-k="x_px" value="${s.x_px}"></td>
+      <td><input data-i="${i}" data-k="y_px" value="${s.y_px}"></td>
+      <td><input data-i="${i}" data-k="rssi_offset" value="${s.rssi_offset}"></td>
+      <td><button data-del="${i}">×</button></td></tr>`).join("");
+  $("rows").querySelectorAll("input").forEach(el => el.addEventListener("change", () => {
+    const s = sensors[+el.dataset.i], k = el.dataset.k;
+    s[k] = k === "id" ? el.value : (parseFloat(el.value) || 0);
+    render();
+  }));
+  $("rows").querySelectorAll("button[data-del]").forEach(b =>
+    b.addEventListener("click", () => { sensors.splice(+b.dataset.del, 1); render(); }));
+
+  $("out").textContent = JSON.stringify(
+    { plan_id: p ? p.id : "", sensors, targets: [] }, null, 2);
+  $("geom").innerHTML = advice(mpp);
+}
+
+/* The two things that make a deployment produce nothing, or produce confident
+   nonsense — neither of which is visible once the Pis are on the wall. */
+function advice(mpp) {
+  const out = [];
+  if (sensors.length < 3) {
+    out.push(`<span class="warn">${sensors.length} of 3 minimum.</span>
+      Two circles meet at two points; a third picks one.`);
+  }
+  if (sensors.length >= 3 && mpp) {
+    // Largest triangle area over all triples, relative to the span. Near-zero
+    // means near-collinear: those fit BEAUTIFULLY and are ambiguous between
+    // two mirrored positions, and the residual will not warn you.
+    let best = 0, span = 0;
+    for (let i = 0; i < sensors.length; i++)
+      for (let j = i + 1; j < sensors.length; j++) {
+        const d = Math.hypot(sensors[i].x_px - sensors[j].x_px,
+                             sensors[i].y_px - sensors[j].y_px);
+        if (d > span) span = d;
+        for (let k = j + 1; k < sensors.length; k++) {
+          const a = sensors[i], b = sensors[j], c = sensors[k];
+          const area = Math.abs((b.x_px - a.x_px) * (c.y_px - a.y_px)
+                              - (c.x_px - a.x_px) * (b.y_px - a.y_px)) / 2;
+          if (area > best) best = area;
+        }
+      }
+    const ratio = span ? best / (span * span) : 0;
+    if (ratio < 0.04) {
+      out.push(`<span class="bad">Nearly in a straight line.</span> Collinear
+        sensors fit the data well and are still ambiguous between two mirrored
+        positions — the residual will not tell you. Move one off the line.`);
+    } else {
+      out.push(`<span class="muted">Geometry looks usable. Longest baseline
+        ${(span * mpp).toFixed(1)} m.</span>`);
+    }
+  }
+  return out.join("<br>");
+}
+
+$("plan").addEventListener("change", choose);
+$("clear").addEventListener("click", () => { sensors = []; render(); });
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("out").textContent);
+    $("copy").textContent = "Copied"; setTimeout(() => $("copy").textContent = "Copy JSON", 1200);
+  } catch (e) { $("copy").textContent = "Select the JSON and copy"; }
+});
+load();
+</script>
