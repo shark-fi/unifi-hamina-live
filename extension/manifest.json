@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "UniFi Live",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Live UniFi clients and AP telemetry on the InnerSpace floor plan, and on Hamina's map. Read-only (GETs only).",
   "permissions": [
     "storage",

@@ -122,6 +122,10 @@
       <option value="https://us.hamina.com"></option>
       <option value="https://eu.hamina.com"></option>
     </datalist>
+    <label for="haminabridge">Bridge for this overlay</label>
+    <input id="haminabridge" type="text" list="known-bridges"
+           placeholder="http://192.168.1.50:8080" />
+    <datalist id="known-bridges"></datalist>
     <div class="row">
       <button id="haminaenable" class="primary">Enable</button>
       <button id="haminadisable">Disable</button>
@@ -133,7 +137,12 @@
         is sent to Hamina — the panel is built in your browser from Hamina's own
         map API plus the bridge.</p>
       <p>Use <code>us.hamina.com</code> or <code>eu.hamina.com</code>, whichever
-        you sign in to. Needs a bridge configured above.</p>
+        you sign in to.</p>
+      <p>The bridge decides <em>which console</em> the panel reads. With one
+        console it is picked for you; with two there is nothing to guess from,
+        so choose it here. Pointing at the wrong one is quiet and convincing —
+        every AP reports <code>not in UniFi</code>, which reads as a
+        name-matching problem rather than a wrong console.</p>
     </details>
   </section>
 

@@ -29,11 +29,12 @@
   window.__unifiLiveHamina = true;
 
   const NS = "unifi-live-hamina";
-  const BUILD = "h4";
+  const BUILD = "h5";
   const POLL_MS = 15000;
   const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
   let bridgeBase = null;
+  let ambiguous = false;
   let panel = null, body = null, statusEl = null;
   let timer = null, lastMapId = null, lastErr = null, lastRows = null;
 
@@ -381,7 +382,13 @@
     const mapId = mapIdFromUrl();
     if (!mapId) { fail("open a floor plan to see live data"); return; }
     lastMapId = mapId;
-    if (!bridgeBase) { fail("no bridge set — configure one in the extension popup"); return; }
+    if (!bridgeBase) {
+      fail(ambiguous
+        ? "more than one bridge is configured and none is chosen for Hamina — "
+          + "pick one in the extension popup (Hamina overlay -> Bridge)"
+        : "no bridge set — configure one in the extension popup");
+      return;
+    }
 
     let hAps, live;
     try {
@@ -403,9 +410,16 @@
 
     const matched = rows.filter((r) => r.live).length;
     const extra = live.length - matched;
+    // Naming the bridge is the whole point: nothing matching, with APs to spare
+    // on the other side, is what pointing at the wrong console looks like, and
+    // the panel used to present it as a property of the APs.
+    let host = bridgeBase;
+    try { host = new URL(bridgeBase).host; } catch (_e) { /* show it raw */ }
     render(rows,
       `${matched}/${hAps.length} matched` +
-      (extra > 0 ? ` · ${extra} UniFi AP${extra === 1 ? "" : "s"} not on this map` : ""));
+      (extra > 0 ? ` · ${extra} UniFi AP${extra === 1 ? "" : "s"} not on this map` : "") +
+      (matched === 0 && live.length ? " — wrong bridge?" : "") +
+      ` · via ${host}`);
   }
 
   function start() {
@@ -435,11 +449,19 @@
 
   chrome.storage.local.get(["haminaBridge", "bridges", "bridge"]).then((s) => {
     // An explicit Hamina bridge wins. Otherwise, if exactly one console bridge
-    // is configured, use it — the common case is one bridge, one site, and
-    // making the user type the same URL twice earns nothing.
+    // is configured, use it — one bridge, one site, and making the user type
+    // the same URL twice earns nothing.
+    //
+    // With TWO consoles configured this used to fall through to the legacy
+    // single `bridge` value, i.e. whichever console was set up first, and say
+    // nothing about it. The panel then read a different site's APs and reported
+    // "not in UniFi" against every AP on the map — which looks exactly like a
+    // name-matching bug and is not one. Ambiguity is now refused out loud.
     const map = s.bridges || {};
-    const only = Object.keys(map).length === 1 ? map[Object.keys(map)[0]] : null;
-    bridgeBase = s.haminaBridge || only || s.bridge || null;
+    const keys = Object.keys(map);
+    bridgeBase = s.haminaBridge || (keys.length === 1 ? map[keys[0]] : null)
+      || (keys.length === 0 ? s.bridge : null) || null;
+    ambiguous = !s.haminaBridge && keys.length > 1;
     start();
   });
 })();
