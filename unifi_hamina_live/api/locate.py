@@ -27,11 +27,17 @@ router = APIRouter(tags=["sensors"])
 
 def _service(request: Request):
     svc = getattr(request.app.state, "locate", None)
-    if svc is None:
-        raise HTTPException(status_code=404, detail={
-            "error": "sensor support is off. Set SENSORS_ENABLED=true, "
-                     "SENSOR_TOKEN, and SENSOR_CONFIG_PATH."})
-    return svc
+    if svc is not None:
+        return svc
+    # Enabled but unusable is a different answer from switched off, and the
+    # difference is the whole diagnosis: one is a config file to fix, the other
+    # is a feature nobody turned on.
+    why = getattr(request.app.state, "locate_error", None)
+    if why:
+        raise HTTPException(status_code=503, detail={"error": why})
+    raise HTTPException(status_code=404, detail={
+        "error": "sensor support is off. Set SENSORS_ENABLED=true, "
+                 "SENSOR_TOKEN, and SENSOR_CONFIG_PATH."})
 
 
 def require_sensor_token(

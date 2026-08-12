@@ -100,14 +100,19 @@ def test_an_unknown_sensor_id_is_an_error_not_a_silent_200():
         assert "pi-1" in r.json()["detail"]["error"], "should list the real ids"
 
 
-def test_a_layout_with_too_few_sensors_is_refused_at_startup():
+def test_a_layout_with_too_few_sensors_disables_ingest_but_serves():
+    """This used to refuse to start, and that was the wrong hammer.
+
+    A layout problem cannot make the write endpoint unsafe — it makes it
+    unusable. Taking the whole bridge down for it strands the live data the
+    extension and Hamina overlay depend on. Reported on /api/located instead.
+    """
     with tempfile.TemporaryDirectory() as tmp:
-        try:
-            make(tmp, sensors=SENSORS[:2])
-        except RuntimeError as e:
-            assert "at least 3 sensors" in str(e)
-        else:
-            raise AssertionError("should refuse to start")
+        with make(tmp, sensors=SENSORS[:2]) as c:
+            assert c.get("/api/health").json()["ok"] is True
+            r = c.get("/api/located")
+            assert r.status_code == 503
+            assert "at least 3 sensors" in r.json()["detail"]["error"]
 
 
 # --- the empty-list failures, each named ------------------------------------
@@ -205,3 +210,58 @@ def test_the_plan_extent_is_reported_so_a_client_can_draw_it():
     with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
         b = c.get("/api/located").json()
         assert (b["width_px"], b["height_px"]) == (400.0, 300.0)
+
+
+def test_a_missing_config_does_not_take_the_whole_bridge_down():
+    """Observed on a live host: SENSORS_ENABLED set where no sensors.json was.
+
+    The container crash-looped, so the live data the extension and the Hamina
+    overlay depend on went off the air — because of a file that has nothing to
+    do with either. The rest of the service must keep serving.
+    """
+    cfg = Settings(_env_file=None, sensors_enabled=True, sensor_token="s3cret",
+                   sensor_config_path="/nope/sensors.json")
+    with TestClient(create_app(settings=cfg,
+                               collector=FakeCollector(build_snapshot()))) as c:
+        assert c.get("/api/health").json()["ok"] is True
+        assert c.get("/api/access-points").status_code == 200
+
+
+def test_enabled_but_unusable_reads_differently_from_switched_off():
+    """503 with the reason, not 404 "it's off" — different problem, different fix."""
+    cfg = Settings(_env_file=None, sensors_enabled=True, sensor_token="s3cret",
+                   sensor_config_path="/nope/sensors.json")
+    with TestClient(create_app(settings=cfg,
+                               collector=FakeCollector(build_snapshot()))) as c:
+        r = c.get("/api/located")
+        assert r.status_code == 503
+        err = r.json()["detail"]["error"]
+        assert "sensor ingest is OFF" in err
+        assert "/nope/sensors.json" in err, "name the file it looked for"
+        assert "mount" in err, "in a container the path is inside the image"
+
+
+def test_a_broken_config_is_reported_the_same_way():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "sensors.json")
+        with open(path, "w") as f:
+            json.dump({"plan_id": PLAN, "sensors": SENSORS[:1]}, f)  # too few
+        cfg = Settings(_env_file=None, sensors_enabled=True,
+                       sensor_token="s3cret", sensor_config_path=path)
+        with TestClient(create_app(settings=cfg,
+                                   collector=FakeCollector(build_snapshot()))) as c:
+            assert c.get("/api/health").json()["ok"] is True
+            assert "at least 3 sensors" in c.get("/api/located").json()["detail"]["error"]
+
+
+def test_a_missing_token_is_still_fatal():
+    """Unlike the config file, this one guards a write endpoint."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Settings(_env_file=None, sensors_enabled=True, sensor_token="",
+                       sensor_config_path=write_layout(tmp))
+        try:
+            create_app(settings=cfg, collector=FakeCollector(build_snapshot()))
+        except RuntimeError as e:
+            assert "SENSOR_TOKEN" in str(e)
+        else:
+            raise AssertionError("a missing token must still refuse to start")

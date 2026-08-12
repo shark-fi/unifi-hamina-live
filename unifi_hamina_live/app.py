@@ -143,17 +143,31 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
                 "SENSORS_ENABLED=true needs SENSOR_TOKEN set — ingest writes "
                 "positions that get drawn on a floor plan, so it is not left "
                 "open")
+        # A missing or broken layout is NOT fatal, unlike a missing token.
+        # The token protects a write endpoint, so refusing to start is right.
+        # This file only decides whether one optional feature works — and
+        # crashing takes down the live data the extension and Hamina overlay
+        # depend on, in a restart loop, for a file that has nothing to do with
+        # them. Observed exactly that: SENSORS_ENABLED set on the wrong host
+        # took the bridge off the air until someone read a stack trace.
+        app.state.locate = None
+        app.state.locate_error = None
         try:
             layout = Layout.load(settings.sensor_config_path)
         except (OSError, ValueError) as exc:
-            raise RuntimeError(
-                "SENSORS_ENABLED=true but %s could not be read: %s"
-                % (settings.sensor_config_path, exc)) from exc
-        app.state.locate = LocateService(settings, layout)
+            resolved = os.path.abspath(settings.sensor_config_path)
+            app.state.locate_error = (
+                "sensor ingest is OFF: %s (%s). In a container this path is "
+                "inside the image — mount the file at %s or set "
+                "SENSORS_ENABLED=false."
+                % (exc, settings.sensor_config_path, resolved))
+            logging.getLogger(__name__).error(app.state.locate_error)
+        else:
+            app.state.locate = LocateService(settings, layout)
+            logging.getLogger(__name__).info(
+                "sensor ingest on: %d sensor(s) on plan %s",
+                len(layout.sensors), layout.plan_id)
         app.include_router(locate_router)
-        logging.getLogger(__name__).info(
-            "sensor ingest on: %d sensor(s) on plan %s",
-            len(layout.sensors), layout.plan_id)
 
     app.include_router(neutral_router)
     app.include_router(meraki_router)
