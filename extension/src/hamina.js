@@ -452,11 +452,13 @@
     // is configured, use it — one bridge, one site, and making the user type
     // the same URL twice earns nothing.
     //
-    // With TWO consoles configured this used to fall through to the legacy
-    // single `bridge` value, i.e. whichever console was set up first, and say
-    // nothing about it. The panel then read a different site's APs and reported
-    // "not in UniFi" against every AP on the map — which looks exactly like a
-    // name-matching bug and is not one. Ambiguity is now refused out loud.
+    // Whatever is chosen, the panel says so. Observed in the field: a stored
+    // haminaBridge kept pointing at the first console after a second was added
+    // — it is copied from the console section when the overlay is enabled, so
+    // it is only ever as right as that field happened to be — and the panel
+    // reported "not in UniFi" against every AP on the map. Identical names on
+    // both sides, so it reads as a name-matching bug. It was the wrong console,
+    // and nothing on screen named the bridge. Ambiguity is refused out loud too.
     const map = s.bridges || {};
     const keys = Object.keys(map);
     bridgeBase = s.haminaBridge || (keys.length === 1 ? map[keys[0]] : null)
