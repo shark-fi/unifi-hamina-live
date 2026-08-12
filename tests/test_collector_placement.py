@@ -126,3 +126,52 @@ async def test_an_expired_session_re_authenticates_once():
     snap = await col.poll_once()
     assert state["logins"] == 2, "should re-authenticate exactly once"
     assert snap.ok, "the retry should have produced a good snapshot"
+
+
+async def test_a_rate_limited_console_is_left_alone():
+    """Backing off is the only thing that clears a rate limit.
+
+    Reusing sessions stops us *creating* one; it does nothing for a console
+    that is already refusing, because every poll dropped the dead session and
+    logged in again — the same ~120/hour that caused the block, so the bridge
+    fed the limiter holding it down and never recovered.
+    """
+    from unifi_hamina_live.unifi.client import UniFiError
+
+    attempts = {"n": 0}
+
+    class RateLimitedClient(FakeClient):
+        async def login(self):
+            attempts["n"] += 1
+            raise UniFiError("login failed: HTTP 429")
+
+    col = Collector(Settings(_env_file=None), client_factory=RateLimitedClient)
+    for _ in range(10):
+        snap = await col.poll_once()
+
+    assert attempts["n"] == 1, f"kept knocking: {attempts['n']} login attempts"
+    assert "429" in (snap.error or ""), "the real cause must survive the backoff"
+    assert "not retrying" in (snap.error or ""), "and say we are holding off"
+
+
+async def test_the_backoff_lifts_and_the_bridge_recovers():
+    """A backoff nobody exits is just a slower outage."""
+    from unifi_hamina_live.unifi.client import UniFiError
+
+    state = {"fail": True, "logins": 0}
+
+    class FlakyClient(FakeClient):
+        async def login(self):
+            state["logins"] += 1
+            if state["fail"]:
+                raise UniFiError("login failed: HTTP 429")
+
+    col = Collector(Settings(_env_file=None), client_factory=FlakyClient)
+    assert not (await col.poll_once()).ok
+    state["fail"] = False
+    assert not (await col.poll_once()).ok, "should still be inside the backoff"
+
+    col._login_block_until = 0.0          # the window elapses
+    snap = await col.poll_once()
+    assert snap.ok, f"should recover once the window passes: {snap.error}"
+    assert col._login_failures == 0, "a good login must clear the backoff state"

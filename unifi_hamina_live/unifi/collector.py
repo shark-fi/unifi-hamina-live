@@ -14,6 +14,12 @@ from .client import UniFiAuthError, UniFiClient, UniFiError
 
 log = logging.getLogger("unifi_hamina_live.collector")
 
+# Backoff after a failed login, doubling per consecutive failure. A rate-limited
+# console only clears if we stop knocking, so retrying at the poll interval is
+# self-defeating: it keeps the limiter fed and the bridge locked out.
+LOGIN_BACKOFF_START = 60.0
+LOGIN_BACKOFF_MAX = 900.0
+
 
 class Collector:
     """Owns the poll loop and the current snapshot.
@@ -26,6 +32,11 @@ class Collector:
         self._settings = settings
         self._client_factory = client_factory or self._default_factory
         self._client: UniFiClient | None = None
+        # consecutive login failures, and the time before which we refuse to
+        # try again. Reset by any successful login.
+        self._login_failures = 0
+        self._login_block_until = 0.0
+        self._login_error = ""
         self._snapshot = Snapshot(generated_at=0.0, ok=False, error="no poll yet")
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
@@ -91,8 +102,38 @@ class Collector:
         the console stopped accepting the one we hold.
         """
         if self._client is None:
+            now = time.time()
+            if now < self._login_block_until:
+                # Deliberately not attempting. Reusing sessions stops us
+                # *creating* a rate limit; only backing off gets us out of one.
+                raise UniFiError(
+                    f"{self._login_error} — not retrying for "
+                    f"{self._login_block_until - now:.0f}s after "
+                    f"{self._login_failures} consecutive login failures"
+                )
             client = self._client_factory()
-            await client.login()
+            try:
+                await client.login()
+            except UniFiError as exc:
+                self._login_failures += 1
+                delay = min(
+                    LOGIN_BACKOFF_START * 2 ** (self._login_failures - 1),
+                    LOGIN_BACKOFF_MAX,
+                )
+                self._login_block_until = time.time() + delay
+                self._login_error = str(exc)
+                log.warning(
+                    "login failed (%d in a row): %s — backing off %.0fs",
+                    self._login_failures, exc, delay,
+                )
+                try:
+                    await client.aclose()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+                raise
+            self._login_failures = 0
+            self._login_block_until = 0.0
+            self._login_error = ""
             self._client = client
         return self._client
 
@@ -122,8 +163,9 @@ class Collector:
             if "429" in str(exc):
                 log.warning(
                     "poll failed: %s — the console is rate-limiting logins. "
-                    "It clears on its own; check nothing else is polling this "
-                    "console with the same account.", exc)
+                    "It clears once we stop trying, which the backoff above "
+                    "now does; check nothing else is polling this console with "
+                    "the same account.", exc)
             else:
                 log.warning("poll failed: %s", exc)
             await self._drop_session()
