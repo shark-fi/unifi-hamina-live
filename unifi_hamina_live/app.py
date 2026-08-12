@@ -12,6 +12,7 @@ scheduled OpenIntent refresher into the app lifespan, and mounts:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import platform
@@ -68,6 +69,32 @@ def _pkg_version() -> str:
         return "unknown"
 
 
+def code_fingerprint() -> str:
+    """A short hash of the Python actually loaded in this process.
+
+    `sha` below is stamped from a build arg that only CI passes, so every
+    locally built image reports "unknown" — and a local build is what the
+    runbook tells people to do. An endpoint that exists to answer "am I running
+    the fix?" answered it for CI images only, which is the case that needed it
+    least.
+
+    Hashing the source on disk needs no build arg, no git metadata in the image,
+    and no cooperation from whoever built it. It is not a git SHA and cannot be
+    read as one; it is a value you can reproduce against a checkout to see
+    whether the two match:
+
+        find unifi_hamina_live -name '*.py' | sort | xargs cat | shasum -a 256
+
+    Same digest, same code. Different digest, the container is not running what
+    you are reading.
+    """
+    root = Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    for f in sorted(root.rglob("*.py")):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:12]
+
+
 def create_app(settings: Settings | None = None, collector: Collector | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(
@@ -78,6 +105,8 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     )
     app.state.settings = settings
     app.state.collector = collector or Collector(settings)
+    # computed once: the files cannot change under a running process
+    app.state.code_fingerprint = code_fingerprint()
 
     @app.get("/version", include_in_schema=False)
     def version():
@@ -88,14 +117,15 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         answering it meant exec'ing in and inferring from behaviour. A build that
         cannot say what it is makes every other diagnosis provisional.
 
-        `sha` is stamped by CI at image build time. A local build, or a source
-        checkout run directly, reports "unknown" — which is itself the answer to
-        "am I running the published image?".
+        `sha` is stamped by CI and reads "unknown" on any local build, so
+        `code` is the field to compare when you built the image yourself — see
+        :func:`code_fingerprint`.
         """
         return {
             "name": "unifi-hamina-live",
             "version": _pkg_version(),
             "sha": os.environ.get("BUILD_SHA", "unknown"),
+            "code": app.state.code_fingerprint,
             "built_at": os.environ.get("BUILD_TIME", "unknown"),
             "python": platform.python_version(),
         }

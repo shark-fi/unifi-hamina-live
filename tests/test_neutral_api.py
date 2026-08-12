@@ -57,9 +57,8 @@ def test_version_endpoint_reports_the_build():
 
     Every "the fix didn't work" report against this project has begun with a
     container that predated the fix — and answering that meant exec'ing in and
-    inferring from behaviour. `sha` is stamped by CI at image build time; a local
-    build or a source checkout reports "unknown", which is itself the answer to
-    "am I running the published image?".
+    inferring from behaviour. `sha` is stamped by CI at image build time; a
+    local build reports "unknown", so `code` carries the answer there.
     """
     import os
 
@@ -73,7 +72,7 @@ def test_version_endpoint_reports_the_build():
     with TestClient(app) as c:
         body = c.get("/version").json()
     assert body["name"] == "unifi-hamina-live"
-    for key in ("version", "sha", "built_at", "python"):
+    for key in ("version", "sha", "code", "built_at", "python"):
         assert key in body and body[key], key
 
     # stamped from the environment, so an image can report its own commit
@@ -102,3 +101,37 @@ def test_version_is_not_in_the_request_capture():
         c.get("/version")
         paths = [r["path"] for r in c.get("/catalyst/_captured").json()["requests"]]
     assert "/version" not in paths
+
+
+
+def test_version_identifies_a_locally_built_image():
+    """`sha` is CI-only, and the runbook tells people to build locally.
+
+    Reporting "unknown" for every local build left /version unable to answer the
+    one question it exists for — "am I running the fix?" — in the case that
+    needed it most. Hashing the loaded source needs no build arg and no git
+    metadata in the image.
+    """
+    import hashlib
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+    import unifi_hamina_live
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.config import Settings
+    from tests.conftest import FakeCollector, build_snapshot
+
+    app = create_app(settings=Settings(_env_file=None),
+                     collector=FakeCollector(build_snapshot()))
+    with TestClient(app) as c:
+        code = c.get("/version").json()["code"]
+
+    # only useful if you can reproduce it against a checkout and compare
+    root = Path(unifi_hamina_live.__file__).resolve().parent
+    h = hashlib.sha256()
+    for f in sorted(root.rglob("*.py")):
+        h.update(f.read_bytes())
+    assert code == h.hexdigest()[:12]
+
+    # and it must not be confusable with the git sha beside it
+    assert len(code) == 12
