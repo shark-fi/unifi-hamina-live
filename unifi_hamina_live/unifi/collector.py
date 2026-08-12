@@ -10,7 +10,7 @@ import time
 from ..config import Settings
 from ..models import AccessPoint, FloorPlan, Site, Snapshot
 from . import normalize, placement
-from .client import UniFiClient, UniFiError
+from .client import UniFiAuthError, UniFiClient, UniFiError
 
 log = logging.getLogger("unifi_hamina_live.collector")
 
@@ -25,6 +25,7 @@ class Collector:
     def __init__(self, settings: Settings, client_factory=None) -> None:
         self._settings = settings
         self._client_factory = client_factory or self._default_factory
+        self._client: UniFiClient | None = None
         self._snapshot = Snapshot(generated_at=0.0, ok=False, error="no poll yet")
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
@@ -78,16 +79,54 @@ class Collector:
                         s.num_clients = len(snap.clients_for_site(site_id))
         return changed
 
+    async def _session(self) -> "UniFiClient":
+        """A logged-in client, reused across polls.
+
+        This used to build a client and authenticate on EVERY poll — roughly 120
+        logins an hour at the default interval. UniFi OS rate-limits
+        authentication, so the bridge eventually locked itself out with
+        "login failed: HTTP 429" and then kept hammering at the same rate, which
+        is why it did not recover on its own. A session cookie is good for far
+        longer than a poll interval; the only reason to re-authenticate is that
+        the console stopped accepting the one we hold.
+        """
+        if self._client is None:
+            client = self._client_factory()
+            await client.login()
+            self._client = client
+        return self._client
+
+    async def _drop_session(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:  # pragma: no cover - best effort
+                pass
+
     async def poll_once(self) -> Snapshot:
         """Fetch and normalize one full snapshot. Never raises; failures are
         recorded on the returned (and stored) snapshot."""
         started = time.time()
-        client = self._client_factory()
         try:
-            await client.login()
-            snap = await self._collect(client)
+            try:
+                snap = await self._collect(await self._session())
+            except UniFiAuthError:
+                # The session expired or was invalidated. Re-authenticate ONCE
+                # and retry; if that fails too it is a real credentials problem,
+                # not a stale cookie, and retrying further only feeds the rate
+                # limiter that caused this fix.
+                await self._drop_session()
+                snap = await self._collect(await self._session())
         except UniFiError as exc:
-            log.warning("poll failed: %s", exc)
+            if "429" in str(exc):
+                log.warning(
+                    "poll failed: %s — the console is rate-limiting logins. "
+                    "It clears on its own; check nothing else is polling this "
+                    "console with the same account.", exc)
+            else:
+                log.warning("poll failed: %s", exc)
+            await self._drop_session()
             snap = Snapshot(
                 generated_at=started, ok=False, error=str(exc),
                 # keep last good data visible if we had any
@@ -98,8 +137,7 @@ class Collector:
         except Exception as exc:  # defensive: keep the loop alive
             log.exception("unexpected poll error")
             snap = Snapshot(generated_at=started, ok=False, error=repr(exc))
-        finally:
-            await client.aclose()
+            await self._drop_session()
 
         async with self._lock:
             self._snapshot = snap
@@ -243,3 +281,5 @@ class Collector:
         if self._task:
             await self._task
             self._task = None
+        # the session outlives a poll now, so shutdown has to close it
+        await self._drop_session()
