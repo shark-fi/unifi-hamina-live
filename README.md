@@ -325,8 +325,40 @@ Hamina gets no floors. The logs are the only place it shows:
 GET /proxy/innerspace/api/project?mode=2D "HTTP/1.1 403 Forbidden"
 ```
 
-Note the console's URL as the host sees it (`https://192.168.1.1`,
-`https://10.0.0.1:8443`, a UDM's address, whatever it is). No trailing slash.
+Note the console's URL as the host sees it, **including the port**. No trailing
+slash.
+
+| console | URL |
+|---|---|
+| UniFi OS appliance — UDM, UDR, UNVR, Cloud Key Gen2 | `https://192.168.1.1` |
+| **UniFi OS Server** — UniFi OS on your own Linux box | `https://10.0.0.5:11443` |
+| classic software controller (Java, self-hosted) | `https://10.0.0.5:8443` |
+
+**UniFi OS Server publishes management on 11443, not 443**, because 443 on a
+general-purpose host is usually already taken. Everything else about it is
+ordinary UniFi OS — same `/proxy/network` and `/proxy/innerspace` paths, same
+login, InnerSpace and Protect present — so only the port differs. Getting it
+wrong costs more time than it should, because the failure is a bare TCP refusal
+with nothing pointing at the port:
+
+```
+cannot reach https://10.0.0.5: All connection attempts failed
+```
+
+If you are unsure, look at what is listening on the console itself. UniFi OS
+Server runs its stack in **rootless Podman**, so every port belongs to `pasta`
+rather than to anything recognisable, and 443 is absent:
+
+```
+$ sudo ss -tlnp | grep pasta
+LISTEN  *:11443   users:(("pasta",pid=1455,...))    <- management: this one
+LISTEN  *:8080    users:(("pasta",pid=1455,...))    <- device inform, NOT the API
+LISTEN  *:8880    users:(("pasta",pid=1455,...))    <- guest portal
+```
+
+`8080` being open is a trap worth naming: it is the device inform port, it
+answers, and it is not the API. Pointing `UNIFI_HOST` at it fails later and
+less clearly than pointing it nowhere.
 
 ### 2. Files on the host
 
@@ -529,6 +561,29 @@ Full walkthrough, alternatives to Cloudflare, and the exact policy setup:
 [docs/EXPOSURE.md](docs/EXPOSURE.md).
 
 ### When something is wrong
+
+**`cannot reach <host>: All connection attempts failed`** is a TCP failure, not
+a credentials problem — nothing was rejected because nothing answered. Wrong
+address, wrong port (see the table in step 1 — UniFi OS Server is on 11443), or
+the console is down. Confirm from inside the container, since its view can
+differ from the host's:
+
+```bash
+docker compose exec unifi-hamina-live python -c "import socket;socket.create_connection(('<console-ip>',11443),5);print('ok')"
+```
+
+`ConnectionRefusedError` means the host is up and nothing is listening on that
+port. A timeout instead means a firewall is dropping it.
+
+**Changing `.env` needs the container recreated**, and `docker compose up -d`
+does not always notice. Ask the container what it actually has rather than
+trusting the file:
+
+```bash
+docker compose exec unifi-hamina-live printenv UNIFI_HOST
+docker compose up -d --force-recreate   # if it disagrees
+```
+
 
 Ask the container what it is running before diagnosing anything else. A stale
 image has explained more "the fix did not work" reports here than every real
