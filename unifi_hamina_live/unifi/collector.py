@@ -10,7 +10,8 @@ import time
 from ..config import Settings
 from ..models import AccessPoint, FloorPlan, Site, Snapshot
 from . import normalize, placement
-from .client import UniFiAuthError, UniFiClient, UniFiError
+from .client import (UniFiAuthError, UniFiClient, UniFiError,
+                     UniFiUnreachableError)
 
 log = logging.getLogger("unifi_hamina_live.collector")
 
@@ -114,6 +115,17 @@ class Collector:
             client = self._client_factory()
             try:
                 await client.login()
+            except UniFiUnreachableError:
+                # Not an auth failure: nothing was rejected, and nothing is
+                # counting attempts. Backing off here would only delay
+                # reconnecting when the host returns, and describing it as a
+                # login failure sends the next person to check credentials that
+                # were never presented.
+                try:
+                    await client.aclose()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+                raise
             except UniFiError as exc:
                 self._login_failures += 1
                 delay = min(
