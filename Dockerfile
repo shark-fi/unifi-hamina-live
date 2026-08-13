@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --no-deps -e .
 # version is a deliberate bump rather than whatever main happened to be at build
 # time. The exporter is a single stdlib-only file, so this costs one layer and
 # no dependencies. Mount over /opt/exporter to develop against a local copy.
-ARG EXPORTER_REF=2cf392983a8b5aa5e7501506938f8d33f7179d34
+ARG EXPORTER_REF=c1ff6f5d51dcf242d3e4854d53d1d341c5099b6f
 ADD https://raw.githubusercontent.com/shark-fi/unifi-hamina-export/${EXPORTER_REF}/unifi_export.py \
     /opt/exporter/unifi_export.py
 RUN chmod 0444 /opt/exporter/unifi_export.py
