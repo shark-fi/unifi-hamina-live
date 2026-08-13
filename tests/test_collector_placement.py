@@ -175,3 +175,51 @@ async def test_the_backoff_lifts_and_the_bridge_recovers():
     snap = await col.poll_once()
     assert snap.ok, f"should recover once the window passes: {snap.error}"
     assert col._login_failures == 0, "a good login must clear the backoff state"
+
+
+async def test_an_unreachable_host_is_not_reported_as_a_login_failure():
+    """Observed on a fresh install pointed at a host with nothing on 443.
+
+    The backoff added for rate limiting counted a TCP failure as a login
+    failure, so the dashboard said "not retrying for 30s after 1 consecutive
+    login failures" about a login that was never attempted — sending the reader
+    to check credentials that were never presented.
+    """
+    from unifi_hamina_live.unifi.client import UniFiUnreachableError
+
+    class UnreachableClient(FakeClient):
+        async def login(self):
+            raise UniFiUnreachableError(
+                "cannot reach https://10.0.0.1: All connection attempts failed")
+
+    col = Collector(Settings(_env_file=None), client_factory=UnreachableClient)
+    snap = await col.poll_once()
+    assert "cannot reach" in (snap.error or "")
+    assert "login failure" not in (snap.error or ""), snap.error
+    assert col._login_failures == 0, "must not count toward the auth backoff"
+
+
+async def test_a_host_that_comes_back_is_retried_immediately():
+    """A backoff on an unreachable host only delays reconnecting.
+
+    Nothing is counting attempts at the other end, so there is nothing to be
+    gentle with — and a console rebooting should be picked up on the next poll,
+    not up to fifteen minutes later.
+    """
+    from unifi_hamina_live.unifi.client import UniFiUnreachableError
+
+    state = {"down": True, "attempts": 0}
+
+    class FlappingClient(FakeClient):
+        async def login(self):
+            state["attempts"] += 1
+            if state["down"]:
+                raise UniFiUnreachableError("cannot reach https://10.0.0.1: refused")
+
+    col = Collector(Settings(_env_file=None), client_factory=FlappingClient)
+    for _ in range(3):
+        assert not (await col.poll_once()).ok
+    assert state["attempts"] == 3, "should keep trying while the host is down"
+
+    state["down"] = False
+    assert (await col.poll_once()).ok, "must recover on the very next poll"

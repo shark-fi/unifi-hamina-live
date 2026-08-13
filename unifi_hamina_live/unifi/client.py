@@ -18,6 +18,17 @@ class UniFiError(RuntimeError):
     pass
 
 
+class UniFiUnreachableError(UniFiError):
+    """The host did not answer at all — DNS, routing, refused, timed out.
+
+    Kept apart from an auth failure because the responses differ. A console
+    that rejects credentials should be knocked on gently, or not at all, in
+    case it is counting attempts. A console that is simply not there is not
+    counting anything, and backing off from it only delays reconnecting when
+    it comes back.
+    """
+
+
 class UniFiAuthError(UniFiError):
     pass
 
@@ -84,7 +95,8 @@ class UniFiClient:
         try:
             resp = await self._client.post("/api/auth/login", json=body)
         except httpx.HTTPError as exc:  # network / TLS
-            raise UniFiError(f"cannot reach {self._base}: {exc}") from exc
+            raise UniFiUnreachableError(
+                f"cannot reach {self._base}: {exc}") from exc
 
         if resp.status_code < 400:
             self._capture_csrf(resp)
