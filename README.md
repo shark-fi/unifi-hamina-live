@@ -448,7 +448,53 @@ Bumping the baked version is a deliberate change to `EXPORTER_REF` in the
 Dockerfile — pinned to a commit rather than a branch, so two builds of the same
 Dockerfile ship the same exporter.
 
-### 6. Reach it from outside the LAN — needed more often than it sounds
+### 6. Optional: locate transmitters with WLAN Pi sensors
+
+Off by default. This is the **only** endpoint that accepts data — everything
+else projects a snapshot the collector fetched — so it is opt-in and will not
+start without a token:
+
+```bash
+SENSORS_ENABLED=true
+SENSOR_TOKEN=$(openssl rand -hex 24)
+SENSOR_CONFIG_PATH=./sensors.json
+```
+
+Build the layout by clicking the plan at **`http://host:8080/sensors`** rather
+than reading pixel coordinates out of an image editor — it emits the JSON, and
+warns about the two things that make a deployment produce nothing: fewer than
+three sensors, and sensors nearly in a straight line (those fit the data well
+and stay ambiguous between two mirrored positions, and the residual will not
+tell you).
+
+**In a container `./sensors.json` is `/app/sensors.json`**, not the file beside
+your compose file. Mount it:
+
+```yaml
+    volumes:
+      - ./sensors.json:/app/sensors.json:ro
+```
+
+Missing or invalid, ingest stays off and `/api/located` says why — the rest of
+the bridge keeps running.
+
+Then point each sensor at this host (see
+[wlanpi-rssi-locate](https://github.com/shark-fi/wlanpi-rssi-locate)):
+
+```bash
+SENSOR_TOKEN=… python3 rssi_sensor.py --collector http://host:8080 --id pi-1 \
+    --iface wlan1@36 --capture aps --setup
+```
+
+Fixes appear on the dashboard as dashed rings sized to their own fitting error,
+and at `GET /api/located`. They are estimates, kept deliberately separate from
+`/api/access-points`, which is surveyed.
+
+Before trusting a number, calibrate the path loss: `rssi_sensor.py --calibrate`,
+or fit it from Protect BLE sensors already placed on a plan with
+`pathloss_calibrate.py` in the exporter repo.
+
+### 7. Reach it from outside the LAN — needed more often than it sounds
 
 Marked optional because a LAN-only setup works without it. But **both of the
 things people usually want this for require it**:
@@ -493,13 +539,23 @@ curl -s localhost:8080/version | jq
 ```
 
 ```json
-{ "name": "unifi-hamina-live", "version": "0.1.0",
-  "sha": "4d1fa90…", "built_at": "…", "python": "3.12.x" }
+{ "name": "unifi-hamina-live", "version": "0.1.0", "sha": "4d1fa90…",
+  "code": "7ca348a2e903", "built_at": "…", "python": "3.12.x" }
 ```
 
-`sha` is the commit the image was built from — compare it against `git log` on
-`main`. `"unknown"` means this is a local build or a source checkout rather than
-the published image, which is itself worth knowing.
+`sha` is the commit CI built the image from. It reads `"unknown"` for **any
+local build** — including `docker compose up --build`, which is what this
+runbook tells you to do — so on your own host it answers nothing.
+
+`code` is the field to use there: a hash of the Python actually loaded in the
+process. Reproduce it from a checkout and compare:
+
+```bash
+find unifi_hamina_live -name '*.py' | sort | xargs cat | shasum -a 256
+```
+
+Same digest, same code. Different digest, the container is not running what you
+are reading.
 
 On a NAS your user is usually not in the `docker` group (prefix everything with
 `sudo`), and a stack created through the NAS UI often has a different compose
