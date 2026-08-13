@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b30";        // shown in the status chip; bump on every change
+  const BUILD = "b31";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -580,7 +580,10 @@
   };
 
   // --- overlay ----------------------------------------------------------
-  let overlay, statusEl, card, tip;
+  let overlay, statusEl, statusText, card, tip;
+  // Default on: the overlay exists to show clients. Restored from storage at
+  // mount so the choice survives a reload and follows you between plans.
+  let showClients = true;
   const groups = new Map();          // apName -> {el, sig}
   const filters = new Map();         // apName -> band | null
   let selected = null;               // {ap, mac}
@@ -656,11 +659,21 @@
       #${NS}-tip .r { display: flex; justify-content: space-between; gap: 18px; }
       #${NS}-tip .r span:first-child { color: #9aa0a6; }
       #${NS}-tip .r span:last-child { white-space: nowrap; }
-      #${NS}-status { position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
+      /* Hiding by CSS rather than by not rendering: the dots keep their
+         positions and their hover targets, so ticking the box back on is
+         instant and nothing has to be recomputed. */
+      #${NS}-overlay.no-cli .cli { display: none; }
+      #${NS}-status { display: flex; align-items: center; gap: 10px;
+        position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
         background: #131722ee; color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
         padding: 7px 11px; border-radius: 8px; border: 1px solid #2a3346;
         pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
       #${NS}-status b { color: #fff; font-weight: 700; }
+      #${NS}-status .toggle { display: flex; align-items: center; gap: 4px;
+        pointer-events: auto; cursor: pointer; user-select: none;
+        padding-left: 10px; border-left: 1px solid #2a3346; color: #9aa0a6; }
+      #${NS}-status .toggle:hover { color: #e6e9ef; }
+      #${NS}-status .toggle input { margin: 0; cursor: pointer; accent-color: #2b6cff; }
       #${NS}-status i { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
         margin-right: 4px; }
       #${NS}-status i.b24 { background: #e0a83c; } #${NS}-status i.b5 { background: #2b6cff; }
@@ -686,8 +699,30 @@
 
     statusEl = document.createElement("div");
     statusEl.id = NS + "-status";
-    statusEl.textContent = "UniFi Live: starting…";
+    statusText = document.createElement("span");
+    statusText.textContent = "UniFi Live: starting…";
+    statusEl.appendChild(statusText);
+
+    /* Show/hide the client dots. On a busy AP they cluster into a blob that
+       hides the plan underneath, and the AP chips (channel, width, power) are
+       what you want on screen while looking at coverage. The bar is
+       pointer-events:none so it never eats a click meant for the canvas; the
+       control re-enables them for itself only. */
+    const toggle = document.createElement("label");
+    toggle.className = "toggle";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = showClients;
+    box.addEventListener("change", () => {
+      showClients = box.checked;
+      applyClientVisibility();
+      chrome.storage.local.set({ showClients });
+    });
+    toggle.appendChild(box);
+    toggle.appendChild(document.createTextNode("clients"));
+    statusEl.appendChild(toggle);
     document.body.appendChild(statusEl);
+    applyClientVisibility();
 
     tip = document.createElement("div");
     tip.id = NS + "-tip";
@@ -1129,12 +1164,16 @@
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(tickPositions); }
 
+  function applyClientVisibility() {
+    overlay?.classList.toggle("no-cli", !showClients);
+  }
+
   function updateStatus() {
-    if (!statusEl) return;
+    if (!statusText) return;
     // Relayed AND no bridge is the only dead end left; with a bridge configured
     // the poll below succeeds and this never renders.
     if (relayOnly && !bridgeBase) {
-      statusEl.innerHTML =
+      statusText.innerHTML =
         `UniFi Live: this remote session is <b>relayed (WebRTC)</b> — the console's ` +
         `API isn't reachable over HTTP here. Open the console on its <b>LAN address</b>, ` +
         `or set a <b>Bridge URL</b> in the extension popup. ` +
@@ -1142,18 +1181,18 @@
       return;
     }
     if (lastErr) {
-      statusEl.innerHTML = `UniFi Live: <b>API error</b> — ${esc(showErr(lastErr))} · saw ` +
+      statusText.innerHTML = `UniFi Live: <b>API error</b> — ${esc(showErr(lastErr))} · saw ` +
         `<b>${esc(showUrl(seenBases[0]))}</b> (${seenBases.length}) · site ` +
         `<b>${esc(siteId())}</b> <span style="opacity:.5">${BUILD}</span>`;
       return;
     }
     if (renderErr) {
-      statusEl.innerHTML = `UniFi Live: <b>render error</b> — ${esc(renderErr)}`;
+      statusText.innerHTML = `UniFi Live: <b>render error</b> — ${esc(renderErr)}`;
       return;
     }
     if (bridgeMismatch) {
       const n = Object.keys(apByName).length;
-      statusEl.innerHTML =
+      statusText.innerHTML =
         `UniFi Live: the bridge is reporting <b>${n}</b> AP${n === 1 ? "" : "s"}, but ` +
         `none of them are on this plan — it polls a <b>different console</b>. Point a ` +
         `bridge at this one, or open this console on its LAN address. ` +
@@ -1168,7 +1207,7 @@
     // how many clients UniFi has actually fingerprinted (the rest show a glyph)
     const withIcon = all.filter((c) => c.devId != null).length;
     const icons = all.length ? ` · icons <b>${withIcon || "none"}</b>` : "";
-    statusEl.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
+    statusText.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
       `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
       `${usingBridge ? " · via <b>bridge</b>" : ""}` +
       ` <span style="opacity:.5">${BUILD}</span>`;
@@ -1176,6 +1215,16 @@
 
   // --- lifecycle --------------------------------------------------------
   let mounted = false, dataTimer = 0;
+  // Read once, before anything renders, so the bar never paints checked and
+  // then flips a frame later.
+  chrome.storage.local.get("showClients").then((v) => {
+    if (v && v.showClients === false) {
+      showClients = false;
+      const box = statusEl?.querySelector(".toggle input");
+      if (box) box.checked = false;
+      applyClientVisibility();
+    }
+  });
   const onInnerspace = () => location.pathname.includes("/innerspace") &&
     document.querySelector('[data-testid="editor-canvas"]');
   function mount() {
@@ -1197,7 +1246,7 @@
     closeCard();
     resetConsoleState();
     overlay?.remove(); statusEl?.remove(); tip?.remove();
-    overlay = statusEl = tip = null;
+    overlay = statusEl = statusText = tip = null;
     groups.clear(); filters.clear();
   }
   let lastHref = location.href;
