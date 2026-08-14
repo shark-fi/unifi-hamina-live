@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b31";        // shown in the status chip; bump on every change
+  const BUILD = "b32";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -161,6 +161,12 @@
   }
 
   let apByName = {}, lastErr = null, apiBase = null, apiV2 = false;
+  /* SuperLink / Protect sensors, keyed the same way APs are. InnerSpace 1.3.23
+     draws them on the plan when the console runs Network AND Protect, which is
+     the only reason this is possible: we pin to the markers UniFi already
+     renders and never compute a position. A gateway adopted to a separate NVR
+     puts its sensors on THAT console's map, not this one. */
+  let sensorByName = {}, sensorErr = null;
   /* Some remote sessions carry console traffic inside a WebRTC data channel
    * (UniFi reports "Rtc-Cloudflare / Ok-Relay"): the page makes no HTTP API
    * request at all, and the <id>.id.ui.direct host it does contact serves only
@@ -345,6 +351,44 @@
   };
 
   let lastCtx = null;
+  /* Protect is a separate app on the same console, so this is same-origin and
+     the session cookie carries. It fails closed and silently: an account
+     without Protect access gets 403, a console without Protect gets 404, and a
+     relayed session has no HTTP API at all — none of which is an error worth
+     shouting about on a feature nobody switched on. */
+  async function refreshSensors() {
+    if (!showSensors) { sensorByName = {}; return; }
+    try {
+      const r = await fetch("/proxy/protect/api/bootstrap",
+                            { credentials: "include" });
+      if (!r.ok) { sensorErr = "HTTP " + r.status; sensorByName = {}; return; }
+      const boot = await r.json();
+      const gw = {};
+      for (const key of ["linkstations", "bridges"]) {
+        for (const g of boot[key] || []) if (g.id) gw[g.id] = g.name || key;
+      }
+      const next = {};
+      for (const sen of boot.sensors || []) {
+        const wcs = sen.wirelessConnectionState || {};
+        const sig = wcs.signalState || sen.bluetoothConnectionState || {};
+        next[norm(sen.name || sen.mac)] = {
+          mac: sen.mac,
+          rssi: sig.signalStrength,
+          battery: (wcs.batteryStatus || {}).percentage,
+          lowBattery: !!(wcs.batteryStatus || {}).isLow,
+          gateway: gw[wcs.bridge] || null,
+          open: sen.isOpened,
+          online: !!sen.isConnected,
+        };
+      }
+      sensorByName = next;
+      sensorErr = null;
+    } catch (e) {
+      sensorErr = String(e && e.message || e);
+      sensorByName = {};
+    }
+  }
+
   function resetConsoleState() {
     apiBase = null; savedBase = null; savedLoaded = false; usingBridge = false;
     apByName = {}; lastErr = null; lastTriedBase = null; lastCtx = null;
@@ -466,6 +510,10 @@
   }
 
   async function refreshData() {
+    // Sensors update every 300 s at the source, so this is far more often than
+    // it changes — but it costs one same-origin GET and keeps the two views
+    // from disagreeing about what is on the map.
+    if (showSensors) refreshSensors();
     const site = siteId();
     // Relayed session: the page has no API, but the bridge does.
     if (relayOnly) {
@@ -584,6 +632,9 @@
   // Default on: the overlay exists to show clients. Restored from storage at
   // mount so the choice survives a reload and follows you between plans.
   let showClients = true;
+  // Off by default: it needs Protect access, and it is additive to a map that
+  // already works without it.
+  let showSensors = false;
   const groups = new Map();          // apName -> {el, sig}
   const filters = new Map();         // apName -> band | null
   let selected = null;               // {ap, mac}
@@ -663,6 +714,14 @@
          positions and their hover targets, so ticking the box back on is
          instant and nothing has to be recomputed. */
       #${NS}-overlay.no-cli .cli { display: none; }
+      /* Sensor chips read as a link state, not a client count: no band colour,
+         no underline bar, and never the same shape as an AP's chips. */
+      #${NS}-overlay .grp.sensor .chip.sen { font-weight: 600; padding: 0 6px;
+        border-radius: 8px; background: #1b2130; color: #cfd6e4;
+        border: 1px solid #2a3346; }
+      #${NS}-overlay .grp.sensor .chip.sen.ok  { color: #4ade80; border-color: #2f6b45; }
+      #${NS}-overlay .grp.sensor .chip.sen.mid { color: #eab308; border-color: #6b5a1f; }
+      #${NS}-overlay .grp.sensor .chip.sen.bad { color: #f87171; border-color: #6b2f2f; }
       #${NS}-status { display: flex; align-items: center; gap: 10px;
         position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
         background: #131722ee; color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
@@ -721,6 +780,20 @@
     toggle.appendChild(box);
     toggle.appendChild(document.createTextNode("clients"));
     statusEl.appendChild(toggle);
+
+    const sToggle = document.createElement("label");
+    sToggle.className = "toggle";
+    const sBox = document.createElement("input");
+    sBox.type = "checkbox";
+    sBox.checked = showSensors;
+    sBox.addEventListener("change", () => {
+      showSensors = sBox.checked;
+      chrome.storage.local.set({ showSensors });
+      refreshSensors().then(updateStatus);
+    });
+    sToggle.appendChild(sBox);
+    sToggle.appendChild(document.createTextNode("sensors"));
+    statusEl.appendChild(sToggle);
     document.body.appendChild(statusEl);
     applyClientVisibility();
 
@@ -944,12 +1017,35 @@
     return bottom;    // null when the console draws no channel chips
   }
 
+  /* Deliberately sparse. UniFi already draws this sensor's temperature,
+     humidity and open/closed state; repeating them would just cover its own
+     labels. What it does NOT show is the radio link — which gateway, how
+     strong — and that is the whole reason to put sensors on an RF map. */
+  function renderSensor(g, name, sen) {
+    const sig = sen.rssi == null ? "" :
+      `<span class="chip sen ${sen.rssi > -60 ? "ok" : sen.rssi > -75 ? "mid" : "bad"}"
+         >${sen.rssi} dBm</span>`;
+    const batt = (sen.lowBattery || (sen.battery != null && sen.battery <= 30))
+      ? `<span class="chip sen bad">${sen.battery}%</span>` : "";
+    const sig2 = sen.online ? "" : `<span class="chip sen bad">offline</span>`;
+    const sigRow = sig + batt + sig2;
+    if (g.sig === sigRow) return;
+    g.sig = sigRow;
+    g.el.innerHTML = sigRow ? `<div class="row sensor-row">${sigRow}</div>` : "";
+    g.el.title = sen.gateway ? "linked to " + sen.gateway : "";
+  }
+
   function renderGroup(g, apName, ap, nativeCh, below) {
     const clients = ap.clients, counts = bandCounts(clients);
     const filter = filters.get(apName) || null;
     const list = filter ? clients.filter((c) => bandOf(c) === filter) : clients;
     const shown = list;                     // every client gets an icon
-    const chans = nativeCh ? [] : (ap.radios || []);
+    /* A radio that is off air reports no channel, and interpolating it printed
+       the literal string "null" in a chip next to real channels — read as a
+       channel, which it is not. Drop it: the AP's other radios still show, and
+       an absent chip says "not on air" more honestly than a word does. */
+    const chans = nativeCh ? []
+      : (ap.radios || []).filter((r) => r.channel != null && r.channel !== "");
     const sig = [filter, nativeCh ? "n" : "", below, BANDS.map((b) => counts[b]).join("/"),
       chans.map((r) => r.band + r.channel).join(","),
       shown.map((c) => c.mac + bandOf(c) + (selected?.mac === c.mac ? "*" : "")).join(",")].join("|");
@@ -1101,12 +1197,15 @@
       const name = norm(title.textContent);
       domNames.add(name);
       const ap = apByName[name];
-      if (!ap || !ap.clients.length) return;
+      const sen = !ap && showSensors ? sensorByName[name] : null;
+      if (!ap && !sen) return;
+      if (ap && !ap.clients.length && !sen) return;
       const r = sec.getBoundingClientRect();
       const x = r.left + r.width / 2, y = r.top - 22;
       if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) return;
       seen.add(name);
       const g = groupFor(name);
+      if (sen) g.el.classList.add("sensor");
       g.el.style.left = x + "px";
       g.el.style.top = y + "px";
       g.el.style.display = "block";
@@ -1128,7 +1227,8 @@
         g.nativeCh = chipsBottom != null;
         g.below = Math.round(Math.max(chipsBottom ?? 0, r.bottom) - y + 12);
       }
-      renderGroup(g, name, ap, g.nativeCh, g.below);
+      if (sen) renderSensor(g, name, sen);
+      else renderGroup(g, name, ap, g.nativeCh, g.below);
       if (selected && selected.ap === name) {
         const el = g.el.querySelector(`.cli[data-mac="${selected.mac}"]`);
         if (el) positionCard(el);
@@ -1199,6 +1299,11 @@
         `<span style="opacity:.5">${BUILD}</span>`;
       return;
     }
+    const nSen = showSensors ? Object.keys(sensorByName).length : 0;
+    const senBit = !showSensors ? ""
+      : sensorErr ? ` · sensors: ${esc(sensorErr)}`
+      : nSen ? ` · ${nSen} sensor${nSen === 1 ? "" : "s"}`
+      : " · sensors: none (needs Protect on this console)";
     const aps = Object.values(apByName).filter((a) => a.clients.length);
     const all = aps.flatMap((a) => a.clients);
     const n = bandCounts(all);
@@ -1209,7 +1314,7 @@
     const icons = all.length ? ` · icons <b>${withIcon || "none"}</b>` : "";
     statusText.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
       `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
-      `${usingBridge ? " · via <b>bridge</b>" : ""}` +
+      `${usingBridge ? " · via <b>bridge</b>" : ""}${senBit}` +
       ` <span style="opacity:.5">${BUILD}</span>`;
   }
 
@@ -1217,12 +1322,18 @@
   let mounted = false, dataTimer = 0;
   // Read once, before anything renders, so the bar never paints checked and
   // then flips a frame later.
-  chrome.storage.local.get("showClients").then((v) => {
+  chrome.storage.local.get(["showClients", "showSensors"]).then((v) => {
     if (v && v.showClients === false) {
       showClients = false;
       const box = statusEl?.querySelector(".toggle input");
       if (box) box.checked = false;
       applyClientVisibility();
+    }
+    if (v && v.showSensors === true) {
+      showSensors = true;
+      const boxes = statusEl?.querySelectorAll(".toggle input");
+      if (boxes && boxes[1]) boxes[1].checked = true;
+      refreshSensors().then(updateStatus);
     }
   });
   const onInnerspace = () => location.pathname.includes("/innerspace") &&
