@@ -180,3 +180,74 @@ def test_an_unscaled_plan_refuses_rather_than_dividing_by_zero():
         assert "meters_per_px" in str(e)
     else:
         raise AssertionError("expected a ValueError")
+
+
+# --- path loss per technology ------------------------------------------------
+
+BLE = PathLoss(rssi_at_1m=-50.0, exponent=3.0)   # ~10 dB weaker TX than an AP
+
+
+def test_the_same_reading_from_ble_is_a_shorter_distance():
+    """The bias this exists to remove.
+
+    BLE transmits about 10 dB weaker, so an identical RSSI means the
+    transmitter is CLOSER, not further. One shared intercept pushes every BLE
+    fix outward — consistently, which is a bias the residual cannot show.
+    """
+    wifi_d = pathloss_distance(-70.0, -40.0, 3.0)
+    ble_d = pathloss_distance(-70.0, -50.0, 3.0)
+    assert ble_d < wifi_d
+    assert 2.0 < wifi_d / ble_d < 2.5, "10 dB at n=3 is about a 2.15x factor"
+
+
+def test_a_ble_transmitter_uses_the_ble_constants():
+    st = Store(SENSORS, PL, window_sec=6.0, path_loss_by_kind={"ble": BLE})
+    report(st, 10.0, 7.5, mac="aa:bb:cc:dd:ee:02", now=0.0, kind="ble")
+    assert st.path_loss_for("ble").rssi_at_1m == -50.0
+    (t,) = st.solve(AREA, now=0.1)
+    assert t.kind == "ble"
+
+
+def test_wifi_is_untouched_by_a_ble_entry_existing():
+    st = Store(SENSORS, PL, path_loss_by_kind={"ble": BLE})
+    assert st.path_loss_for("ap").rssi_at_1m == PL.rssi_at_1m
+    assert st.path_loss_for(None).rssi_at_1m == PL.rssi_at_1m
+    assert st.path_loss_for("something-new").rssi_at_1m == PL.rssi_at_1m
+
+
+def test_a_ble_fix_lands_where_the_signal_came_from():
+    """End to end with BLE constants: synthesise from them, recover the spot."""
+    st = Store(SENSORS, BLE, window_sec=6.0, path_loss_by_kind={"ble": BLE})
+    for s in SENSORS:
+        d = max(math.hypot(6.0 - s.x, 9.0 - s.y), 0.3)
+        st.ingest(s.id, [{"mac": "aa:bb:cc:dd:ee:03", "kind": "ble",
+                          "rssi": BLE.rssi_at_1m
+                                  - 10.0 * BLE.exponent * math.log10(d)}], now=0.0)
+    (t,) = st.solve(AREA, now=0.1)
+    assert math.hypot(t.x_m - 6.0, t.y_m - 9.0) < 0.5, (t.x_m, t.y_m)
+
+
+def test_mixing_kinds_without_splitting_would_move_the_fix():
+    """Why this is a bias and not a rounding detail.
+
+    The same BLE transmitter, solved with Wi-Fi constants, lands somewhere else
+    entirely — so a mixed deployment on one PathLoss is not slightly wrong.
+    """
+    true_xy = (6.0, 9.0)
+
+    def fix(store_pl, by_kind):
+        st = Store(SENSORS, store_pl, path_loss_by_kind=by_kind)
+        for s in SENSORS:
+            d = max(math.hypot(true_xy[0] - s.x, true_xy[1] - s.y), 0.3)
+            st.ingest(s.id, [{"mac": "aa:bb:cc:dd:ee:04", "kind": "ble",
+                              "rssi": BLE.rssi_at_1m
+                                      - 10.0 * BLE.exponent * math.log10(d)}],
+                      now=0.0)
+        (t,) = st.solve(AREA, now=0.1)
+        return t
+
+    right = fix(PL, {"ble": BLE})
+    wrong = fix(PL, {})                      # BLE solved as if it were Wi-Fi
+    off_by = math.hypot(wrong.x_m - right.x_m, wrong.y_m - right.y_m)
+    assert off_by > 2.0, f"only {off_by:.1f} m apart — check the constants"
+    assert math.hypot(right.x_m - true_xy[0], right.y_m - true_xy[1]) < 0.5
