@@ -78,6 +78,15 @@ class LocateService:
             min_sensors=settings.sensor_min_sensors,
             forget_sec=settings.sensor_forget_seconds,
             names=layout.names,
+            path_loss_by_kind={
+                # Only the intercept differs by default; the exponent is a
+                # property of the building, so BLE inherits it unless someone
+                # has measured BLE in this building specifically.
+                "ble": PathLoss(
+                    settings.sensor_ble_rssi_at_1m,
+                    settings.sensor_ble_pathloss_exponent
+                    or settings.sensor_pathloss_exponent),
+            },
         )
         self._scale: float | None = None
 
@@ -141,6 +150,14 @@ class LocateService:
                 # bad geometry is a confident wrong answer.
                 "residual_m": t.residual_m,
                 "sensors_used": t.sensors_used,
+                # Which constants produced this distance. Two transmitters at
+                # the same spot on different technologies get different numbers,
+                # and without this the difference looks like measurement error.
+                "path_loss": {
+                    "kind": t.kind,
+                    "rssi_at_1m": self.store.path_loss_for(t.kind).rssi_at_1m,
+                    "exponent": self.store.path_loss_for(t.kind).exponent,
+                },
                 "anchors": [{"sensor": a.sensor, "rssi": a.rssi,
                              "dist_m": a.dist_m, "samples": a.samples}
                             for a in t.anchors],

@@ -113,6 +113,15 @@ class Settings(BaseSettings):
     # way, which a least-squares fit absorbs into a confident wrong position.
     sensor_rssi_at_1m: float = Field(default=-40.0)
     sensor_pathloss_exponent: float = Field(default=3.0, gt=0.0)
+    # BLE transmits around 10 dBm where an AP runs about 20, so the same
+    # distance reads roughly 10 dB weaker. Sharing the Wi-Fi intercept makes
+    # every BLE fix read as further away than it is — consistently, which the
+    # solver absorbs into a confident wrong position.
+    sensor_ble_rssi_at_1m: float = Field(default=-50.0)
+    # The exponent describes the BUILDING, not the radio, so BLE shares the
+    # Wi-Fi one by default. 0 means exactly that; set it only if you have
+    # measured BLE separately.
+    sensor_ble_pathloss_exponent: float = Field(default=0.0, ge=0.0)
     # Samples older than this do not count toward a fix.
     sensor_window_seconds: float = Field(default=6.0, gt=0.0)
     # Below this many sensors hearing a transmitter, no position is reported.

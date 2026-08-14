@@ -26,6 +26,22 @@ class Sensor:
 
 @dataclass(frozen=True)
 class PathLoss:
+    """One technology's RSSI-to-distance constants.
+
+    Two things live here and they behave differently, which is why path loss is
+    per-kind at all:
+
+    `exponent` describes the BUILDING — walls, clutter, how fast signal decays —
+    and applies to any link in the same band. A 2.4 GHz exponent measured from
+    BLE sensors is usable for 2.4 GHz Wi-Fi in that building.
+
+    `rssi_at_1m` describes the TRANSMITTER. BLE runs about 10 dBm where an AP
+    runs about 20, so the same distance reads roughly 10 dB weaker. Sharing one
+    intercept across both makes every BLE fix read as further away than it is —
+    consistently, which a least-squares fit absorbs into a confident wrong
+    position with nothing in the residual to show it.
+    """
+
     rssi_at_1m: float = -40.0
     exponent: float = 3.0
 
@@ -76,9 +92,12 @@ class Store:
 
     def __init__(self, sensors, path_loss=None, *, window_sec: float = 6.0,
                  min_sensors: int = 3, forget_sec: float = 300.0,
-                 track_all: bool = True, names=None):
+                 track_all: bool = True, names=None, path_loss_by_kind=None):
         self.sensors = {s.id: s for s in sensors}
         self.path_loss = path_loss or PathLoss()
+        # kind -> PathLoss, for transmitters that are not Wi-Fi APs. Anything
+        # absent falls back to the default above, so adding a kind is additive.
+        self.path_loss_by_kind = dict(path_loss_by_kind or {})
         self.window_sec = window_sec
         self.min_sensors = min_sensors
         # A busy RF environment produces a steady stream of MACs heard once and
@@ -148,6 +167,10 @@ class Store:
             kept += 1
         return kept
 
+    def path_loss_for(self, kind) -> PathLoss:
+        """The constants for a transmitter of this kind, else the default."""
+        return self.path_loss_by_kind.get(kind or "", self.path_loss)
+
     def evict(self, now: float | None = None) -> int:
         """Forget transmitters not heard for ``forget_sec``. Returns how many."""
         now = time.monotonic() if now is None else now
@@ -172,6 +195,11 @@ class Store:
         self.evict(now)
         out: list[Target] = []
         for mac, per_sensor in self._samples.items():
+            # Resolved per transmitter, before any distance is computed: a BLE
+            # tag and an AP heard by the same sensors need different constants,
+            # and applying one set to both is a bias, not noise.
+            kind = (self._meta.get(mac) or {}).get("kind")
+            pl = self.path_loss_for(kind)
             anchors, points = [], []
             for sid, dq in per_sensor.items():
                 fresh = [r for ts, r in dq if now - ts <= self.window_sec]
@@ -179,8 +207,7 @@ class Store:
                     continue
                 s = self.sensors[sid]
                 rssi = _median(fresh) + s.rssi_offset
-                dist = pathloss_distance(rssi, self.path_loss.rssi_at_1m,
-                                         self.path_loss.exponent)
+                dist = pathloss_distance(rssi, pl.rssi_at_1m, pl.exponent)
                 # A stronger signal is a shorter, and therefore more
                 # trustworthy, range estimate: path-loss error grows with
                 # distance, so a far anchor should not outvote a near one.
