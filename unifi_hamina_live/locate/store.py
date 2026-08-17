@@ -76,6 +76,28 @@ class Target:
     def sensors_used(self) -> int:
         return len(self.anchors)
 
+    @property
+    def redundancy(self) -> int:
+        """Anchors beyond the two a position needs.
+
+        A fix solves two unknowns, so three anchors over-determine it by ONE —
+        a single consistency check, which is the weakest possible. Four give
+        two. This is why a tight residual on three sensors is not evidence:
+        there is almost nothing for the data to disagree with.
+        """
+        return max(0, self.sensors_used - 2)
+
+    @property
+    def weakly_constrained(self) -> bool:
+        """True when the residual is not worth reading as accuracy.
+
+        Also true regardless of anchor count when a uniform error in the
+        distances would go undetected — which is the failure mode an
+        uncalibrated intercept produces: every range inflated by the same
+        factor still fits, just somewhere else.
+        """
+        return self.redundancy < 2
+
 
 class Store:
     """Sample buffer and solver, driven by the caller's clock.

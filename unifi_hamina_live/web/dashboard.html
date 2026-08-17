@@ -95,6 +95,7 @@
   .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px;
     margin-top: 8px; flex-wrap: wrap; }
   .legend i.loc-key { border-radius: 50%; background: none; border: 1.5px dashed #eab308; }
+  .legend i.weak-key { border-radius: 50%; background: none; border: 1.5px dotted #eab308; opacity: .8; }
   .legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
     margin-right: 5px; vertical-align: middle; }
     /* Located transmitters are ESTIMATES from signal strength, metres wrong on
@@ -104,6 +105,14 @@
        plan a network on them. */
     .loc-halo { fill: rgba(234,179,8,.10); stroke: #eab308; stroke-width: 1.5;
       stroke-dasharray: 5 4; }
+    /* Three anchors over-determine a two-unknown fit by ONE, so the residual
+       has almost nothing to disagree with — and a uniform error in the ranges
+       (an uncalibrated intercept does exactly that) keeps it small while moving
+       the position. Drawn hollow and dotted so a tight ring on three sensors
+       cannot be mistaken for precision. */
+    .loc-halo.weak { fill: none; stroke-dasharray: 2 5; opacity: .8; }
+    .loc-core.weak, .loc-x.weak { opacity: .65; }
+    .loc-label.weak { opacity: .8; }
     .loc-core { fill: none; stroke: #eab308; stroke-width: 2.5; }
     .loc-x { stroke: #eab308; stroke-width: 2.5; }
     .loc-label { fill: #eab308; font-weight: 600; }
@@ -150,6 +159,9 @@
           <span class="hint">clients cluster at their AP (UniFi reports no client x,y)</span>
           <span id="locLegend" hidden><i class="loc-key"></i>estimated from RSSI
             — ring is the fitting error, not a placement</span>
+          <span id="weakLegend" hidden><i class="loc-key weak-key"></i>only 3
+            sensors — the fit has nothing to disagree with, so read the position,
+            not the ring</span>
           <span id="senLegend" hidden><i style="background:#38bdf8;border-radius:2px"></i>RSSI sensor</span>
         </div>
       </div>
@@ -296,6 +308,8 @@ function renderLocated(plan) {
   const on = d && d.ok && plan && d.plan_id === plan.id;
   $("senLegend").hidden = !on;
   $("locLegend").hidden = !on || !(d.targets || []).length;
+  $("weakLegend").hidden = !on
+    || !(d.targets || []).some((t) => t.weakly_constrained);
   if (!on) { L.innerHTML = ""; return; }
   const W = plan.width_px || 1000, H = plan.height_px || 600;
   const R = Math.min(Math.max(Math.max(W, H) * 0.012, 9), 26);
@@ -312,13 +326,20 @@ function renderLocated(plan) {
        invites reading a metre of confidence into ten metres of error. */
     const rad = mpp ? Math.max(t.residual_m / mpp, R * 0.8) : R * 1.5;
     const y = H - t.y;
-    return `<g><title>${esc(t.name)} — estimated, ±${t.residual_m} m from ${t.sensors_used} sensors</title>
-      <circle class="loc-halo" cx="${t.x}" cy="${y}" r="${rad}"></circle>
-      <circle class="loc-core" cx="${t.x}" cy="${y}" r="${R * 0.55}"></circle>
-      <line class="loc-x" x1="${t.x - R * 0.32}" y1="${y}" x2="${t.x + R * 0.32}" y2="${y}"></line>
-      <line class="loc-x" x1="${t.x}" y1="${y - R * 0.32}" x2="${t.x}" y2="${y + R * 0.32}"></line>
-      <text class="loc-label" x="${t.x}" y="${y - rad - R * 0.35}"
-        font-size="${R * 0.95}" text-anchor="middle">${esc(t.name)} ~${t.residual_m}m</text></g>`;
+    const w = t.weakly_constrained ? " weak" : "";
+    const tip = t.weakly_constrained
+      ? ` — estimated from ${t.sensors_used} sensors, which over-determines the `
+        + `fit by only ${t.redundancy}. The ±${t.residual_m} m is a fit error `
+        + `with little to disagree with, not an accuracy.`
+      : ` — estimated, ±${t.residual_m} m from ${t.sensors_used} sensors`;
+    return `<g><title>${esc(t.name)}${tip}</title>
+      <circle class="loc-halo${w}" cx="${t.x}" cy="${y}" r="${rad}"></circle>
+      <circle class="loc-core${w}" cx="${t.x}" cy="${y}" r="${R * 0.55}"></circle>
+      <line class="loc-x${w}" x1="${t.x - R * 0.32}" y1="${y}" x2="${t.x + R * 0.32}" y2="${y}"></line>
+      <line class="loc-x${w}" x1="${t.x}" y1="${y - R * 0.32}" x2="${t.x}" y2="${y + R * 0.32}"></line>
+      <text class="loc-label${w}" x="${t.x}" y="${y - rad - R * 0.35}"
+        font-size="${R * 0.95}" text-anchor="middle">${esc(t.name)} ${
+        t.weakly_constrained ? "?" : "~"}${t.residual_m}m</text></g>`;
   }).join("");
   L.innerHTML = sensors + targets;
 }
@@ -328,7 +349,8 @@ function locatedHint() {
   if (!d) return "";
   if (!d.ok) return " · locating: " + d.error;
   const n = (d.targets || []).length;
-  return n ? ` · ${n} estimated (dashed)`
+  const weak = (d.targets || []).filter((t) => t.weakly_constrained).length;
+  return n ? ` · ${n} estimated (dashed${weak ? `, ${weak} weakly constrained` : ""})`
     : ` · locating: 0 of ${d.tracked} transmitters heard by ${"\u2265"}3 sensors`;
 }
 
