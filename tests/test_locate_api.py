@@ -265,3 +265,52 @@ def test_a_missing_token_is_still_fatal():
             assert "SENSOR_TOKEN" in str(e)
         else:
             raise AssertionError("a missing token must still refuse to start")
+
+
+def _four_sensor_layout(tmp):
+    """A fourth sensor, so a fix can be over-determined by more than one."""
+    return write_layout(tmp, sensors=SENSORS + [{"id": "pi-5", "x_px": 200.0,
+                                                 "y_px": 150.0}])
+
+
+def test_three_sensors_is_reported_as_weakly_constrained():
+    """Two unknowns and three anchors leaves ONE consistency check.
+
+    A residual with almost nothing to disagree with is not accuracy, and a
+    uniform error in the ranges — which is exactly what an uncalibrated
+    intercept produces — keeps it small while moving the position.
+    """
+    with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
+        for s in SENSORS[:3]:
+            sx, sy = s["x_px"] * SCALE, s["y_px"] * SCALE
+            c.post("/report", headers={"X-Sensor-Token": "s3cret"},
+                   json={"sensor_id": s["id"], "detections": [
+                       {"mac": "aa:bb:cc:dd:ee:01",
+                        "rssi": rssi(sx, sy, 10.0, 7.5)}]})
+        (t,) = c.get("/api/located").json()["targets"]
+        assert t["sensors_used"] == 3
+        assert t["redundancy"] == 1
+        assert t["weakly_constrained"] is True
+
+
+def test_four_sensors_is_not():
+    with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
+        send(c, 10.0, 7.5)                      # all four report
+        (t,) = c.get("/api/located").json()["targets"]
+        assert t["sensors_used"] == 4
+        assert t["redundancy"] == 2
+        assert t["weakly_constrained"] is False
+
+
+def test_a_tight_residual_does_not_clear_the_flag():
+    """The point of the flag: a perfect fit on three anchors is still weak."""
+    with tempfile.TemporaryDirectory() as tmp, make(tmp) as c:
+        for s in SENSORS[:3]:
+            sx, sy = s["x_px"] * SCALE, s["y_px"] * SCALE
+            c.post("/report", headers={"X-Sensor-Token": "s3cret"},
+                   json={"sensor_id": s["id"], "detections": [
+                       {"mac": "aa:bb:cc:dd:ee:09",
+                        "rssi": rssi(sx, sy, 4.0, 4.0)}]})
+        (t,) = c.get("/api/located").json()["targets"]
+        assert t["residual_m"] < 0.5, "noise-free input should fit tightly"
+        assert t["weakly_constrained"] is True, "and still be weakly constrained"

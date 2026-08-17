@@ -150,6 +150,11 @@ class LocateService:
                 # bad geometry is a confident wrong answer.
                 "residual_m": t.residual_m,
                 "sensors_used": t.sensors_used,
+                # Three anchors over-determine a two-unknown fit by one, so the
+                # residual has almost nothing to disagree with. Reported rather
+                # than left for a reader to work out from the anchor count.
+                "weakly_constrained": t.weakly_constrained,
+                "redundancy": t.redundancy,
                 # Which constants produced this distance. Two transmitters at
                 # the same spot on different technologies get different numbers,
                 # and without this the difference looks like measurement error.
