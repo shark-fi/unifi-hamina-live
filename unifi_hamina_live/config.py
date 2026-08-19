@@ -142,6 +142,15 @@ class Settings(BaseSettings):
     # dashboard that gets screen-shared. Masked shows PLMN + last four.
     open5gs_mask_supi: bool = Field(default=True)
 
+    # --- Floor plans from somewhere other than the console -----------------
+    # "innerspace" (default) reads plans from the console's InnerSpace app.
+    # "openintent" reads them from a Hamina OpenIntent export instead, for a
+    # console that has no InnerSpace — a UniFi Express 7 cannot install it —
+    # or where the plan simply lives in Hamina. Live AP data still comes from
+    # UniFi; only the map and the placements come from the zip.
+    plan_source: str = Field(default="innerspace")
+    plan_openintent_zip: str = Field(default="")
+
     # --- RSSI sensors (WLAN Pi multilateration) ---------------------------
     # OFF by default, and not merely as a courtesy: this is the only thing in
     # the service that ACCEPTS data. Everything else is read-only, and the

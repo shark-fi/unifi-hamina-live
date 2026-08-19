@@ -6,9 +6,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import zipfile
 
 from ..config import Settings
 from ..models import AccessPoint, FloorPlan, Site, Snapshot
+from ..plan import load_openintent_plan, norm_name
 from . import normalize, placement
 from .client import (UniFiAuthError, UniFiClient, UniFiError,
                      UniFiUnreachableError)
@@ -275,7 +277,10 @@ class Collector:
         # InnerSpace placement is console-global; only consult it for APs not
         # already placed via classic Maps.
         if self._settings.placement_enabled:
-            await self._innerspace_placement(client, ap_by_mac, floorplans, sites)
+            if self._settings.plan_source == "openintent":
+                self._openintent_placement(aps, floorplans, sites)
+            else:
+                await self._innerspace_placement(client, ap_by_mac, floorplans, sites)
 
         for fp in floorplans:
             fp.num_aps = sum(1 for a in aps if a.floorplan_id == fp.id)
@@ -293,6 +298,54 @@ class Collector:
                 ap.floorplan_id = pos.floorplan_id
                 ap.x = pos.x
                 ap.y = pos.y
+
+    def _openintent_placement(self, aps, floorplans, sites) -> None:
+        """Plans and placements from a Hamina export instead of the console.
+
+        Joined by MAC where the export publishes one and by name otherwise.
+        Name alone is what the OpenIntent importer has always had to use in the
+        other direction, and it is brittle: a 122-wall plan once imported with
+        0 of 4 APs matched because Hamina had named them "Access Point 1..4".
+        MAC first removes that failure for any export that carries one, and an
+        AP that still matches nothing is named in the log rather than dropped,
+        because the fix is a rename and that is not deducible from an AP which
+        simply never appears on the map.
+        """
+        path = self._settings.plan_openintent_zip
+        if not path:
+            log.warning("PLAN_SOURCE=openintent but PLAN_OPENINTENT_ZIP is unset — "
+                        "no floor plans, so nothing positional will work")
+            return
+        site_id = sites[0].id if sites else "default"
+        try:
+            plan = load_openintent_plan(path, site_id)
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            log.error("floor plans unavailable: cannot read %s (%s). Export "
+                      "OpenIntent from Hamina and mount it at that path.", path, exc)
+            return
+
+        floorplans.extend(plan.floorplans)
+        self._img_bytes.update(plan.images)
+
+        by_mac = {(a.mac or "").lower(): a for a in aps if a.mac}
+        by_name = {norm_name(a.name): a for a in aps}
+        placed, unmatched = 0, []
+        for pap in plan.aps:
+            ap = (by_mac.get(pap.mac) if pap.mac else None) or by_name.get(
+                norm_name(pap.name))
+            if ap is None:
+                unmatched.append(pap.name)
+                continue
+            if ap.floorplan_id is None:  # don't overwrite an earlier source
+                ap.floorplan_id = pap.plan_id
+                ap.x, ap.y = round(pap.x, 2), round(pap.y, 2)
+                placed += 1
+        log.info("openintent: %d plan(s), %d of %d AP(s) placed from %s",
+                 len(plan.floorplans), placed, len(plan.aps), path)
+        if unmatched:
+            log.warning("%d AP(s) in the plan match no live UniFi device by MAC "
+                        "or name: %s — rename to match on one side or the other",
+                        len(unmatched), ", ".join(sorted(unmatched)[:8]))
 
     async def _innerspace_placement(self, client, ap_by_mac, floorplans, sites) -> None:
         try:

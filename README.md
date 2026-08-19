@@ -194,6 +194,41 @@ Meraki `floorPlans` endpoint. Because positions flow live, **an AP move no
 longer needs an OpenIntent rebuild** — set `OPENINTENT_REFRESH_SECONDS=0` to
 generate the zip once for the initial import and rely on live positions after.
 
+### Floor plans on a console with no InnerSpace — `PLAN_SOURCE=openintent`
+Floor plans are a **UniFi InnerSpace** feature, and not every console can run
+it — a UniFi Express 7 cannot install it at all. Without a plan nothing
+positional works: no AP placement, no RSSI locate (it needs the metres-per-pixel
+scale), and nowhere to put a private cellular cell, because every placement
+mechanism resolves against a floor plan id.
+
+Point the bridge at a Hamina **OpenIntent export** instead and the map comes
+from there while the live data still comes from UniFi:
+
+```bash
+PLAN_SOURCE=openintent
+PLAN_OPENINTENT_ZIP=/data/plan.zip     # mount the zip into the container
+```
+
+This is the same pixel space as everything else — `plan/openintent.py` passes
+coordinates through untouched, because `unifi/placement.py:scene_to_pixels`
+re-centres about the image middle with **no y flip** and OpenIntent is defined
+the same way. A flip here would mirror every AP about the middle of the plan.
+
+Live APs are joined to the plan by **MAC** where the export publishes one and by
+**name** otherwise; anything matching neither is named in the log rather than
+silently dropped. Two things to know before relying on it:
+
+- The plan is a **snapshot**. Moving an AP in Hamina needs a re-export; moving
+  it in UniFi changes nothing, because UniFi has no plan to move it on.
+- Plan ids are derived from the plan **name**, so `cells.json` and
+  `sensors.json` keep working across a re-export — but renaming a floor in
+  Hamina changes its id and orphans those references.
+
+Because the plan does not come from the console, **anything you can place in
+Hamina gets a position**, including hardware UniFi has never heard of. That is
+the route for private cellular radios: place them on the Hamina plan, or place
+them by pixel in `cells.json` against the plan id above.
+
 ### Scheduled OpenIntent refresh — `/openintent`
 Set `OPENINTENT_REFRESH_ENABLED=true` and point `OPENINTENT_EXPORTER_PATH` at
 `unifi_export.py` from the companion repo. With `OPENINTENT_REFRESH_SECONDS>0`
