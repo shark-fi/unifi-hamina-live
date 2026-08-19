@@ -200,8 +200,12 @@ def access_point(cell: dict, spec: CellSpec | None, site_id: str,
                  num_clients: int | None = None) -> AccessPoint:
     """One cell, as the access point every downstream surface understands."""
     # A real MAC off the radio when a source could read one, the synthetic one
-    # otherwise. Either way it is stable across polls, which is what matters:
-    # every client joins to it and every downstream id is derived from it.
+    # otherwise. Stability across polls is what matters — every client joins to
+    # it and every downstream id derives from it — and this line alone does NOT
+    # provide it: only SNMP reports a real MAC, and a poll it does not answer
+    # would silently fall back to the synthetic one. CellularSource remembers
+    # the real MAC per cell and re-supplies it, so this stays a plain
+    # preference. Do not "simplify" that away.
     mac = cell.get("mac") or cell_mac(cell)
     tech = cell.get("technology") or "nr"
     # A spec's name wins only when that spec named this cell specifically. A

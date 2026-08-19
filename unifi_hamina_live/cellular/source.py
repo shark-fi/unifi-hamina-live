@@ -52,6 +52,16 @@ class CellularSource:
         # Warn once per condition, not once per poll: the poll runs every 30s
         # for months and these say the same thing every time.
         self._warned: set[str] = set()
+        # cell key -> the real MAC a source once read off that radio. SNMP is
+        # the only thing that reports one, and it does not always answer, so
+        # without this the cell's identity oscillates between its real MAC and
+        # the synthetic one every time a poll times out. Everything downstream
+        # is keyed on that MAC — client joins, placement, and the id Hamina
+        # syncs against — so an oscillating identity presents as a device that
+        # appears, vanishes and reappears as a different one. Seen live: an AP
+        # that reached Hamina mid-outage, with the synthetic MAC and no radios,
+        # and failed to synchronise.
+        self._known_macs: dict[str, str] = {}
 
     @staticmethod
     def _client(url: str, timeout: float, verify: bool) -> Open5GSClient | None:
@@ -160,6 +170,10 @@ class CellularSource:
         used: set[str] = set()
         for cell in cells:
             key = normalize.cell_key(cell)
+            if cell.get("mac"):
+                self._known_macs[key] = cell["mac"]
+            elif key in self._known_macs:
+                cell = {**cell, "mac": self._known_macs[key]}
             spec = self.inventory.spec_for(cell)
             if spec is not None and not spec.is_fallback:
                 used.add(spec.id)
