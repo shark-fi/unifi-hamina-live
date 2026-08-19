@@ -1,13 +1,14 @@
 """Catalyst Center (DNA Center) facade: auth, endpoints, and request capture."""
 
 import base64
+import logging
 import io
 import tarfile
 import time
 
 import pytest
 
-from unifi_hamina_live.catalyst import maps as maps_mod
+from unifi_hamina_live.catalyst import mapping, maps as maps_mod
 from unifi_hamina_live.config import Settings
 from unifi_hamina_live.models import AccessPoint, FloorPlan, Radio, Site, Snapshot
 from tests.conftest import FakeCollector
@@ -839,3 +840,61 @@ def test_the_ring_stays_on_the_floor():
                                     signal_dbm=-55) for i in range(8)])
     for r in mapping.clients_v1(snap, mapping.floor_id_for(fp)):
         assert 0.0 <= r["x"] <= 50.0 and 0.0 <= r["y"] <= 40.0
+
+
+# --- a radio dropped from positions must say so ---------------------------
+
+def _ap_with(radios):
+    return AccessPoint(site_id="default", name="WLPC-CBRS",
+                       mac="48:bf:74:1e:4f:33", serial="CELL01",
+                       model_code="CW9166I", model="cw9166i", online=True,
+                       floorplan_id="p1", x=100.0, y=100.0, radios=radios)
+
+
+def test_a_radio_with_a_channel_but_no_tx_power_is_named(caplog):
+    """Seen live: a Baicells eNodeB publishes min/max TX power over SNMP but no
+    current value, so its cell synced to Hamina with radios: [] — every band
+    "Off" — while the client count arrived by another route and made it look
+    half-working. Nothing in the output said why."""
+    mapping._WARNED.clear()
+    ap = _ap_with([Radio(band="5", channel=124, channel_width_mhz=20,
+                         tx_power_dbm=None)])
+
+    with caplog.at_level(logging.WARNING):
+        out = mapping._position_radios(ap)
+
+    assert out == []
+    assert "WLPC-CBRS" in caplog.text and "no TX power" in caplog.text
+    assert "tx_power_dbm" in caplog.text          # names the fix
+
+
+def test_an_ordinary_off_air_radio_stays_quiet(caplog):
+    """A disabled band is normal on any UniFi AP; warning would be noise."""
+    mapping._WARNED.clear()
+    ap = _ap_with([Radio(band="2.4", channel=None, channel_width_mhz=None,
+                         tx_power_dbm=None)])
+
+    with caplog.at_level(logging.WARNING):
+        assert mapping._position_radios(ap) == []
+
+    assert caplog.text == ""
+
+
+def test_it_warns_once_per_ap_and_band_not_once_per_poll(caplog):
+    mapping._WARNED.clear()
+    ap = _ap_with([Radio(band="5", channel=124, channel_width_mhz=20,
+                         tx_power_dbm=None)])
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(5):
+            mapping._position_radios(ap)
+
+    assert caplog.text.count("no TX power") == 1
+
+
+def test_a_complete_radio_is_still_emitted(caplog):
+    mapping._WARNED.clear()
+    ap = _ap_with([Radio(band="5", channel=124, channel_width_mhz=20,
+                         tx_power_dbm=24)])
+
+    assert len(mapping._position_radios(ap)) == 1
