@@ -167,6 +167,7 @@ def summary(snap: Snapshot = Depends(snapshot)):
                 "mac": ap.mac,
                 "model": ap.model,
                 "online": ap.online,
+                "source": ap.source,
                 "num_clients": ap.num_clients,
                 "floorplan_id": ap.floorplan_id,
                 "x": ap.x,
@@ -178,12 +179,66 @@ def summary(snap: Snapshot = Depends(snapshot)):
                         "channel_width_mhz": r.channel_width_mhz,
                         "tx_power_dbm": r.tx_power_dbm,
                         "num_clients": r.num_clients,
+                        # The real carrier beside the band/channel it is
+                        # wearing. "wifi" and nulls for an actual Wi-Fi radio.
+                        "technology": r.technology,
+                        "carrier_mhz": r.carrier_mhz,
+                        "carrier_label": r.carrier_label,
                     }
                     for r in ap.radios
                 ],
             }
         )
     return {"generated_at": snap.generated_at, "access_points": rows}
+
+
+@router.get("/cellular")
+def cellular(col: Collector = Depends(collector), snap: Snapshot = Depends(snapshot)):
+    """What the LTE/5G side is doing, and what it is pretending to be.
+
+    Exists because every other surface shows a cell as an access point, which is
+    the point of the integration and also the thing most likely to mislead
+    someone reading it. This is the one endpoint that says plainly: these
+    entries are cells, this is the carrier each one really transmits, and this
+    is the Wi-Fi channel it is reporting instead.
+    """
+    source = getattr(col, "cellular", None)
+    cells = [a for a in snap.access_points if a.source == "cellular"]
+    rows = []
+    for ap in cells:
+        radio = ap.radios[0] if ap.radios else None
+        rows.append({
+            "name": ap.name, "mac": ap.mac, "serial": ap.serial,
+            "model": ap.model, "online": ap.online, "ip": ap.ip,
+            "site_id": ap.site_id, "num_clients": ap.num_clients,
+            "floorplan_id": ap.floorplan_id, "x": ap.x, "y": ap.y,
+            "placed": ap.floorplan_id is not None and ap.x is not None,
+            "real": {
+                "technology": radio.technology if radio else None,
+                "carrier_mhz": radio.carrier_mhz if radio else None,
+                "carrier": radio.carrier_label if radio else None,
+                "tx_power_dbm": radio.tx_power_dbm if radio else None,
+                # PRB utilisation, where a source could read it off the radio.
+                # It sits under "real" because it is: a load measurement, not
+                # dressed up as anything.
+                "utilization_pct": radio.channel_utilization_pct if radio else None,
+                "firmware": ap.firmware,
+            },
+            "costume": {
+                "band": radio.band if radio else None,
+                "channel": radio.channel if radio else None,
+                "channel_width_mhz": radio.channel_width_mhz if radio else None,
+            },
+        })
+    return {
+        "generated_at": snap.generated_at,
+        "enabled": source is not None,
+        "configured": bool(source and source.configured),
+        "note": getattr(col, "cellular_note", None),
+        "error": getattr(source, "error", None),
+        "status": getattr(source, "status", {}),
+        "cells": rows,
+    }
 
 
 @router.post("/refresh")

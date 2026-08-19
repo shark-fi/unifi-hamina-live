@@ -208,6 +208,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             "/report", "/api/located",
             "/api/health", "/api/sites", "/api/access-points", "/api/clients",
             "/api/floorplans", "/api/summary", "/api/map", "/api/refresh",
+            "/api/cellular",
         )
 
         @app.middleware("http")

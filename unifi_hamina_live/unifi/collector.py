@@ -49,6 +49,26 @@ class Collector:
         # Catalyst maps/export archive can embed the real image without a
         # re-fetch. Populated alongside the dimension cache.
         self._img_bytes: dict[str, bytes] = {}
+        # LTE/5G cells, when a core is configured. Built here rather than in
+        # the app so a collector constructed by a test or a script carries it
+        # too, and so the two sources share one tick and one snapshot.
+        self.cellular = None
+        self.cellular_note: str | None = None
+        # Warned once, not per poll: a placement that cannot resolve says the
+        # same thing every 30 seconds for as long as it is wrong.
+        self._placement_warned: set[str] = set()
+        if settings.open5gs_enabled:
+            from ..cellular.source import CellularSource, load_inventory
+
+            inventory, self.cellular_note = load_inventory(settings.open5gs_cells_path)
+            if self.cellular_note:
+                log.warning("open5gs: %s", self.cellular_note)
+            self.cellular = CellularSource(settings, inventory)
+            if not self.cellular.configured:
+                self.cellular_note = (
+                    "OPEN5GS_ENABLED is on but neither OPEN5GS_AMF_URL nor "
+                    "OPEN5GS_MME_URL is set, so no core is being read")
+                log.warning("open5gs: %s", self.cellular_note)
 
     def floor_image(self, plan_id: str) -> bytes | None:
         """Raw image bytes for a floor plan id, if the collector has fetched it."""
@@ -193,6 +213,12 @@ class Collector:
             snap = Snapshot(generated_at=started, ok=False, error=repr(exc))
             await self._drop_session()
 
+        # Cells are merged whether or not the console answered. A UniFi outage
+        # must not blank the cellular half of the map, and a core outage must
+        # not blank the Wi-Fi half — the sources fail independently and the
+        # snapshot has to survive either one alone.
+        await self._merge_cellular(snap)
+
         async with self._lock:
             self._snapshot = snap
         return snap
@@ -315,6 +341,70 @@ class Collector:
             if not any(existing.id == fp.id for existing in floorplans):
                 floorplans.append(fp)
 
+    # -- cellular ----------------------------------------------------------
+    async def _merge_cellular(self, snap: Snapshot) -> None:
+        """Fold the cells into the snapshot the console produced."""
+        if self.cellular is None or not self.cellular.configured:
+            return
+        # Imported here, not at module scope, so the package is only loaded
+        # when a core is actually configured — as the websocket and Catalyst
+        # layers are.
+        from ..cellular import normalize as cell_normalize
+
+        # A failed console poll carries the last good access points forward,
+        # and those already include the cells merged on the previous tick. Drop
+        # them before merging again or every failed poll doubles the estate.
+        snap.access_points[:] = [a for a in snap.access_points
+                                 if a.source != "cellular"]
+        snap.clients[:] = [
+            c for c in snap.clients
+            if not (c.ap_mac or "").startswith(cell_normalize.CELL_MAC_PREFIX)]
+
+        site_id = self._cellular_site(snap)
+        aps, clients, placements = await self.cellular.collect(site_id)
+        if not aps:
+            return
+
+        anchors = {a.name.strip().casefold(): a for a in snap.access_points}
+        for ap in aps:
+            placement = placements.get(ap.mac)
+            if placement is None:
+                continue
+            problem = cell_normalize.place(ap, placement, anchors)
+            if problem and problem not in self._placement_warned:
+                self._placement_warned.add(problem)
+                log.warning("open5gs placement: %s", problem)
+
+        snap.access_points.extend(aps)
+        snap.clients.extend(clients)
+        if not any(s.id == site_id for s in snap.sites):
+            # A console that has not answered yet — or a bridge pointed at a
+            # core and nothing else — still needs a site for the cells to hang
+            # off, or every projection downstream drops them.
+            snap.sites.append(Site(id=site_id, name=site_id))
+        for site in snap.sites:
+            if site.id == site_id:
+                site.num_aps = len(snap.aps_for_site(site_id))
+                site.num_clients = len(snap.clients_for_site(site_id))
+        for fp in snap.floorplans:
+            fp.num_aps = sum(1 for a in snap.access_points if a.floorplan_id == fp.id)
+
+    def _cellular_site(self, snap: Snapshot) -> str:
+        """Which UniFi site the cells belong to.
+
+        OPEN5GS_SITE_ID wins, then the inventory's own ``site_id``, then the
+        first site polled — which is what a single-site console wants and the
+        only guess worth making. The site decides which floor plans a cell may
+        be placed on, so on a multi-site console this is not a detail.
+        """
+        configured = (self._settings.open5gs_site_id or "").strip()
+        if configured:
+            return configured
+        declared = (self.cellular.inventory.site_id or "").strip()
+        if declared:
+            return declared
+        return snap.sites[0].id if snap.sites else "default"
+
     # -- lifecycle ---------------------------------------------------------
     async def _loop(self) -> None:
         interval = self._settings.poll_interval_seconds
@@ -337,3 +427,5 @@ class Collector:
             self._task = None
         # the session outlives a poll now, so shutdown has to close it
         await self._drop_session()
+        if self.cellular is not None:
+            await self.cellular.aclose()

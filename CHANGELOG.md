@@ -4,6 +4,67 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project
 follows semantic versioning.
 
+## [Unreleased] — LTE / 5G cells from an Open5GS core
+
+A second live source. Point the bridge at an Open5GS core and every cell it is
+talking to joins the same snapshot as the UniFi APs, reaching all four surfaces
+unchanged — including the Catalyst facade, which puts a private 5G cell on a
+Hamina Live map beside the Wi-Fi.
+
+### Added
+
+- **`cellular/` package** — reads an Open5GS NF metrics server: `/gnb-info`
+  (5G cells), `/enb-info` (4G cells), `/ue-info` (UE-to-cell association) and
+  `/pdu-info` (UE IP + DNN, from the SMF). Those dumpers arrived in **Open5GS
+  2.7.7**; `/metrics` alone publishes core-wide totals only and can never say
+  which UE is on which cell, so an older core degrades to a per-cell client
+  count and no UE list, announced once in the log rather than silently.
+- **Cells as access points, UEs as clients.** Marked `source="cellular"` on
+  `AccessPoint`, so nothing downstream had to change and anything that reports
+  hardware can still tell a real AP from a costumed cell.
+- **`cells.json`** ([`cells.example.json`](cells.example.json)) — band, ARFCN,
+  bandwidth, TX power and placement, because the core has never seen the radio.
+  A spec with no `match` is a fallback for whatever gNB id turns up; a declared
+  cell the core stops reporting goes **offline** rather than vanishing.
+- **Placement by anchor.** Name a UniFi device already placed on the console's
+  own floor plan and the cell rides on its live position — drag the anchor in
+  UniFi and the cell moves, with nothing to edit and nothing to re-import.
+  Explicit plan + pixels also supported.
+- **`GET /api/cellular`** — the one endpoint that separates the real (carrier,
+  bandwidth, TX power, identity, attached UEs) from the costume (Wi-Fi band,
+  channel, hardware model), because every other surface deliberately presents a
+  cell as an access point.
+- **`Radio.technology` / `carrier_mhz` / `carrier_label`** — the true carrier
+  kept beside the Wi-Fi channel it wears, not replaced by it. Additive; Wi-Fi
+  radios keep their defaults.
+- **Open5G2GO support** (`OPEN5G2GO_URL`) — reads
+  [that project's](https://github.com/Waveriders-Collective/open5G2GO) own
+  backend instead of the core, and gets strictly more: its SNMP layer against
+  the eNodeB supplies **band, EARFCN, bandwidth, TX power, PRB utilisation** and
+  the radio's real MAC, serial, model and firmware, and its connection list
+  supplies device names from the subscriber database. `cells.json` then shrinks
+  to placement plus the model costume. PRB utilisation lands on the radio as
+  `channel_utilization_pct` — a real load measurement, not a costume. It cannot
+  say which cell a UE is on (it tracks one radio), so with several live cells it
+  refuses to guess and says so; use the core's own endpoints there.
+- Live radio values override declared ones **field by field**, so a deployment
+  that reads band and EARFCN but not TX power keeps the declared power.
+- A **fallback spec no longer renames** the cells it catches — it describes the
+  radio, not its identity, and relabelling an estate to one string was wrong.
+- [`docs/OPEN5GS.md`](docs/OPEN5GS.md) — setup, the map-placement walkthrough,
+  the Cisco-model requirement for the Hamina import, and what this demo is
+  actually arguing to Hamina.
+
+### Notes
+
+- Client **signal strength is deliberately empty** for UEs. A core never sees
+  the air; an invented RSSI is the one thing that would make a heatmap actively
+  wrong rather than merely costumed.
+- SUPIs are masked to PLMN + last four by default (`OPEN5GS_MASK_SUPI`).
+- Hamina's Catalyst connector resolves models against Cisco hardware only, so a
+  cell must declare a Cisco AP model to import — per-cell in `cells.json`,
+  which leaves real UniFi APs reporting their real models.
+
 ## [0.3.0] — Catalyst maps/export + Assurance layer; Live vendor sync ruled out
 
 Pushed the Catalyst facade all the way through the vendor-sync gate, matching a

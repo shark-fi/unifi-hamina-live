@@ -18,6 +18,13 @@ at it. Ships four surfaces over one live poll:
    UniFi console*. It reads the console directly where it can, and falls back to
    this bridge where it can't — see [The extension](#the-extension).
 
+It also reads an **Open5GS core**, if you have one: every LTE/5G cell it is
+talking to joins the same snapshot as the Wi-Fi APs and lands on the same floor
+plan, in a product that has no idea cellular exists. That presentation is partly
+a costume and the honest accounting is in
+[docs/OPEN5GS.md](docs/OPEN5GS.md) — see
+[LTE / 5G cells](#lte--5g-cells-from-an-open5gs-core).
+
 > **Read this first:** Hamina Live is *pull-based*. It reaches out to a vendor's
 > cloud API; there is **no API to push data into Hamina**, and UniFi is not a
 > supported vendor. What that means for actually wiring this into Hamina — and
@@ -99,6 +106,7 @@ controller) and reads, per site:
 | Clients | `…/stat/sta` | per client: associated **AP**, SSID, band, channel, RSSI/signal, TX/RX rates and bytes, uptime |
 | Sites | `…/self/sites` | site inventory + rollup counts |
 | Placement | classic Maps (`stat/device` x,y) or InnerSpace | floor plans + **live AP x,y** — so an AP move flows through the API without an OpenIntent rebuild |
+| LTE/5G cells | an Open5GS core's `/gnb-info`, `/enb-info`, `/ue-info`, `/pdu-info`, or an Open5G2GO backend's `/enodeb/status`, `/gnodeb/status`, `/connections` | cells as access points, attached UEs as clients — optional, see [LTE / 5G cells](#lte--5g-cells-from-an-open5gs-core) |
 
 All reads are GETs; the only write is the login POST. Poll failures are logged
 and the last good snapshot is kept — the server never falls over because the
@@ -208,6 +216,61 @@ structure and, on such a change, sets `stale: true` on `/openintent/status`,
 logs it, and POSTs `OPENINTENT_STALE_WEBHOOK` if set — so you re-import
 deliberately. Set `OPENINTENT_AUTO_REGENERATE=true` to regenerate automatically
 instead.
+
+## LTE / 5G cells from an Open5GS core
+
+Set `OPEN5GS_ENABLED=true` and point the bridge at either your core's metrics
+servers (`OPEN5GS_AMF_URL` / `OPEN5GS_MME_URL`) or, better where you run it, an
+[**Open5G2GO**](https://github.com/Waveriders-Collective/open5G2GO) backend
+(`OPEN5G2GO_URL`). Every cell is folded into the same snapshot as the Wi-Fi APs,
+so it reaches all four surfaces above with no new plumbing — including the
+Catalyst facade, which means **a private 5G cell on a Hamina Live map beside the
+Wi-Fi**.
+
+Open5G2GO is the better source because it already polls the radio over SNMP:
+band, EARFCN, bandwidth, TX power, real MAC/serial/model/firmware, named devices
+from the subscriber database, and **PRB utilisation** — a genuine load figure
+that lands where a Wi-Fi controller reports channel utilisation, so Hamina's
+capacity view runs on a real number. Its one limit is that it tracks a single
+radio and so cannot say which cell a UE is on; on a multi-cell estate read the
+core directly, which reports an NR-CGI per UE.
+
+```bash
+curl -s localhost:8080/api/cellular | jq '.cells[] | {name, placed, real, costume}'
+{
+  "name": "CBRS Cell - Warehouse",
+  "placed": true,
+  "real":    { "technology": "nr", "carrier_mhz": 3550.005, "tx_power_dbm": 30,
+               "carrier": "NR n48 ARFCN 636667 (3550.0 MHz, 40 MHz wide)" },
+  "costume": { "band": "5", "channel": 104, "channel_width_mhz": 40 }
+}
+```
+
+**A cell is not an access point.** Its identity, its attached UEs and their
+session state are read live and are real; its band, ARFCN and TX power are read
+from the radio on the Open5G2GO path and declared by you in
+[`cells.json`](cells.example.json) on the direct one, because a core has never
+seen the radio; and its Wi-Fi band, channel and hardware model are
+invented, because nothing downstream can express a 3.5 GHz carrier. The real
+carrier is kept beside the costume on every radio rather than replaced by it, and
+signal strength is left empty — a core never sees the air, and an invented RSSI
+is the one thing that would make a heatmap actively wrong.
+
+Needs **Open5GS 2.7.7+** for per-cell and per-UE detail (that release added the
+JSON dumpers to the metrics server); an older core falls back to the `/metrics`
+totals, which give a client count but cannot say which cell a UE is on.
+
+**Placing a cell on a floor plan** is the neat part: name a UniFi device that is
+already placed on the console's own map and the cell rides on its position every
+poll, so dragging the anchor in UniFi moves the cell with nothing to edit and
+nothing to re-import.
+
+```json
+"placement": { "anchor_ap": "AP-Warehouse", "dx_px": 40, "dy_px": -20 }
+```
+
+Full walkthrough, the Cisco-model requirement for the Hamina import, and what to
+say to Hamina about it: **[docs/OPEN5GS.md](docs/OPEN5GS.md)**.
 
 ## The extension
 
