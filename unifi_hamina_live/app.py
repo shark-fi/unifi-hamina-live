@@ -48,8 +48,18 @@ async def lifespan(app: FastAPI):
         app.state.ws_listener = WebSocketListener(settings, collector)
         app.state.ws_listener.start()
     if settings.openintent_refresh_enabled:
-        app.state.refresher = OpenIntentRefresher(settings, collector=collector)
-        app.state.refresher.start()
+        if settings.plan_source == "openintent":
+            # The refresher exports plans OUT of InnerSpace. A console that
+            # needed PLAN_SOURCE=openintent is one that has no InnerSpace, so
+            # this can only ever fail — and it fails on a timer, filling the log
+            # with an error about a missing app rather than the real problem.
+            logging.getLogger(__name__).warning(
+                "OPENINTENT_REFRESH_ENABLED is ignored: PLAN_SOURCE is "
+                "openintent, so plans come FROM a zip and there is no "
+                "InnerSpace on this console to export them back out of")
+        else:
+            app.state.refresher = OpenIntentRefresher(settings, collector=collector)
+            app.state.refresher.start()
     try:
         yield
     finally:

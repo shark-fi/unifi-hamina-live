@@ -106,7 +106,9 @@ class FloorPlan(BaseModel):
     id: str
     site_id: str
     name: str
-    source: str = Field(description="'legacy' (classic Maps) or 'innerspace'.")
+    source: str = Field(description="'legacy' (classic Maps), "
+                    "'innerspace', or 'openintent' (a Hamina export, for a "
+                    "console with no InnerSpace).")
     width_px: float | None = None
     height_px: float | None = None
     meters_per_px: float | None = None
