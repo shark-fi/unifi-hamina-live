@@ -6,6 +6,8 @@ import zipfile
 
 import pytest
 
+from unifi_hamina_live.cellular import normalize as cell_normalize
+from unifi_hamina_live.cellular.cells import PlacementSpec
 from unifi_hamina_live.config import Settings
 from unifi_hamina_live.models import AccessPoint, Site
 from unifi_hamina_live.plan import load_openintent_plan, plan_id_for
@@ -230,3 +232,77 @@ def test_the_openintent_refresher_is_not_started_against_a_zip_plan(tmp_path,
         assert getattr(app.state, "refresher", None) is None
 
     assert "OPENINTENT_REFRESH_ENABLED is ignored" in caplog.text
+
+
+# --- anchoring a cell to something UniFi has never heard of ----------------
+
+def _cell_ap():
+    return AccessPoint(site_id="site-1", mac="02:00:5e:00:00:01", name="CBRS Cell",
+                       serial="CELL01", model_code="CW9166I", model="cw9166i",
+                       online=True, source="cellular")
+
+
+def test_a_cell_anchors_to_an_ap_that_exists_only_on_the_hamina_plan(tmp_path):
+    """The whole point: a private cellular radio is not and cannot be a UniFi
+    device, so it can never be a live anchor — but it can be drawn on the plan
+    in Hamina like any other AP and named here."""
+    z = _zip(tmp_path, _doc([_ap("gNB Warehouse", 800.0, 300.0)]))
+    c = _collector(tmp_path, z)
+    c._openintent_placement([], [], [Site(id="site-1", name="HQ", num_aps=1)])
+
+    ap = _cell_ap()
+    problem = cell_normalize.place(
+        ap, PlacementSpec(anchor_ap="gNB Warehouse"), {}, c._plan_anchors)
+
+    assert problem is None
+    # placed exactly where it was drawn: a plan-only anchor draws no icon, so
+    # the anti-stacking nudge would only move it off its real position
+    assert (ap.x, ap.y) == (800.0, 300.0)
+
+
+def test_an_explicit_offset_still_applies_to_a_plan_anchor(tmp_path):
+    z = _zip(tmp_path, _doc([_ap("gNB Warehouse", 800.0, 300.0)]))
+    c = _collector(tmp_path, z)
+    c._openintent_placement([], [], [Site(id="site-1", name="HQ", num_aps=1)])
+
+    ap = _cell_ap()
+    cell_normalize.place(ap, PlacementSpec(anchor_ap="gNB Warehouse", dx_px=10,
+                                           dy_px=-5), {}, c._plan_anchors)
+
+    assert (ap.x, ap.y) == (810.0, 295.0)
+
+
+def test_a_live_anchor_still_wins_over_the_plan(tmp_path):
+    """A placed console device has a live position; the zip's is a snapshot."""
+    z = _zip(tmp_path, _doc([_ap("Kitchen", 1.0, 2.0)]))
+    c = _collector(tmp_path, z)
+    c._openintent_placement([], [], [Site(id="site-1", name="HQ", num_aps=1)])
+
+    live = _live("Kitchen", "94:2a:6f:32:ad:de", plan="legacy-1", x=500.0, y=600.0)
+    ap = _cell_ap()
+    cell_normalize.place(ap, PlacementSpec(anchor_ap="Kitchen"),
+                         {"kitchen": live}, c._plan_anchors)
+
+    assert ap.floorplan_id == "legacy-1"
+    assert (ap.x, ap.y) == (524.0, 624.0)  # nudged off a drawn icon
+
+
+def test_the_plan_rescues_a_live_ap_the_console_never_placed(tmp_path):
+    z = _zip(tmp_path, _doc([_ap("Kitchen", 1.0, 2.0)]))
+    c = _collector(tmp_path, z)
+    c._openintent_placement([], [], [Site(id="site-1", name="HQ", num_aps=1)])
+
+    unplaced = _live("Kitchen", "94:2a:6f:32:ad:de")  # no floorplan_id
+    ap = _cell_ap()
+    problem = cell_normalize.place(ap, PlacementSpec(anchor_ap="Kitchen"),
+                                   {"kitchen": unplaced}, c._plan_anchors)
+
+    assert problem is None
+    assert (ap.x, ap.y) == (1.0, 2.0)
+
+
+def test_an_anchor_on_neither_side_says_so():
+    ap = _cell_ap()
+    problem = cell_normalize.place(ap, PlacementSpec(anchor_ap="Nowhere"), {}, {})
+    assert problem is not None
+    assert "neither this console nor the floor plan" in problem

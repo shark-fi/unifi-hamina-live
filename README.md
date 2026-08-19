@@ -194,6 +194,21 @@ Meraki `floorPlans` endpoint. Because positions flow live, **an AP move no
 longer needs an OpenIntent rebuild** — set `OPENINTENT_REFRESH_SECONDS=0` to
 generate the zip once for the initial import and rely on live positions after.
 
+### Placing something UniFi cannot see
+`anchor_ap` in `cells.json` resolves against live UniFi devices first and then
+against APs that exist only on the **Hamina plan**. That second lookup is how a
+private cellular radio gets a position at all: UniFi has never heard of it, so
+it can never be a live anchor — but it can be drawn on the Hamina plan like any
+other AP, named, and referenced here.
+
+Every plan AP matching no live device is logged at startup, and those names are
+exactly what `anchor_ap` accepts. A plan-only anchor draws no icon of its own,
+so no offset is applied and the cell sits exactly where you drew it; the default
+nudge exists only to stop a cell hiding underneath a real AP's marker.
+
+The same lookup rescues a live AP the console knows but never placed, where the
+plan does have coordinates for it.
+
 ### Consoles that are their own access point
 A device counts as an AP if it **has radios**, not if UniFi calls it one. A
 UniFi Express 7 reports `type: "udm"` — it is a gateway with a built-in AP — so

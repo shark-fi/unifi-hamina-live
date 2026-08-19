@@ -51,6 +51,11 @@ class Collector:
         # Catalyst maps/export archive can embed the real image without a
         # re-fetch. Populated alongside the dimension cache.
         self._img_bytes: dict[str, bytes] = {}
+        # APs the OpenIntent plan places, keyed by casefolded name, as
+        # (plan_id, x, y). These anchor cells that UniFi has never heard of —
+        # a private cellular radio is drawn on the plan in Hamina like any
+        # other AP and named in cells.json. Rebuilt each poll.
+        self._plan_anchors: dict[str, tuple[str, float, float]] = {}
         # LTE/5G cells, when a core is configured. Built here rather than in
         # the app so a collector constructed by a test or a script carries it
         # too, and so the two sources share one tick and one snapshot.
@@ -327,6 +332,8 @@ class Collector:
         floorplans.extend(plan.floorplans)
         self._img_bytes.update(plan.images)
 
+        self._plan_anchors = {
+            norm_name(p.name): (p.plan_id, p.x, p.y) for p in plan.aps}
         by_mac = {(a.mac or "").lower(): a for a in aps if a.mac}
         by_name = {norm_name(a.name): a for a in aps}
         placed, unmatched = 0, []
@@ -343,8 +350,14 @@ class Collector:
         log.info("openintent: %d plan(s), %d of %d AP(s) placed from %s",
                  len(plan.floorplans), placed, len(plan.aps), path)
         if unmatched:
+            # Not necessarily a mistake: anything drawn on the plan that is
+            # not a UniFi device — a private cellular radio, say — lands here
+            # by design, so this says what the names are good for rather than
+            # only that they failed.
             log.warning("%d AP(s) in the plan match no live UniFi device by MAC "
-                        "or name: %s — rename to match on one side or the other",
+                        "or name: %s — rename to match a console device, or use "
+                        "the name as a cells.json anchor_ap for something UniFi "
+                        "does not manage",
                         len(unmatched), ", ".join(sorted(unmatched)[:8]))
 
     async def _innerspace_placement(self, client, ap_by_mac, floorplans, sites) -> None:
@@ -423,7 +436,8 @@ class Collector:
             placement = placements.get(ap.mac)
             if placement is None:
                 continue
-            problem = cell_normalize.place(ap, placement, anchors)
+            problem = cell_normalize.place(ap, placement, anchors,
+                                           self._plan_anchors)
             if problem and problem not in self._placement_warned:
                 self._placement_warned.add(problem)
                 log.warning("open5gs placement: %s", problem)

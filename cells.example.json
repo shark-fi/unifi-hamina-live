@@ -62,6 +62,22 @@
     },
 
     {
+      "_comment": "A cell placed in HAMINA rather than in UniFi. With PLAN_SOURCE=openintent the floor plan comes from a Hamina OpenIntent export, so anything you can draw on that plan gets a position - including a radio UniFi has never heard of and can never place. Draw the cell on the Hamina plan as an access point, name it, re-export, and name it here. It is reported at startup: any plan AP matching no live UniFi device is logged, and those names are exactly what anchor_ap accepts. No offset is applied to a plan-only anchor - it draws no icon of its own, so the cell sits exactly where you put it.",
+      "id": "gnb-hamina-placed",
+      "name": "CBRS Cell - Loading Dock",
+      "match": { "gnb_id": 101 },
+      "model": "CW9166I",
+      "radio": {
+        "technology": "nr",
+        "band": "n48",
+        "arfcn": 636667,
+        "bandwidth_mhz": 40,
+        "tx_power_dbm": 30
+      },
+      "placement": { "anchor_ap": "name-you-gave-it-in-hamina" }
+    },
+
+    {
       "_comment": "A spec with no 'match' is the fallback for any cell nothing else claimed - which is what a one-cell proof of concept wants: declare the radio once and it applies whatever gNB id turns up. A cell matched explicitly above always wins over this, whatever the file order. A fallback deliberately does NOT rename the cells it catches: it describes the radio, not its identity, so each keeps the name its own source gave it.",
       "id": "any-other-cell",
       "model": "CW9166I",
