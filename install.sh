@@ -169,9 +169,24 @@ INSTALL_DIR="$(pwd)"   # normalize to absolute
 log "install dir: $INSTALL_DIR"
 
 # --- virtualenv + package -------------------------------------------------
-if [ ! -d .venv ]; then
+# Test for the interpreter, not the directory. `python -m venv` that fails
+# part-way — no ensurepip, disk full, killed — still leaves .venv/ behind, and
+# a directory test then treats the wreckage as a finished venv. Every retry
+# skipped creation and died at pip instead, with a different error each time
+# and none of them the real one.
+if [ ! -x .venv/bin/python ]; then
+  if [ -e .venv ]; then
+    log "removing an incomplete virtualenv (.venv exists but has no interpreter)"
+    rm -rf .venv
+  fi
   log "creating virtualenv"
-  "$PY" -m venv .venv
+  if ! "$PY" -m venv .venv; then
+    echo "ERROR: could not create a virtualenv with $PY." >&2
+    echo "  On Debian/Ubuntu this is usually a missing package:" >&2
+    echo "    sudo apt install -y python3-venv" >&2
+    rm -rf .venv
+    exit 1
+  fi
 fi
 log "installing package + dependencies"
 ./.venv/bin/pip install --quiet --upgrade pip
