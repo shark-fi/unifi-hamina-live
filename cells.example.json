@@ -11,7 +11,7 @@
 
   "cells": [
     {
-      "_comment": "A cell matched by the gNB id it announces over NG. Find it in GET /api/cellular, or curl http://<amf>:9090/gnb-info.",
+      "_comment": "A cell matched by the gNB id it announces over NG. Find it in GET /api/cellular, or curl http://<amf>:9090/gnb-info. Every key in 'match' is looked up on the cell record VERBATIM, so it must be a field that record actually has - 'serial', not 'serial_number'; 'gnb_id', not 'gnbId'. A key nothing reports can never match, and what you get is this entry shown offline with its name, model and placement while the real cell sits beside it unnamed and unplaced. The log names the key and lists the available ones.",
       "id": "gnb-100",
       "name": "CBRS Cell - Warehouse",
       "match": { "gnb_id": 100 },
