@@ -475,3 +475,80 @@ def test_an_s1ap_entry_that_is_not_connected_does_not_revive_it():
     body = json.loads(json.dumps(UNREACHABLE_SNMP_BUT_S1_UP))
     body["s1ap"]["enodebs"][0]["connected"] = False
     assert open5g2go.cells_from_enodeb_status(body)[0]["connected"] is False
+
+
+# --- identity must not oscillate when SNMP stops answering ----------------
+
+class FakeO5G2GO:
+    """An Open5G2GO backend whose SNMP reachability we can flip mid-run."""
+
+    def __init__(self):
+        self.reachable = True
+
+    async def get(self, path):
+        if path != "/enodeb/status":
+            return None
+        snmp = {
+            "serial_number": "1202000291217RB0860",
+            "config_name": "Neutrino-eNodeB", "location": "WLPC",
+            "reachable": self.reachable,
+        }
+        if self.reachable:
+            snmp["identity"] = {"serial_number": "1202000291217RB0860",
+                                "mac_address": "48:bf:74:1e:4f:33",
+                                "product_type": "Nova-430i"}
+            snmp["connection"] = {"s1_link_up": True, "rf_enabled": True}
+        else:
+            snmp["error"] = "No SNMP response received before timeout"
+            snmp["identity"] = {}
+        return {
+            "network": {"plmn": "315010"},
+            "snmp": {"available": True, "enodebs": [snmp]},
+            "s1ap": {"available": True, "connected_count": 1, "enodebs": [{
+                "serial_number": "1202000291217RB0860",
+                "config_name": "Neutrino-eNodeB",
+                "ip_address": "10.10.5.103", "connected": True}]},
+        }
+
+    async def aclose(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_the_cell_keeps_its_mac_when_snmp_stops_answering(inventory):
+    """Everything downstream is keyed on this MAC — client joins, placement,
+    and the identity Hamina syncs against.
+
+    Seen live: with snmp.timeout_seconds at 2, the radio dropped in and out,
+    and the cell alternated between its real MAC and the synthetic 02:5c one.
+    Hamina caught it mid-outage and reported "Failed to synchronize access
+    point"; the AP showed with no radios at all.
+    """
+    backend = FakeO5G2GO()
+    source = make_source(inventory)
+    source._o5g2go = backend
+
+    aps, _, _ = await source.collect("site-1")
+    real = aps[0].mac
+    assert real == "48:bf:74:1e:4f:33"
+
+    backend.reachable = False
+    aps, _, _ = await source.collect("site-1")
+
+    assert aps[0].mac == real, "identity changed while SNMP was down"
+    assert not aps[0].mac.startswith(normalize.CELL_MAC_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_a_cell_that_never_had_a_real_mac_keeps_its_synthetic_one(inventory):
+    """The synthetic MAC is stable by construction; don't disturb that path."""
+    backend = FakeO5G2GO()
+    backend.reachable = False
+    source = make_source(inventory)
+    source._o5g2go = backend
+
+    first, _, _ = await source.collect("site-1")
+    second, _, _ = await source.collect("site-1")
+
+    assert first[0].mac == second[0].mac
+    assert first[0].mac.startswith(normalize.CELL_MAC_PREFIX)
