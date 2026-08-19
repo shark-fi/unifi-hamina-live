@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import httpx
 import json
+import logging
 
 import pytest
 
@@ -552,3 +553,63 @@ async def test_a_cell_that_never_had_a_real_mac_keeps_its_synthetic_one(inventor
 
     assert first[0].mac == second[0].mac
     assert first[0].mac.startswith(normalize.CELL_MAC_PREFIX)
+
+
+# --- a match key that can never match -------------------------------------
+
+def _inventory_matching_on(tmp_path, key, value="1202000291217RB0860"):
+    path = tmp_path / "match.json"
+    path.write_text(json.dumps({
+        "site_id": "site-1",
+        "cells": [{"id": "wlpc-cbrs", "name": "WLPC-CBRS", "model": "CW9166I",
+                   "match": {key: value},
+                   "placement": {"anchor_ap": "WLPC-CBRS"}}],
+    }))
+    return CellInventory.load(str(path))
+
+
+@pytest.mark.asyncio
+async def test_a_match_key_no_cell_reports_is_named_in_the_log(tmp_path, caplog):
+    """Silently, this shows up as the cell having failed to import.
+
+    Seen live: match on `serial_number` — the field Open5G2GO's payload uses —
+    where the cell record calls it `serial`. The result was a placeholder
+    wearing the spec's name, model and placement, and the real cell beside it
+    unplaced under its own name.
+    """
+    source = make_source(_inventory_matching_on(tmp_path, "serial_number"))
+    source._o5g2go = FakeO5G2GO()
+
+    with caplog.at_level(logging.WARNING):
+        await source.collect("site-1")
+
+    assert "serial_number" in caplog.text
+    assert "can never match" in caplog.text
+    assert "serial" in caplog.text          # the key it should have used
+
+
+@pytest.mark.asyncio
+async def test_the_right_key_matches_and_says_nothing(tmp_path, caplog):
+    source = make_source(_inventory_matching_on(tmp_path, "serial"))
+    source._o5g2go = FakeO5G2GO()
+
+    with caplog.at_level(logging.WARNING):
+        aps, _, placements = await source.collect("site-1")
+
+    assert "can never match" not in caplog.text
+    # one AP, not a live cell plus an offline placeholder
+    assert [a.name for a in aps] == ["WLPC-CBRS"]
+    assert placements[aps[0].mac].anchor_ap == "WLPC-CBRS"
+
+
+@pytest.mark.asyncio
+async def test_a_key_that_exists_but_disagrees_is_not_reported_as_unmatchable(
+        tmp_path, caplog):
+    """A wrong VALUE is a different fault from a wrong KEY; don't conflate."""
+    source = make_source(_inventory_matching_on(tmp_path, "serial", "SOME-OTHER-SERIAL"))
+    source._o5g2go = FakeO5G2GO()
+
+    with caplog.at_level(logging.WARNING):
+        await source.collect("site-1")
+
+    assert "can never match" not in caplog.text

@@ -199,6 +199,7 @@ class CellularSource:
                     mask=self._settings.open5gs_mask_supi))
 
         for ap, spec in self._missing(used, site_id):
+            self._warn_unmatchable(spec, cells)
             aps.append(ap)
             placements[ap.mac] = spec.placement
         self.status = {
@@ -209,6 +210,31 @@ class CellularSource:
             "error": None,
         }
         return aps, clients, placements
+
+    def _warn_unmatchable(self, spec, cells: list[dict]) -> None:
+        """Say when a spec cannot match anything, not merely that it did not.
+
+        A `match` key absent from every live cell record is silently a
+        non-match, and what you see is a placeholder wearing the spec's name,
+        model and placement while the real cell sits beside it unplaced under
+        its own name. That reads like the cell failed to import, and the actual
+        fault — a key that does not exist — is nowhere in the output. Seen
+        live: `serial_number` (the field Open5G2GO publishes) where the cell
+        record calls it `serial`.
+        """
+        if not spec.match or not cells:
+            return
+        available = sorted({k for c in cells for k in c})
+        unknown = [k for k in spec.match if not any(k in c for c in cells)]
+        if not unknown:
+            return
+        self._warn_once(
+            "unmatchable:" + spec.id,
+            "open5gs: cells.json %r matches on %s, which no live cell reports "
+            "— so it can never match, and %s appears offline while the real "
+            "cell goes unnamed and unplaced. Available keys: %s",
+            spec.id, ", ".join(sorted(unknown)), spec.name or spec.id,
+            ", ".join(available))
 
     @staticmethod
     def _match_hint(cell: dict) -> str:
