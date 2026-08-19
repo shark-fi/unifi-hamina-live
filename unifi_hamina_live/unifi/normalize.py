@@ -120,13 +120,43 @@ def access_point(dev: dict, site_id: str) -> AccessPoint:
         online=state == 1,
         uptime_seconds=dev.get("uptime"),
         firmware=dev.get("version") or None,
-        num_clients=int(dev.get("user-num_sta") or dev.get("num_sta") or 0),
+        num_clients=wireless_client_count(dev),
         radios=radios_from_device(dev),
     )
 
 
+def wireless_client_count(dev: dict) -> int:
+    """Wireless clients on a device, preferring the per-radio counts.
+
+    The device-level ``user-num_sta`` is wireless-only on a standalone AP, but
+    on a gateway that also serves Wi-Fi it counts everything behind the gateway
+    — a UniFi Express 7 reported 6 with every radio at 0, because those clients
+    were wired. Summing the radios gives the same answer on an AP and the right
+    one on a gateway, so it is preferred wherever the radios publish the field.
+    """
+    stats = dev.get("radio_table_stats") or []
+    per_radio = [s.get("user-num_sta") for s in stats]
+    if per_radio and all(v is not None for v in per_radio):
+        return sum(int(v) for v in per_radio)
+    return int(dev.get("user-num_sta") or dev.get("num_sta") or 0)
+
+
 def is_access_point(dev: dict) -> bool:
-    return dev.get("type") == "uap"
+    """Does this device serve Wi-Fi?
+
+    ``type == "uap"`` misses every console with an integrated AP — a UniFi
+    Express 7 reports ``type: "udm"``, and on a console where it is the only
+    Wi-Fi radio the bridge saw zero access points, an empty map, and no way to
+    tell that from a permissions problem.
+
+    Asking for radios rather than adding gateway types to the allow-list keeps
+    a Wi-Fi-less gateway out: a UDM Pro or UXG publishes no ``radio_table`` and
+    would otherwise appear as an AP with no radios, which on a floor plan is a
+    marker that can never show a client.
+    """
+    if dev.get("type") == "uap":
+        return True
+    return bool(dev.get("radio_table") or dev.get("radio_table_stats"))
 
 
 def _dev_id(sta: dict) -> int | None:
