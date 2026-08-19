@@ -75,3 +75,49 @@ def test_main_exits_before_starting_anything_when_the_port_is_taken(monkeypatch)
     else:
         raise AssertionError("should have exited")
     assert not started, "uvicorn must never be reached"
+
+
+# --- PORT vs HOST_PORT -------------------------------------------------------
+
+from unifi_hamina_live.__main__ import CONTAINER_PORT, port_mapping_warning
+
+
+def test_changing_port_inside_a_container_warns():
+    """The failure nothing else catches.
+
+    Moving a clashing host port by setting PORT leaves compose mapping
+    HOST_PORT to 8080 with nothing on it. The bind succeeds — the port really
+    is free in there — the container starts cleanly, serves nobody, and the
+    healthcheck fails it into a restart loop.
+    """
+    why = port_mapping_warning(8090, inside=True)
+    assert why is not None
+    assert "HOST_PORT" in why, "must name the setting that actually moves it"
+    assert str(CONTAINER_PORT) in why
+    assert "healthcheck" in why.lower()
+
+
+def test_the_image_default_is_silent():
+    assert port_mapping_warning(CONTAINER_PORT, inside=True) is None
+
+
+def test_outside_a_container_any_port_is_fine():
+    """Bare-metal has no mapping to disagree with."""
+    assert port_mapping_warning(8090, inside=False) is None
+    assert port_mapping_warning(9999, inside=False) is None
+
+
+def test_it_warns_rather_than_refusing(monkeypatch, capsys):
+    """A hand-written compose may publish to a different container port.
+
+    That is legitimate, so this must not block it — the message says as much.
+    """
+    import unifi_hamina_live.__main__ as entry
+
+    ran = []
+    monkeypatch.setattr(entry.uvicorn, "run", lambda *a, **k: ran.append(True))
+    monkeypatch.setattr(entry, "port_mapping_warning", lambda p: "mapping is odd")
+    monkeypatch.setattr(entry, "check_port_free", lambda h, p: None)
+    entry.main()
+    assert ran, "a mapping warning must not stop the service"
+    assert "mapping is odd" in capsys.readouterr().err
