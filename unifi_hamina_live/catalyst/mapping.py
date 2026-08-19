@@ -568,6 +568,17 @@ def _f(v) -> float:
     return float(v) if v is not None else 0.0
 
 
+# Warned once per AP+band, not once per poll: the sync runs repeatedly and a
+# radio with no TX power says the same thing every time.
+_WARNED: set[str] = set()
+
+
+def _warn_once(key: str, msg: str, *args) -> None:
+    if key not in _WARNED:
+        _WARNED.add(key)
+        log.warning(msg, *args)
+
+
 def _position_radios(ap: AccessPoint) -> list[dict]:
     """Radios for accessPointPositions.
 
@@ -586,9 +597,25 @@ def _position_radios(ap: AccessPoint) -> list[dict]:
     radios = []
     for r in ap.radios:
         if r.channel is None or r.tx_power_dbm is None:
-            log.debug("catalyst: dropping %s radio %s GHz from positions "
-                      "(channel=%r txPower=%r — not on air)",
-                      ap.name, r.band, r.channel, r.tx_power_dbm)
+            if r.channel is not None:
+                # A radio with a channel but no TX power is NOT the ordinary
+                # off-air case, and dropping it silently is how an AP arrives in
+                # Hamina with every band reading "Off" and nothing anywhere
+                # saying why. Seen live: a Baicells eNodeB that publishes
+                # min/max TX power over SNMP but not a current value, so the
+                # cell synced with radios: [] while its client count came
+                # through by another route and made it look half-working.
+                _warn_once(
+                    "no-txpower:%s:%s" % (ap.mac, r.band),
+                    "catalyst: %s %s GHz has channel %s but no TX power, so it "
+                    "is dropped from accessPointPositions and will show as Off "
+                    "in Hamina. A cell can declare tx_power_dbm in cells.json; "
+                    "a UniFi AP reporting this has no live radio state.",
+                    ap.name, r.band, r.channel)
+            else:
+                log.debug("catalyst: dropping %s radio %s GHz from positions "
+                          "(channel=%r txPower=%r — not on air)",
+                          ap.name, r.band, r.channel, r.tx_power_dbm)
             continue
         try:
             band = float(r.band)
