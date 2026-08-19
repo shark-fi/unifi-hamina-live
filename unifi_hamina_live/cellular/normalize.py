@@ -310,37 +310,60 @@ def client(ue: dict, cell_ap: AccessPoint, site_id: str, essid: str,
 # --- placement ------------------------------------------------------------
 
 def place(ap: AccessPoint, placement: PlacementSpec,
-          anchors: dict[str, AccessPoint]) -> str | None:
+          anchors: dict[str, AccessPoint],
+          plan_anchors: dict[str, tuple[str, float, float]] | None = None
+          ) -> str | None:
     """Pin a cell to a floor plan. Returns why it could not be, or None.
 
-    The anchor form is the one that makes the UniFi console the only place
-    anything is positioned: name a device that is already on the console's own
-    map and the cell rides on its coordinates every poll, so dragging the anchor
-    moves the cell with no file to edit and nothing to re-import. That is worth
-    the indirection because the alternative — pixels in a config file — goes
-    stale the moment someone rescales the plan.
+    The anchor form is the one that makes the map the only place anything is
+    positioned: name a device that is already placed and the cell rides on its
+    coordinates every poll, so moving the anchor moves the cell with no file to
+    edit and nothing to re-import. That is worth the indirection because the
+    alternative — pixels in a config file — goes stale the moment someone
+    rescales the plan.
+
+    An anchor resolves against live UniFi devices first and, failing that,
+    against APs that exist only on a Hamina OpenIntent plan (``plan_anchors``).
+    That second lookup is what lets a private cellular radio be positioned at
+    all on a console with no InnerSpace: UniFi has never heard of the radio, so
+    it can never be a live anchor, but it can be drawn on the plan in Hamina
+    like any other AP and named here. It also covers a live AP the console
+    knows but has not placed, where the plan does have coordinates for it.
 
     ``anchors`` is keyed by casefolded AP name: people type the name from the
     console UI, and matching it case-sensitively fails in a way that looks like
     the cell is simply missing.
     """
     if placement.anchor_ap:
-        anchor = anchors.get(placement.anchor_ap.strip().casefold())
-        if anchor is None:
-            return ("anchor AP %r is not on this console, so %s has no position"
-                    % (placement.anchor_ap, ap.name))
-        if anchor.floorplan_id is None:
+        key = placement.anchor_ap.strip().casefold()
+        anchor = anchors.get(key)
+        plan = (plan_anchors or {}).get(key)
+        if anchor is not None and anchor.floorplan_id is not None:
+            plan_id, ax, ay = anchor.floorplan_id, anchor.x, anchor.y
+            drawn = True
+        elif plan is not None:
+            plan_id, ax, ay = plan
+            drawn = False  # a plan-only anchor has no icon to hide under
+        elif anchor is not None:
             return ("anchor AP %r is not placed on a floor plan, so %s has no "
-                    "position — drag it onto the plan in UniFi"
+                    "position — drag it onto the plan in UniFi, or place it in "
+                    "Hamina and re-export"
                     % (placement.anchor_ap, ap.name))
-        ap.floorplan_id = anchor.floorplan_id
-        # Offset by default, not only when asked: a cell drawn at exactly its
+        else:
+            return ("anchor AP %r is on neither this console nor the floor "
+                    "plan, so %s has no position"
+                    % (placement.anchor_ap, ap.name))
+        ap.floorplan_id = plan_id
+        # Offset by default off a LIVE anchor: a cell drawn at exactly its
         # anchor's pixel is hidden underneath it, which on a map is
-        # indistinguishable from the cell never having imported.
-        dx = placement.dx_px or DEFAULT_ANCHOR_OFFSET_PX
-        dy = placement.dy_px or DEFAULT_ANCHOR_OFFSET_PX
-        ap.x = None if anchor.x is None else anchor.x + dx
-        ap.y = None if anchor.y is None else anchor.y + dy
+        # indistinguishable from the cell never having imported. A plan-only
+        # anchor draws no icon, and there the nudge would only move the cell
+        # away from where it was deliberately placed in Hamina.
+        default = DEFAULT_ANCHOR_OFFSET_PX if drawn else 0.0
+        dx = placement.dx_px or default
+        dy = placement.dy_px or default
+        ap.x = None if ax is None else ax + dx
+        ap.y = None if ay is None else ay + dy
         return None
     if placement.floorplan and placement.x_px is not None:
         ap.floorplan_id = placement.floorplan
