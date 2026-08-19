@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import errno
+import os
 import socket
 import sys
 
 import uvicorn
 
 from .config import get_settings
+
+# What the image EXPOSEs, what its HEALTHCHECK polls, and what compose maps
+# HOST_PORT onto: `${HOST_PORT:-8080}:8080`.
+CONTAINER_PORT = 8080
 
 
 def check_port_free(host: str, port: int) -> str | None:
@@ -43,8 +48,57 @@ def check_port_free(host: str, port: int) -> str | None:
     return None
 
 
+def in_container() -> bool:
+    """Best-effort: are we running inside a container?
+
+    Only used to decide whether a warning applies, so a wrong answer costs a
+    missing hint or a spurious one, never behaviour.
+    """
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8") as fh:
+            blob = fh.read()
+    except OSError:
+        return False
+    return any(k in blob for k in ("docker", "containerd", "kubepods"))
+
+
+def port_mapping_warning(port: int, inside=None) -> str | None:
+    """Warn when PORT is changed inside a container, which silently breaks it.
+
+    PORT is what the app listens on INSIDE the container; HOST_PORT is what
+    Docker publishes, mapped to the container's 8080. Setting PORT to move a
+    clashing host port leaves compose mapping to 8080 with nothing on it: the
+    container starts, logs a clean startup, serves nobody, and the HEALTHCHECK
+    — which polls 8080 — fails it into a restart loop.
+
+    Nothing else catches this. The bind succeeds, because the port really is
+    free inside the container; it is the mapping that is wrong, and a mapping
+    is not visible from in here. Hence a warning rather than a refusal: a
+    hand-written compose CAN publish to a different container port, and that is
+    a legitimate setup this must not block.
+    """
+    inside = in_container() if inside is None else inside
+    if not inside or port == CONTAINER_PORT:
+        return None
+    return (
+        f"PORT={port} inside a container. The image publishes "
+        f"{CONTAINER_PORT}, and docker-compose maps HOST_PORT to "
+        f"{CONTAINER_PORT} — so nothing will be listening where Docker "
+        f"forwards, and the healthcheck (which polls {CONTAINER_PORT}) will "
+        f"fail. To move the port on the HOST, leave PORT alone and set "
+        f"HOST_PORT. Ignore this only if your compose publishes to "
+        f"{port} deliberately."
+    )
+
+
 def main() -> None:
     settings = get_settings()
+    mapping = port_mapping_warning(settings.port)
+    if mapping:
+        # Before the bind check, because the bind will SUCCEED and hide this.
+        print(f"WARNING: {mapping}", file=sys.stderr)
     problem = check_port_free(settings.host, settings.port)
     if problem:
         # Before uvicorn.run, so the collector never starts and the log says
