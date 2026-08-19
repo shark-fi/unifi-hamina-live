@@ -49,6 +49,18 @@ class Open5GSError(RuntimeError):
     pass
 
 
+def describe(exc: Exception) -> str:
+    """A transport error that still says something when str(exc) is empty.
+
+    httpx raises ConnectTimeout and friends with an empty message, so the
+    obvious "%s: %s" % (url, exc) renders as a URL, a colon and nothing at all
+    — which reads like a truncated log line rather than a timeout, and hides
+    the one word that tells you whether the host was unreachable, refused the
+    connection, or accepted it and never answered.
+    """
+    return str(exc) or type(exc).__name__
+
+
 class Open5GSClient:
     """One NF's metrics server. Read-only: every call is a GET."""
 
@@ -76,7 +88,7 @@ class Open5GSClient:
         try:
             resp = await self._client.get("/metrics")
         except httpx.HTTPError as exc:
-            raise Open5GSError("%s: %s" % (self.base_url, exc)) from exc
+            raise Open5GSError("%s: %s" % (self.base_url, describe(exc))) from exc
         if resp.status_code != 200:
             raise Open5GSError("%s/metrics: HTTP %d"
                                % (self.base_url, resp.status_code))
@@ -114,7 +126,8 @@ class Open5GSClient:
                 path, params={"page": page, "page_size": 100}
             )
         except httpx.HTTPError as exc:
-            raise Open5GSError("%s%s: %s" % (self.base_url, path, exc)) from exc
+            raise Open5GSError(
+                "%s%s: %s" % (self.base_url, path, describe(exc))) from exc
         if resp.status_code in (400, 404):
             # The metrics server answers 400 for a path it has no dumper for,
             # which is how a pre-2.7.7 core presents itself.
