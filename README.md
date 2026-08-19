@@ -106,7 +106,7 @@ controller) and reads, per site:
 | Clients | `…/stat/sta` | per client: associated **AP**, SSID, band, channel, RSSI/signal, TX/RX rates and bytes, uptime |
 | Sites | `…/self/sites` | site inventory + rollup counts |
 | Placement | classic Maps (`stat/device` x,y) or InnerSpace | floor plans + **live AP x,y** — so an AP move flows through the API without an OpenIntent rebuild |
-| LTE/5G cells | an Open5GS core's `/gnb-info`, `/enb-info`, `/ue-info`, `/pdu-info` | cells as access points, attached UEs as clients — optional, see [LTE / 5G cells](#lte--5g-cells-from-an-open5gs-core) |
+| LTE/5G cells | an Open5GS core's `/gnb-info`, `/enb-info`, `/ue-info`, `/pdu-info`, or an Open5G2GO backend's `/enodeb/status`, `/gnodeb/status`, `/connections` | cells as access points, attached UEs as clients — optional, see [LTE / 5G cells](#lte--5g-cells-from-an-open5gs-core) |
 
 All reads are GETs; the only write is the login POST. Poll failures are logged
 and the last good snapshot is kept — the server never falls over because the
@@ -219,11 +219,21 @@ instead.
 
 ## LTE / 5G cells from an Open5GS core
 
-Set `OPEN5GS_ENABLED=true` and point `OPEN5GS_AMF_URL` (5G) and/or
-`OPEN5GS_MME_URL` (4G) at your core's metrics servers. Every cell it is talking
-to is folded into the same snapshot as the Wi-Fi APs, so it reaches all four
-surfaces above with no new plumbing — including the Catalyst facade, which means
-**a private 5G cell on a Hamina Live map beside the Wi-Fi**.
+Set `OPEN5GS_ENABLED=true` and point the bridge at either your core's metrics
+servers (`OPEN5GS_AMF_URL` / `OPEN5GS_MME_URL`) or, better where you run it, an
+[**Open5G2GO**](https://github.com/Waveriders-Collective/open5G2GO) backend
+(`OPEN5G2GO_URL`). Every cell is folded into the same snapshot as the Wi-Fi APs,
+so it reaches all four surfaces above with no new plumbing — including the
+Catalyst facade, which means **a private 5G cell on a Hamina Live map beside the
+Wi-Fi**.
+
+Open5G2GO is the better source because it already polls the radio over SNMP:
+band, EARFCN, bandwidth, TX power, real MAC/serial/model/firmware, named devices
+from the subscriber database, and **PRB utilisation** — a genuine load figure
+that lands where a Wi-Fi controller reports channel utilisation, so Hamina's
+capacity view runs on a real number. Its one limit is that it tracks a single
+radio and so cannot say which cell a UE is on; on a multi-cell estate read the
+core directly, which reports an NR-CGI per UE.
 
 ```bash
 curl -s localhost:8080/api/cellular | jq '.cells[] | {name, placed, real, costume}'
@@ -237,9 +247,10 @@ curl -s localhost:8080/api/cellular | jq '.cells[] | {name, placed, real, costum
 ```
 
 **A cell is not an access point.** Its identity, its attached UEs and their
-session state are read live from the core and are real; its band, ARFCN and TX
-power are declared by you in [`cells.json`](cells.example.json), because the core
-has never seen the radio; and its Wi-Fi band, channel and hardware model are
+session state are read live and are real; its band, ARFCN and TX power are read
+from the radio on the Open5G2GO path and declared by you in
+[`cells.json`](cells.example.json) on the direct one, because a core has never
+seen the radio; and its Wi-Fi band, channel and hardware model are
 invented, because nothing downstream can express a 3.5 GHz carrier. The real
 carrier is kept beside the costume on every radio rather than replaced by it, and
 signal strength is left empty — a core never sees the air, and an invented RSSI

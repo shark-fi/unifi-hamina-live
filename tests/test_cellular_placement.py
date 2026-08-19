@@ -196,7 +196,7 @@ async def test_api_cellular_separates_the_real_from_the_costume(tmp_path):
 
     assert body["enabled"] and body["configured"]
     assert body["status"] == {"cells": 1, "ues": 2, "ue_detail": True,
-                              "error": None}
+                              "source": "open5gs", "error": None}
     cell = body["cells"][0]
     assert cell["placed"] is True
     assert cell["real"]["technology"] == "nr"

@@ -145,6 +145,7 @@ generated zip is served at `/openintent/latest.zip`. See
 | `unifi/events.py` | pure WebSocket-event → snapshot mutations (tested) |
 | `unifi/websocket.py` | experimental WS listener (push updates, off by default) |
 | `cellular/open5gs.py` | Open5GS metrics-server client + `/gnb-info` \| `/enb-info` \| `/ue-info` \| `/pdu-info` readers |
+| `cellular/open5g2go.py` | Open5G2GO backend client + `/enodeb/status` \| `/gnodeb/status` \| `/connections` readers (live RF via that project's SNMP layer) |
 | `cellular/prom.py` | minimal Prometheus text-format parser (tested) |
 | `cellular/cells.py` | the cell inventory (`cells.json`): radio + placement, what the core cannot know (tested) |
 | `cellular/rf.py` | ARFCN/EARFCN → MHz, and the Wi-Fi band/channel costume (tested) |

@@ -9,6 +9,46 @@ Center facade Hamina can actually be pointed at**.
 The result is one floor plan with Wi-Fi APs and a private LTE/5G cell on it,
 live, in a product that has no idea cellular exists.
 
+## Two ways in, and one of them is much better
+
+| | reads | gives you |
+|---|---|---|
+| **Open5G2GO** (`OPEN5G2GO_URL`) | that project's own backend API | cells **with live RF** — band, EARFCN, bandwidth, TX power, PRB utilisation, real MAC/serial/model/firmware — plus named devices from the subscriber database |
+| **Open5GS direct** (`OPEN5GS_AMF_URL` / `OPEN5GS_MME_URL`) | the core's metrics servers | cells, and **which cell each UE is on**; the radio has to be declared in `cells.json` |
+
+If you run [Open5G2GO](https://github.com/Waveriders-Collective/open5G2GO),
+point at that. Its backend already polls the eNodeB over SNMP, so almost
+everything `cells.json` otherwise asks you to type by hand arrives measured —
+and `cells.json` shrinks to placement plus the model costume:
+
+```json
+{ "network_name": "Waveriders-Private",
+  "cells": [{ "id": "any-cell", "model": "CW9166I",
+              "placement": { "anchor_ap": "AP-Warehouse", "dx_px": 40, "dy_px": -20 } }] }
+```
+
+```bash
+OPEN5GS_ENABLED=true
+OPEN5G2GO_URL=http://10.48.0.10:8080
+```
+
+That is the whole configuration. Everything below about enabling metrics servers
+and declaring carriers applies to the **direct** path; skip to
+[step 4](#4-put-the-cell-on-the-unifi-map) if you are on Open5G2GO.
+
+**The one thing Open5G2GO cannot do** is say which cell a UE is on — it tracks a
+single radio, so its connection list never had a cell to name. With one cell
+that is exact and the bridge attributes every UE to it. With several live cells
+it refuses to guess, says so in the log, and leaves each cell showing the count
+its own SNMP measured; use the direct path there, which reports an NR-CGI per
+UE. Setting both is not an error — Open5G2GO wins — but on a multi-cell estate
+that is the wrong way round.
+
+PRB utilisation deserves a line of its own: it is a genuine load measurement and
+it lands on the radio where a Wi-Fi controller reports **channel utilisation**,
+so Hamina's capacity view runs on a real number rather than a costumed one. It
+is the only live RF figure in this integration that survives the trip intact.
+
 ## Read this before you show it to anyone
 
 A cell is not an access point. Presenting it as one is what makes this work with
@@ -19,7 +59,7 @@ somebody reading the map. Three tiers, and the code keeps them apart:
 |---|---|---|
 | Cell identity — PLMN, gNB/eNB id, TAC, NR-CGI, NG/S1 state, the RAN's IP | live from the core | **yes** |
 | Attached UEs, which cell each is on, session state, UE IP address | live from the core | **yes** |
-| Band, ARFCN, bandwidth, TX power | `cells.json`, because the core has never seen the radio | it is your config, so as far as you trust that |
+| Band, ARFCN, bandwidth, TX power, PRB utilisation | **live from the radio over SNMP on the Open5G2GO path**; `cells.json` on the direct path, because the core has never seen the radio | **yes** via Open5G2GO; otherwise as far as you trust your own config |
 | The **Wi-Fi band and channel** the cell reports | invented here | **no** — see below |
 | The **hardware model** it reports | `cells.json`, and for Hamina it must be a Cisco model | **no** |
 
@@ -37,7 +77,7 @@ empty on purpose** — a core never sees the air, and an invented RSSI is the on
 thing that would make a Hamina heatmap actively wrong rather than merely
 costumed.
 
-## What you need
+## What you need (direct path)
 
 * **Open5GS 2.7.7 or newer** for per-cell and per-UE detail. That release added
   JSON dumpers to each NF's metrics server: `/gnb-info`, `/enb-info`,
@@ -238,9 +278,13 @@ Concretely, what the product would need in order to stop this being a costume:
 
 ## Troubleshooting
 
+`status.source` on `/api/cellular` says which path is in use.
+
 | symptom | cause |
 |---|---|
-| `/api/cellular` says `configured: false` | neither `OPEN5GS_AMF_URL` nor `OPEN5GS_MME_URL` is set |
+| `/api/cellular` says `configured: false` | none of `OPEN5G2GO_URL`, `OPEN5GS_AMF_URL`, `OPEN5GS_MME_URL` is set |
+| cells appear but every UE is missing, log says "no cell association" | Open5G2GO path with more than one live cell — it will not guess; use the direct path |
+| cell has real identity but `radios: []` on the Open5G2GO path | SNMP could not reach the radio (the cell came from the S1AP list instead) — check `snmp.enabled` and the allowed-hosts list on the eNodeB |
 | `cells: []`, no error | the core is up but no gNB/eNB has completed NG/S1 setup — check the RAN, not the bridge |
 | log: `has no /gnb-info (HTTP 400)` | core older than 2.7.7; the `/metrics` fallback is in use |
 | cell appears, `radios: []` | no `cells.json` entry matched it — the log names the `match` to add |

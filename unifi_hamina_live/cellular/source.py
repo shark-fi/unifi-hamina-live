@@ -18,6 +18,8 @@ from ..config import Settings
 from ..models import AccessPoint, Client
 from . import normalize, prom
 from .cells import CellInventory, CellSpec, PlacementSpec
+from .open5g2go import (Open5G2GOClient, cells_from_enodeb_status,
+                        cells_from_gnodeb_status, ues_from_connections)
 from .open5gs import (Open5GSClient, Open5GSError, cells_from_enb_info,
                       cells_from_gnb_info, sessions_from_pdu_info,
                       ues_from_ue_info)
@@ -37,6 +39,14 @@ class CellularSource:
         self._amf = self._client(settings.open5gs_amf_url, timeout, verify)
         self._mme = self._client(settings.open5gs_mme_url, timeout, verify)
         self._smf = self._client(settings.open5gs_smf_url, timeout, verify)
+        # An Open5G2GO backend, when there is one. Preferred over the core's own
+        # endpoints where both are configured, because it answers strictly more:
+        # the same cells and UEs, plus the RF read off the radio by SNMP and the
+        # device names out of the subscriber database. See .open5g2go.
+        url = (settings.open5g2go_url or "").strip()
+        self._o5g2go = Open5G2GOClient(
+            url, timeout=timeout, verify_tls=verify,
+            prefix=settings.open5g2go_api_prefix) if url else None
         self.error: str | None = None
         self.status: dict = {"cells": 0, "ues": 0, "ue_detail": False}
         # Warn once per condition, not once per poll: the poll runs every 30s
@@ -50,10 +60,14 @@ class CellularSource:
 
     @property
     def configured(self) -> bool:
-        return any((self._amf, self._mme))
+        return any((self._o5g2go, self._amf, self._mme))
+
+    @property
+    def via_open5g2go(self) -> bool:
+        return self._o5g2go is not None
 
     async def aclose(self) -> None:
-        for client in (self._amf, self._mme, self._smf):
+        for client in (self._o5g2go, self._amf, self._mme, self._smf):
             if client is not None:
                 await client.aclose()
 
@@ -94,22 +108,46 @@ class CellularSource:
     async def _collect(
         self, site_id: str
     ) -> tuple[list[AccessPoint], list[Client], dict[str, PlacementSpec]]:
-        cells, ue_detail = await self._cells()
+        cells, per_cell_ues = await self._cells()
         if self._settings.open5gs_include_ues:
             ues = await self._ues()
-            if ues is None:      # no core here can list them
-                ues, ue_detail = [], False
         else:
-            # Asked not to list UEs. That must fall back to the core's own
-            # tally rather than counting the (empty) list we did not fetch —
-            # otherwise switching subscriber listing off silently reports every
-            # cell as having no clients at all.
-            ues, ue_detail = [], False
+            ues = None
         sessions = await self._sessions()
 
         by_cell: dict[str, list[dict]] = {}
-        for ue in ues:
-            by_cell.setdefault(normalize.ue_cell_key(ue), []).append(ue)
+        floating: list[dict] = []
+        for ue in ues or []:
+            if per_cell_ues and _has_cell(ue):
+                by_cell.setdefault(normalize.ue_cell_key(ue), []).append(ue)
+            else:
+                # A UE the source could not tie to a cell. Open5G2GO's
+                # connection list is like this by design: it tracks a single
+                # radio, so it never had a cell to name.
+                floating.append(ue)
+
+        # Floating UEs are only attributable when there is one cell to attribute
+        # them to. With several, guessing would put clients on a radio that is
+        # not carrying them — the same refusal the pre-2.7.7 fallback makes.
+        single = len(cells) == 1
+        # The UE list is the authority for a cell's client count only when every
+        # UE could be placed on a cell — otherwise the number on the access
+        # point and the clients drawn around it would be different sets. When it
+        # is not, fall back to the count the source measured per cell (SNMP's
+        # ue_count, or the core's num_connected_ues). Decided BEFORE the
+        # unattributable UEs are dropped: emptying the list first would make it
+        # look complete and throw away the count that was actually measured.
+        attributable = per_cell_ues or single or not floating
+        if floating and not attributable:
+            self._warn_once(
+                "floating-ues",
+                "cellular: %d attached UE(s) arrived with no cell association "
+                "and %d cells are live, so they are not shown on any of them. "
+                "Read the core's /ue-info directly (OPEN5GS_AMF_URL / "
+                "OPEN5GS_MME_URL) to attribute UEs per cell.",
+                len(floating), len(cells))
+            floating = []
+        ue_detail = ues is not None and attributable
 
         aps: list[AccessPoint] = []
         clients: list[Client] = []
@@ -125,10 +163,9 @@ class CellularSource:
             spec = self.inventory.spec_for(cell)
             if spec is not None and not spec.is_fallback:
                 used.add(spec.id)
-            attached = by_cell.get(key, [])
-            # When the UE list is available it is the authority for the count,
-            # so the number on the AP and the clients drawn around it are the
-            # same set. Without it, fall back to the core's own tally.
+            attached = list(by_cell.get(key, []))
+            if single and floating:
+                attached.extend(floating)
             count = len(attached) if ue_detail else cell.get("num_ues", 0)
             ap = normalize.access_point(cell, spec, site_id, num_clients=count)
             aps.append(ap)
@@ -154,6 +191,7 @@ class CellularSource:
             "cells": len(aps),
             "ues": len(clients),
             "ue_detail": ue_detail,
+            "source": "open5g2go" if self._o5g2go is not None else "open5gs",
             "error": None,
         }
         return aps, clients, placements
@@ -181,8 +219,11 @@ class CellularSource:
 
     # -- the three reads ---------------------------------------------------
     async def _cells(self) -> tuple[list[dict], bool]:
-        """Every cell the core is talking to, and whether per-UE detail is
-        available at all (it is not on a core older than 2.7.7)."""
+        """Every cell in the deployment, and whether the UE list that goes with
+        it names a cell per UE (it does not on a core older than 2.7.7, and not
+        on the Open5G2GO path at all)."""
+        if self._o5g2go is not None:
+            return await self._cells_from_open5g2go(), False
         cells: list[dict] = []
         detail = False
         if self._amf is not None:
@@ -200,6 +241,23 @@ class CellularSource:
                 cells.extend(cells_from_enb_info(items))
                 detail = True
         return cells, detail
+
+    async def _cells_from_open5g2go(self) -> list[dict]:
+        """Cells from an Open5G2GO backend: both radio modes, either present.
+
+        A 4G-mode deployment 404s the gNodeB route and a 5G-mode one 404s the
+        eNodeB route, so asking for both and keeping whatever answers is how
+        this works out which mode it is looking at — no configuration for the
+        operator to keep in sync with the stack they actually started.
+        """
+        cells: list[dict] = []
+        body = await self._o5g2go.get("/enodeb/status")
+        if body:
+            cells.extend(cells_from_enodeb_status(body))
+        body = await self._o5g2go.get("/gnodeb/status")
+        if body:
+            cells.extend(cells_from_gnodeb_status(body))
+        return cells
 
     async def _cells_from_metrics(self, client: Open5GSClient,
                                   technology: str) -> list[dict]:
@@ -242,7 +300,12 @@ class CellularSource:
         } for spec in declared]
 
     async def _ues(self) -> list[dict] | None:
-        """Every attached UE, or None when no core here can list them."""
+        """Every attached UE, or None when nothing here can list them."""
+        if self._o5g2go is not None:
+            body = await self._o5g2go.get("/connections")
+            if body is None:
+                return None
+            return self._drop_idle(ues_from_connections(body))
         found: list[dict] = []
         any_detail = False
         for client in (self._amf, self._mme):
@@ -255,18 +318,25 @@ class CellularSource:
             found.extend(ues_from_ue_info(items))
         if not any_detail:
             return None
-        if not self._settings.open5gs_include_idle_ues:
-            # An idle UE is registered but has no RRC connection, so no cell is
-            # currently carrying it. Counting it as a client of the cell it was
-            # last on would overstate what the radio is doing right now.
-            found = [u for u in found if u.get("state") != "idle"]
-        return found
+        return self._drop_idle(found)
+
+    def _drop_idle(self, ues: list[dict]) -> list[dict]:
+        """An idle UE is registered but has no RRC connection, so no cell is
+        currently carrying it. Counting it as a client of the cell it was last
+        on would overstate what that radio is doing right now."""
+        if self._settings.open5gs_include_idle_ues:
+            return ues
+        return [u for u in ues if u.get("state") != "idle"]
 
     async def _sessions(self) -> dict:
         if self._smf is None:
             return {}
         items = await self._smf.info("/pdu-info")
         return sessions_from_pdu_info(items) if items else {}
+
+
+def _has_cell(ue: dict) -> bool:
+    return ue.get("gnb_id") is not None or ue.get("enb_id") is not None
 
 
 def _bare(supi: str) -> str:

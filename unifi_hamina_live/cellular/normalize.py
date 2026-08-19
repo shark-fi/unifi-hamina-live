@@ -7,6 +7,7 @@ costume — is testable without a core, a console or a network.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 
 from ..models import AccessPoint, Client, Radio
 from ..unifi.normalize import synth_serial
@@ -37,9 +38,16 @@ def cell_key(cell: dict) -> str:
     one radio unit is one record here even when it announces several cells, so
     the join is on the RAN node, not the NR-CGI. A UE reports both, and the node
     id is the half that both 4G and 5G agree on.
+
+    A cell read from Open5G2GO's SNMP layer has no node id — SNMP reports the
+    radio's own cell id and serial, not the id it announced over S1 — so the
+    serial stands in. It is at least as stable, and it is the same value across
+    polls, which is all a key has to be.
     """
     tech = cell.get("technology") or "nr"
     node = cell.get("gnb_id") if tech == "nr" else cell.get("enb_id")
+    if node is None:
+        node = cell.get("serial") or cell.get("name") or "?"
     return "%s:%s:%s" % (tech, cell.get("plmn") or "", node)
 
 
@@ -98,13 +106,55 @@ def carrier_label(spec: RadioSpec, mhz: float | None) -> str | None:
     return line or None
 
 
-def radio_for(spec: RadioSpec, mac: str, num_clients: int) -> Radio | None:
+# Which live keys on a cell record override which field of the declared radio.
+# Live wins, always: a figure read off the radio beats a figure typed into a
+# file, and the file is what goes stale when somebody retunes the cell.
+_LIVE_RADIO_FIELDS = (
+    ("band_number", "band_number"),
+    ("arfcn", "arfcn"),
+    ("bandwidth_mhz", "bandwidth_mhz"),
+    ("tx_power_dbm", "tx_power_dbm"),
+    ("frequency_mhz", "frequency_mhz"),
+)
+
+
+def effective_radio(spec: CellSpec | None, cell: dict) -> RadioSpec:
+    """The carrier to report: what the radio says, over what you declared.
+
+    A source that can read the RF (Open5G2GO's SNMP layer against a Baicells,
+    say) puts band/EARFCN/bandwidth/TX power on the cell record, and those
+    replace the declared ones field by field — not wholesale, so a deployment
+    that gets band and EARFCN live but not TX power keeps the declared power.
+    ``wifi_channel`` is never live: nothing out there has an opinion about which
+    Wi-Fi channel a cell should pretend to be on.
+    """
+    base = spec.radio if spec else RadioSpec(
+        technology=cell.get("technology") or "nr")
+    live = {}
+    for key, attr in _LIVE_RADIO_FIELDS:
+        value = cell.get(key)
+        if value is not None:
+            live[attr] = value
+    if "band_number" in live and not base.band:
+        live["band"] = str(live["band_number"])
+    if cell.get("technology"):
+        live["technology"] = cell["technology"]
+    return replace(base, **live) if live else base
+
+
+def radio_for(spec: RadioSpec, mac: str, num_clients: int,
+              utilization_pct: float | None = None) -> Radio | None:
     """The single radio a cell reports, wearing its Wi-Fi costume.
 
-    Returns None when the cell has no declared carrier at all — a radio with an
-    invented band *and* an invented frequency would be pure fiction, and an
-    access point with no radios is a truthful way to say "this cell is up, its
-    RF was never declared".
+    Returns None when the cell has no carrier at all, live or declared — a radio
+    with an invented band *and* an invented frequency would be pure fiction, and
+    an access point with no radios is a truthful way to say "this cell is up,
+    its RF was never declared".
+
+    ``utilization_pct`` is the one live RF-health figure that survives the
+    costume intact: PRB utilisation is a load measurement and belongs exactly
+    where a Wi-Fi controller reports channel utilisation, so it is passed
+    through rather than dressed up.
     """
     mhz = carrier_mhz(spec)
     if mhz is None and not spec.band:
@@ -117,6 +167,7 @@ def radio_for(spec: RadioSpec, mac: str, num_clients: int) -> Radio | None:
         channel_width_mhz=rf.costume_width(spec.bandwidth_mhz),
         tx_power_dbm=spec.tx_power_dbm,
         num_clients=num_clients,
+        channel_utilization_pct=utilization_pct,
         technology=spec.technology,
         carrier_mhz=round(mhz, 3) if mhz is not None else None,
         carrier_label=carrier_label(spec, mhz),
@@ -148,13 +199,25 @@ def default_name(cell: dict) -> str:
 def access_point(cell: dict, spec: CellSpec | None, site_id: str,
                  num_clients: int | None = None) -> AccessPoint:
     """One cell, as the access point every downstream surface understands."""
-    mac = cell_mac(cell)
+    # A real MAC off the radio when a source could read one, the synthetic one
+    # otherwise. Either way it is stable across polls, which is what matters:
+    # every client joins to it and every downstream id is derived from it.
+    mac = cell.get("mac") or cell_mac(cell)
     tech = cell.get("technology") or "nr"
-    spec_name = (spec.name if spec and spec.name else "")
+    # A spec's name wins only when that spec named this cell specifically. A
+    # fallback matches whatever turns up, so letting its name through would
+    # relabel every cell in the estate to one string — and the live name is the
+    # better one anyway: it is the operator's own, out of the RAN or out of
+    # Open5G2GO's enodebs.yaml.
+    spec_name = (spec.name if spec and spec.name and not spec.is_fallback else "")
     name = spec_name or cell.get("name") or default_name(cell)
-    model = (spec.model if spec and spec.model else DEFAULT_MODELS.get(tech, "CELL"))
+    # The declared model is a costume worn for one consumer's benefit, so it
+    # wins where it is set; the radio's real model is the honest default.
+    model = (spec.model if spec and spec.model else
+             cell.get("model") or DEFAULT_MODELS.get(tech, "CELL"))
     clients = cell.get("num_ues", 0) if num_clients is None else num_clients
-    radio = radio_for(spec.radio, mac, clients) if spec else None
+    radio = radio_for(effective_radio(spec, cell), mac, clients,
+                      utilization_pct=cell.get("utilization_pct"))
     online = bool(cell.get("connected", True))
     return AccessPoint(
         site_id=site_id,
@@ -166,6 +229,7 @@ def access_point(cell: dict, spec: CellSpec | None, site_id: str,
         ip=_peer_ip(cell.get("peer") or ""),
         state="online" if online else "offline",
         online=online,
+        firmware=cell.get("firmware") or None,
         num_clients=clients,
         radios=[radio] if radio else [],
         source="cellular",
@@ -227,8 +291,12 @@ def client(ue: dict, cell_ap: AccessPoint, site_id: str, essid: str,
     return Client(
         mac=ue_mac(bare),
         hostname=mask_supi(bare) if mask else bare,
-        name=None,
-        ip=session.get("ip") or None,
+        # The device name from the subscriber database when a source has one.
+        # It is what makes a shared screen readable — "Camera 3" rather than a
+        # masked IMSI — and it is deliberately kept beside the identifier rather
+        # than replacing it, exactly as UniFi keeps an alias beside a hostname.
+        name=ue.get("name") or None,
+        ip=ue.get("ip") or session.get("ip") or None,
         site_id=site_id,
         ap_mac=cell_ap.mac,
         ap_serial=cell_ap.serial,

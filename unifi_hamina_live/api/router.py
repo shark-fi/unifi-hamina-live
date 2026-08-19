@@ -218,6 +218,11 @@ def cellular(col: Collector = Depends(collector), snap: Snapshot = Depends(snaps
                 "carrier_mhz": radio.carrier_mhz if radio else None,
                 "carrier": radio.carrier_label if radio else None,
                 "tx_power_dbm": radio.tx_power_dbm if radio else None,
+                # PRB utilisation, where a source could read it off the radio.
+                # It sits under "real" because it is: a load measurement, not
+                # dressed up as anything.
+                "utilization_pct": radio.channel_utilization_pct if radio else None,
+                "firmware": ap.firmware,
             },
             "costume": {
                 "band": radio.band if radio else None,

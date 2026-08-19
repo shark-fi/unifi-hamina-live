@@ -37,6 +37,20 @@ Hamina Live map beside the Wi-Fi.
 - **`Radio.technology` / `carrier_mhz` / `carrier_label`** — the true carrier
   kept beside the Wi-Fi channel it wears, not replaced by it. Additive; Wi-Fi
   radios keep their defaults.
+- **Open5G2GO support** (`OPEN5G2GO_URL`) — reads
+  [that project's](https://github.com/Waveriders-Collective/open5G2GO) own
+  backend instead of the core, and gets strictly more: its SNMP layer against
+  the eNodeB supplies **band, EARFCN, bandwidth, TX power, PRB utilisation** and
+  the radio's real MAC, serial, model and firmware, and its connection list
+  supplies device names from the subscriber database. `cells.json` then shrinks
+  to placement plus the model costume. PRB utilisation lands on the radio as
+  `channel_utilization_pct` — a real load measurement, not a costume. It cannot
+  say which cell a UE is on (it tracks one radio), so with several live cells it
+  refuses to guess and says so; use the core's own endpoints there.
+- Live radio values override declared ones **field by field**, so a deployment
+  that reads band and EARFCN but not TX power keeps the declared power.
+- A **fallback spec no longer renames** the cells it catches — it describes the
+  radio, not its identity, and relabelling an estate to one string was wrong.
 - [`docs/OPEN5GS.md`](docs/OPEN5GS.md) — setup, the map-placement walkthrough,
   the Cisco-model requirement for the Hamina import, and what this demo is
   actually arguing to Hamina.

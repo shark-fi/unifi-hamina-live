@@ -108,6 +108,20 @@ class Settings(BaseSettings):
     # Optional. The SMF knows the UE's IP address and DNN, which the AMF/MME
     # cannot report; without it clients appear with no address.
     open5gs_smf_url: str = Field(default="")
+
+    # --- Open5G2GO ---------------------------------------------------------
+    # https://github.com/Waveriders-Collective/open5G2GO — a private 4G/5G
+    # toolkit around Open5GS. Its backend answers strictly more than the core
+    # does: the same cells and UEs, plus the RF read off the radio by SNMP
+    # (band, EARFCN, bandwidth, TX power, PRB utilisation, real MAC/serial/
+    # firmware) and device names from the subscriber database. Set this and it
+    # is used INSTEAD of the OPEN5GS_* URLs above.
+    #
+    # The one thing it cannot do is say which cell a UE is on — it tracks a
+    # single radio, so there is nothing to attribute. With one cell that is
+    # exact; with several, point at the core's own endpoints instead.
+    open5g2go_url: str = Field(default="")
+    open5g2go_api_prefix: str = Field(default="/api/v1")
     open5gs_timeout_seconds: float = Field(default=5.0, gt=0.0)
     open5gs_verify_tls: bool = Field(default=True)
     # What the core cannot know: band, ARFCN, bandwidth, TX power and where the
