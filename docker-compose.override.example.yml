@@ -27,3 +27,18 @@ services:
       # The exporter is BAKED INTO THE IMAGE at a pinned commit — you do not
       # need to clone it. Uncomment only to run against your own checkout:
       # - ../unifi-hamina-export/unifi_export.py:/opt/exporter/unifi_export.py:ro
+      # The cell inventory, when OPEN5GS_ENABLED=true. It lives on the host so
+      # you can edit a cell's radio or move it on the plan without rebuilding;
+      # OPEN5GS_CELLS_PATH must point at the path INSIDE the container.
+      # - ./cells.json:/app/cells.json:ro
+
+    # An Open5GS core in its own compose project is on its own network, so the
+    # bridge cannot resolve `amf` by name until it joins that network. Either
+    # attach it here and use container names in OPEN5GS_*_URL, or publish each
+    # NF's 9090 on the host and point at those.
+    # networks: [default, open5gs]
+
+# networks:
+#   open5gs:
+#     external: true
+#     name: <the core's compose network>

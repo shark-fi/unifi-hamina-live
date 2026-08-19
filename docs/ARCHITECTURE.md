@@ -51,6 +51,37 @@ One background poller, one immutable snapshot, read-only projections.
   `FakeCollector` with canned snapshots — the whole API is testable without a
   network.
 
+## A second source, one snapshot
+
+When `OPEN5GS_ENABLED` is set the collector reads an Open5GS core in the same
+tick as the console and folds its cells into the same `Snapshot` — cells as
+`AccessPoint`s marked `source="cellular"`, attached UEs as `Client`s. Everything
+downstream is unchanged, which is the entire point: a cell reaches the neutral
+API, the dashboard, the Meraki facade and the Catalyst facade because those are
+projections of the snapshot and do not care how a row got into it.
+
+```
+   UniFi console ─┐
+                  ├─▶ Collector ──▶ one Snapshot ──▶ the four surfaces
+   Open5GS core ──┘    (one tick)
+```
+
+Two properties this shape has to hold, and both are tested:
+
+* **One tick, one instant.** The cellular read happens inside the collector's
+  poll rather than on a loop of its own, so a cell's client list and the Wi-Fi
+  around it come from the same moment. Separate loops would draw clients
+  orbiting an AP that no longer has them.
+* **Independent failure.** A core that is down must not stop the console being
+  polled, and a console that is down must not blank the cells — so the cellular
+  merge runs on the failure path too, and it first strips the cells carried
+  forward from the last good snapshot, or a failing console would double the
+  estate every poll.
+
+Placement is applied by the collector rather than the cellular source, because a
+cell anchored to a UniFi device needs that device's live position and only the
+collector has both halves. See `cellular/normalize.place`.
+
 ## Three independent data layers
 
 It helps to see the data as three layers with different change rates and
@@ -113,6 +144,12 @@ generated zip is served at `/openintent/latest.zip`. See
 | `unifi/placement.py` | pure AP-position transforms (classic Maps + InnerSpace, tested) |
 | `unifi/events.py` | pure WebSocket-event → snapshot mutations (tested) |
 | `unifi/websocket.py` | experimental WS listener (push updates, off by default) |
+| `cellular/open5gs.py` | Open5GS metrics-server client + `/gnb-info` \| `/enb-info` \| `/ue-info` \| `/pdu-info` readers |
+| `cellular/prom.py` | minimal Prometheus text-format parser (tested) |
+| `cellular/cells.py` | the cell inventory (`cells.json`): radio + placement, what the core cannot know (tested) |
+| `cellular/rf.py` | ARFCN/EARFCN → MHz, and the Wi-Fi band/channel costume (tested) |
+| `cellular/normalize.py` | cell/UE records → neutral models, and cell placement (tested) |
+| `cellular/source.py` | the cellular half of one poll |
 | `meraki/mapping.py` | neutral → Meraki v1 JSON |
 | `meraki/router.py` | Meraki-compatible endpoints + auth |
 | `catalyst/auth.py` | DNA Center token issue/validate + Basic-auth check |

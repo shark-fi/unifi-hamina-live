@@ -1,0 +1,77 @@
+{
+  "_comment": "What an Open5GS core cannot know: the radio, and where it is. Copy to cells.json and set OPEN5GS_CELLS_PATH. Cell identity, which UEs are attached and session state all come live from the core - nothing here repeats them.",
+
+  "_site_id": "Which UniFi site the cells belong to; decides which floor plans they can sit on. Leave empty on a single-site console and the first site polled is used. OPEN5GS_SITE_ID overrides this.",
+  "site_id": "",
+
+  "_network_name": "Shown as the client's network, where a Wi-Fi client would show an SSID. Falls back to the DNN, then the PLMN.",
+  "network_name": "SharkFi-Private",
+
+  "cells": [
+    {
+      "_comment": "A cell matched by the gNB id it announces over NG. Find it in GET /api/cellular, or curl http://<amf>:9090/gnb-info.",
+      "id": "gnb-100",
+      "name": "CBRS Cell - Warehouse",
+      "match": { "gnb_id": 100 },
+
+      "_model": "What this reports as its hardware. Hamina's Catalyst connector resolves models against Cisco hardware only, so for a Hamina import this must be a Cisco AP model - see docs/OPEN5GS.md. It is a costume, and the coverage simulation runs on that model's antenna pattern, not your cell's.",
+      "model": "CW9166I",
+
+      "radio": {
+        "_comment": "The RAN's own configuration. The core has never seen the radio, so these are the numbers from your gNB config - srsRAN, Amarisoft, or the small cell's own UI.",
+        "technology": "nr",
+        "band": "n48",
+        "arfcn": 636667,
+        "bandwidth_mhz": 40,
+        "tx_power_dbm": 30,
+
+        "_wifi_channel": "Optional. The Wi-Fi channel this cell reports to anything that only understands Wi-Fi. Left out, it is picked from the DFS range and stays put. There is no honest n48-to-Wi-Fi channel; this only has to be stable and out of the way.",
+        "wifi_channel": 116
+      },
+
+      "placement": {
+        "_comment": "Name a UniFi device that is already placed on the console's floor plan and the cell rides on its position - drag the anchor in UniFi and the cell moves, with nothing to edit here and nothing to re-import.",
+        "anchor_ap": "AP-Warehouse",
+
+        "_dx_px": "How far off the anchor to draw the cell, in floor-plan pixels. Left out it is nudged 24px so the two do not stack into one icon; set both to 0 to make them coincident.",
+        "dx_px": 40,
+        "dy_px": -20
+      }
+    },
+
+    {
+      "_comment": "A 4G cell, placed by hand instead of anchored. floorplan is an id from GET /api/floorplans; x_px/y_px are pixels on that plan's image - click them out at /sensors.",
+      "id": "enb-264040",
+      "name": "LTE Cell - Yard",
+      "match": { "enb_id": 264040 },
+      "model": "CW9166I",
+      "radio": {
+        "technology": "lte",
+        "band": "48",
+        "arfcn": 55340,
+        "bandwidth_mhz": 20,
+        "tx_power_dbm": 27
+      },
+      "placement": {
+        "floorplan": "replace-with-a-floorplan-id",
+        "x_px": 980,
+        "y_px": 410
+      }
+    },
+
+    {
+      "_comment": "A spec with no 'match' is the fallback for any cell nothing else claimed - which is what a one-cell proof of concept wants: declare the radio once and it applies whatever gNB id turns up. A cell matched explicitly above always wins over this, whatever the file order.",
+      "id": "any-other-cell",
+      "name": "Private 5G cell",
+      "model": "CW9166I",
+      "radio": {
+        "technology": "nr",
+        "band": "n78",
+        "arfcn": 632628,
+        "bandwidth_mhz": 100,
+        "tx_power_dbm": 24
+      },
+      "placement": { "anchor_ap": "AP-Lobby" }
+    }
+  ]
+}

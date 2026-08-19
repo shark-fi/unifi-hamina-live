@@ -28,3 +28,4 @@ exports/
 # macOS
 .DS_Store
 sensors.json
+cells.json

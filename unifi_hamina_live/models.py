@@ -20,6 +20,20 @@ class Radio(BaseModel):
     # Live RF health, when the console reports it.
     channel_utilization_pct: float | None = None
     tx_retries_pct: float | None = None
+    # What this radio actually is. Wi-Fi radios leave these at their defaults;
+    # a cellular radio dressed as Wi-Fi (see cellular/rf.py) sets them, so the
+    # true carrier survives beside the band/channel it is wearing. A reader that
+    # only knows Wi-Fi ignores them and sees a normal radio; one that cares can
+    # tell a costume from the real thing.
+    technology: str = Field(
+        default="wifi", description="'wifi', 'lte' or 'nr'.")
+    carrier_mhz: float | None = Field(
+        default=None,
+        description="Real centre frequency, when this is not a Wi-Fi radio.")
+    carrier_label: str | None = Field(
+        default=None,
+        description="Human summary of the real carrier, e.g. "
+        "'NR n48 ARFCN 636667 (3550.0 MHz, 40 MHz)'.")
 
 
 class AccessPoint(BaseModel):
@@ -40,6 +54,12 @@ class AccessPoint(BaseModel):
     floorplan_id: str | None = None
     x: float | None = None
     y: float | None = None
+    # Where this came from: 'unifi' for a real console device, 'cellular' for an
+    # LTE/5G cell presented as an access point (see the cellular package).
+    # Additive on purpose — every existing reader keeps working and sees the
+    # default — but it is the one field that tells a real AP from a costumed
+    # cell, so anything that reports hardware should read it.
+    source: str = Field(default="unifi", description="'unifi' or 'cellular'.")
 
 
 class Client(BaseModel):

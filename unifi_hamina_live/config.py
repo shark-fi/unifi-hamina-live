@@ -93,6 +93,41 @@ class Settings(BaseSettings):
     # model. Leave empty.
     catalyst_model_override: str = Field(default="")
 
+    # --- Open5GS (LTE / 5G cells presented as access points) --------------
+    # OFF by default. When on, every cell the core is talking to joins the same
+    # snapshot the UniFi APs are in, so it reaches the neutral API, the
+    # dashboard, the Meraki facade and the Catalyst facade with no new plumbing.
+    # A cell is not an access point — see the cellular package for exactly which
+    # parts of that presentation are real and which are a costume.
+    open5gs_enabled: bool = Field(default=False)
+    # Base URL of each NF's metrics server (`metrics.server` in its YAML,
+    # conventionally port 9090). AMF for 5G, MME for 4G — set either or both.
+    # In Docker these are container names: http://amf:9090.
+    open5gs_amf_url: str = Field(default="")
+    open5gs_mme_url: str = Field(default="")
+    # Optional. The SMF knows the UE's IP address and DNN, which the AMF/MME
+    # cannot report; without it clients appear with no address.
+    open5gs_smf_url: str = Field(default="")
+    open5gs_timeout_seconds: float = Field(default=5.0, gt=0.0)
+    open5gs_verify_tls: bool = Field(default=True)
+    # What the core cannot know: band, ARFCN, bandwidth, TX power and where the
+    # radio is on a floor plan. See cells.example.json.
+    open5gs_cells_path: str = Field(default="./cells.json")
+    # Which UniFi site the cells belong to. Empty = the first site polled, which
+    # is what a single-site console wants. This decides which floor plans a cell
+    # can be placed on, so set it on a multi-site console.
+    open5gs_site_id: str = Field(default="")
+    # List individual UEs as clients. Off leaves the per-cell counts intact and
+    # publishes no subscriber identifiers at all.
+    open5gs_include_ues: bool = Field(default=True)
+    # An idle UE is registered but has no RRC connection, so no cell is carrying
+    # it right now. Off by default so a cell's client count matches what is
+    # actually on its radio.
+    open5gs_include_idle_ues: bool = Field(default=False)
+    # A SUPI is an IMSI: it identifies a person's SIM, and this ends up on a
+    # dashboard that gets screen-shared. Masked shows PLMN + last four.
+    open5gs_mask_supi: bool = Field(default=True)
+
     # --- RSSI sensors (WLAN Pi multilateration) ---------------------------
     # OFF by default, and not merely as a courtesy: this is the only thing in
     # the service that ACCEPTS data. Everything else is read-only, and the
