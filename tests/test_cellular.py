@@ -9,11 +9,13 @@ instead of an empty map.
 
 from __future__ import annotations
 
+import httpx
 import json
 
 import pytest
 
 from unifi_hamina_live.cellular import normalize, open5gs, prom
+from unifi_hamina_live.cellular.open5gs import describe
 from unifi_hamina_live.cellular.cells import CellInventory
 from unifi_hamina_live.cellular.source import CellularSource
 from unifi_hamina_live.config import Settings
@@ -397,3 +399,20 @@ async def test_switching_the_ue_list_off_keeps_the_core_s_own_count(inventory):
     assert clients == []
     assert "/ue-info" not in amf.calls
     assert next(a for a in aps if a.online).num_clients == 2
+
+
+# --- transport errors that say what happened ------------------------------
+
+def test_a_timeout_is_named_even_though_httpx_gives_no_message():
+    """httpx raises ConnectTimeout with an empty str(), which rendered as a
+    URL, a colon and nothing — indistinguishable from a truncated log line.
+
+    Seen live: `open5gs poll failed: http://open5g2go-backend:8000/...: `
+    """
+    assert describe(httpx.ConnectTimeout("")) == "ConnectTimeout"
+    assert describe(httpx.ReadTimeout("")) == "ReadTimeout"
+
+
+def test_a_real_message_is_kept():
+    assert describe(httpx.ConnectError("[Errno 111] Connection refused")) == (
+        "[Errno 111] Connection refused")

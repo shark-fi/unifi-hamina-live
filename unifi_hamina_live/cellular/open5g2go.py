@@ -37,7 +37,7 @@ import logging
 
 import httpx
 
-from .open5gs import Open5GSError
+from .open5gs import Open5GSError, describe
 
 log = logging.getLogger("unifi_hamina_live.cellular")
 
@@ -71,7 +71,8 @@ class Open5G2GOClient:
         try:
             resp = await self._client.get(url)
         except httpx.HTTPError as exc:
-            raise Open5GSError("%s%s: %s" % (self.base_url, url, exc)) from exc
+            raise Open5GSError(
+                "%s%s: %s" % (self.base_url, url, describe(exc))) from exc
         if resp.status_code == 404:
             self._unavailable.add(path)
             log.info("open5g2go %s does not serve %s", self.base_url, url)
