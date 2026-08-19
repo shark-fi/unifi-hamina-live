@@ -194,6 +194,25 @@ Meraki `floorPlans` endpoint. Because positions flow live, **an AP move no
 longer needs an OpenIntent rebuild** — set `OPENINTENT_REFRESH_SECONDS=0` to
 generate the zip once for the initial import and rely on live positions after.
 
+### Consoles that are their own access point
+A device counts as an AP if it **has radios**, not if UniFi calls it one. A
+UniFi Express 7 reports `type: "udm"` — it is a gateway with a built-in AP — so
+a `type == "uap"` test finds nothing at all on a console where it is the only
+Wi-Fi radio, and the dashboard shows 0 APs and an empty map with nothing to
+distinguish that from a permissions problem. Gateways with no Wi-Fi (UDM Pro,
+UXG) publish no `radio_table` and stay excluded, so they do not become map
+markers that can never show a client.
+
+Client counts on such a device come from the **per-radio** totals: its
+device-level `user-num_sta` counts everything behind the gateway, wired
+included (an Express 7 reported 6 with every radio at 0). On a standalone AP
+the two agree.
+
+Model codes unknown to `UNIFI_MODEL_NAMES` fall through as the lower-cased code
+(`udma69b`), which is cosmetic on the dashboard but **would be dropped by
+Hamina** on an OpenIntent export — add a verified slug rather than a guessed
+one, since Hamina drops unresolvable models silently.
+
 ### Floor plans on a console with no InnerSpace — `PLAN_SOURCE=openintent`
 Floor plans are a **UniFi InnerSpace** feature, and not every console can run
 it — a UniFi Express 7 cannot install it at all. Without a plan nothing
