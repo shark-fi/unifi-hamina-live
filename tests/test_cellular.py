@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from unifi_hamina_live.cellular import normalize, open5gs, prom
+from unifi_hamina_live.cellular import normalize, open5g2go, open5gs, prom
 from unifi_hamina_live.cellular.open5gs import describe
 from unifi_hamina_live.cellular.cells import CellInventory
 from unifi_hamina_live.cellular.source import CellularSource
@@ -416,3 +416,62 @@ def test_a_timeout_is_named_even_though_httpx_gives_no_message():
 def test_a_real_message_is_kept():
     assert describe(httpx.ConnectError("[Errno 111] Connection refused")) == (
         "[Errno 111] Connection refused")
+
+
+# --- an eNodeB SNMP cannot reach but S1AP can -----------------------------
+#
+# Trimmed from the nuc's open5g2go backend, where this drew a cell as OFFLINE
+# on the map while it carried six attached UEs. The serial is in BOTH lists —
+# SNMP as an unreachable entry — so the S1AP fallback never fired for it.
+
+UNREACHABLE_SNMP_BUT_S1_UP = {
+    "network": {"plmn": "315010"},
+    "snmp": {
+        "available": True, "enabled": True,
+        "reachable_count": 0, "configured_count": 1,
+        "enodebs": [{
+            "serial_number": "1202000291217RB0860",
+            "config_name": "Neutrino-eNodeB", "location": "WLPC",
+            "reachable": False,
+            "error": "No SNMP response received before timeout",
+            # note: a DIFFERENT address than the one S1AP connected from —
+            # which is why SNMP times out in the first place
+            "ip_address": "192.168.1.103",
+            "identity": {"serial_number": None, "product_type": None},
+        }],
+    },
+    "s1ap": {
+        "available": True, "connected_count": 1,
+        "enodebs": [{
+            "serial_number": "1202000291217RB0860",
+            "config_name": "Neutrino-eNodeB", "location": "WLPC",
+            "ip_address": "10.10.5.103", "port": 36412, "connected": True,
+        }],
+    },
+}
+
+
+def test_a_cell_snmp_cannot_reach_is_up_when_s1ap_says_so():
+    """The S1 link is the authority on whether the eNodeB is serving."""
+    cells = open5g2go.cells_from_enodeb_status(UNREACHABLE_SNMP_BUT_S1_UP)
+    assert len(cells) == 1                       # not duplicated across lists
+    assert cells[0]["connected"] is True
+    assert cells[0]["serial"] == "1202000291217RB0860"
+
+
+def test_the_s1ap_address_is_used_when_snmp_has_no_reachable_one():
+    cells = open5g2go.cells_from_enodeb_status(UNREACHABLE_SNMP_BUT_S1_UP)
+    assert cells[0]["peer"] == "10.10.5.103"
+
+
+def test_an_unreachable_cell_with_no_s1_link_is_still_offline():
+    """Don't paint everything green: no S1AP entry means nothing is serving."""
+    body = json.loads(json.dumps(UNREACHABLE_SNMP_BUT_S1_UP))
+    body["s1ap"] = {"available": True, "connected_count": 0, "enodebs": []}
+    assert open5g2go.cells_from_enodeb_status(body)[0]["connected"] is False
+
+
+def test_an_s1ap_entry_that_is_not_connected_does_not_revive_it():
+    body = json.loads(json.dumps(UNREACHABLE_SNMP_BUT_S1_UP))
+    body["s1ap"]["enodebs"][0]["connected"] = False
+    assert open5g2go.cells_from_enodeb_status(body)[0]["connected"] is False
