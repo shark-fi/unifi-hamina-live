@@ -106,15 +106,34 @@ def cells_from_enodeb_status(body: dict) -> list[dict]:
     snmp = (body.get("snmp") or {}).get("enodebs") or []
     s1ap = (body.get("s1ap") or {}).get("enodebs") or []
 
+    live = {str(i.get("serial_number") or ""): i for i in s1ap
+            if isinstance(i, dict) and i.get("connected")}
+
     cells: list[dict] = []
     seen_serials: set[str] = set()
     for item in snmp:
         if not isinstance(item, dict):
             continue
         cell = _snmp_cell(item, plmn)
+        serial = str(cell.get("serial") or item.get("serial_number") or "")
+        if not item.get("reachable") and serial in live:
+            # A radio SNMP cannot reach still appears in the SNMP list, as an
+            # entry with reachable:false — so the S1AP fallback below never
+            # fires for it, and the cell was drawn offline while carrying its
+            # attached UEs. The S1 link is the authority on whether the eNodeB
+            # is up; SNMP only adds RF detail, and its absence leaves radios
+            # empty, which is honest. Seen live: SNMP timing out because it was
+            # configured with a different address than the one S1AP connected
+            # from.
+            cell["connected"] = True
+            # Prefer the address S1AP connected FROM over the one SNMP was
+            # configured with: when SNMP is timing out, the configured address
+            # is frequently the reason, and showing it as the radio's IP sends
+            # whoever debugs this next to the wrong host.
+            cell["peer"] = live[serial].get("ip_address") or cell.get("peer") or ""
         cells.append(cell)
-        if cell.get("serial"):
-            seen_serials.add(str(cell["serial"]))
+        if serial:
+            seen_serials.add(serial)
 
     for item in s1ap:
         if not isinstance(item, dict):

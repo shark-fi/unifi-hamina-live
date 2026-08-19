@@ -284,7 +284,7 @@ Concretely, what the product would need in order to stop this being a costume:
 |---|---|
 | `/api/cellular` says `configured: false` | none of `OPEN5G2GO_URL`, `OPEN5GS_AMF_URL`, `OPEN5GS_MME_URL` is set |
 | cells appear but every UE is missing, log says "no cell association" | Open5G2GO path with more than one live cell — it will not guess; use the direct path |
-| cell has real identity but `radios: []` on the Open5G2GO path | SNMP could not reach the radio (the cell came from the S1AP list instead) — check `snmp.enabled` and the allowed-hosts list on the eNodeB |
+| cell has real identity but `radios: []` on the Open5G2GO path | SNMP could not reach the radio — check `snmp.enabled` and the allowed-hosts list on the eNodeB, **and that the address Open5G2GO polls matches the one S1AP connected from**; a radio configured under a stale address times out silently. The cell stays online on the S1 link's word; only the RF detail is missing |
 | `cells: []`, no error | the core is up but no gNB/eNB has completed NG/S1 setup — check the RAN, not the bridge |
 | log: `has no /gnb-info (HTTP 400)` | core older than 2.7.7; the `/metrics` fallback is in use |
 | cell appears, `radios: []` | no `cells.json` entry matched it — the log names the `match` to add |
