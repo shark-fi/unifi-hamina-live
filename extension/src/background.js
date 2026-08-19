@@ -29,7 +29,9 @@ async function registerForOrigin(origin) {
     {
       id: SCRIPT_ID,
       matches,
-      js: ["src/content.js"],
+      // transform.js first: files in one `js` array share the isolated world's
+      // scope, so content.js can call it without a bundler or a module graph.
+      js: ["src/transform.js", "src/content.js"],
       runAt: "document_idle",
       persistAcrossSessions: true,
     },

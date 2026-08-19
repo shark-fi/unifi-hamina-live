@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b32";        // shown in the status chip; bump on every change
+  const BUILD = "b33";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -167,6 +167,10 @@
      renders and never compute a position. A gateway adopted to a separate NVR
      puts its sensors on THAT console's map, not this one. */
   let sensorByName = {}, sensorErr = null;
+  /* plan-pixel -> screen, fitted from the APs InnerSpace DOES label.
+   * Pinning to label rects can only decorate what the console annotates; a
+   * fitted transform makes anything in plan space drawable. */
+  let planT = null, planQ = null;
   /* Some remote sessions carry console traffic inside a WebRTC data channel
    * (UniFi reports "Rtc-Cloudflare / Ok-Relay"): the page makes no HTTP API
    * request at all, and the <id>.id.ui.direct host it does contact serves only
@@ -466,6 +470,10 @@
       byMac[macNorm(a.mac)] = {
         name: a.name || a.mac,
         online: !!a.online,
+        // Plan-pixel placement, kept so the overlay can fit plan -> screen and
+        // then draw things InnerSpace never labels. Only the bridge has this:
+        // placements live in the InnerSpace project, not in stat/device.
+        plan: (a.x != null && a.y != null) ? { x: a.x, y: a.y } : null,
         radios: (a.radios || []).map((r) => ({
           band: r.band, channel: r.channel, width: r.channel_width_mhz,
           util: r.channel_utilization_pct, retries: r.tx_retries_pct,
@@ -503,7 +511,8 @@
       const list = (cliByMac[mac] || []).sort(
         (a, b) => BANDS.indexOf(bandOf(a)) - BANDS.indexOf(bandOf(b)) ||
                   (b.signal ?? -999) - (a.signal ?? -999));
-      next[norm(ap.name)] = { online: ap.online, clients: list, radios: ap.radios || [] };
+      next[norm(ap.name)] = { online: ap.online, clients: list,
+                              radios: ap.radios || [], plan: ap.plan || null };
     }
     if (!Object.keys(next).length) throw new Error("bridge reported no APs");
     return next;
@@ -574,7 +583,8 @@
         const list = (cliByMac[mac] || []).sort(
           (a, b) => BANDS.indexOf(bandOf(a)) - BANDS.indexOf(bandOf(b)) ||
                     (b.signal ?? -999) - (a.signal ?? -999));
-        next[norm(ap.name)] = { online: ap.online, clients: list, radios: ap.radios || [] };
+        next[norm(ap.name)] = { online: ap.online, clients: list,
+                              radios: ap.radios || [], plan: ap.plan || null };
       }
       apByName = next;
       usingBridge = false;
@@ -1236,6 +1246,20 @@
     });
     for (const [name, g] of groups) if (!seen.has(name)) g.el.style.display = "none";
 
+    /* Fit plan -> screen from every AP we placed this pass. Refitting each
+     * time rather than caching: InnerSpace pans and zooms, so the mapping is
+     * only true for the frame it was measured in. */
+    const pairs = [];
+    for (const [name, g] of groups) {
+      const ap = apByName[name];
+      if (!ap || !ap.plan || g.el.style.display === "none") continue;
+      pairs.push({ plan: ap.plan,
+                   screen: { x: parseFloat(g.el.style.left),
+                             y: parseFloat(g.el.style.top) } });
+    }
+    planT = fitPlanToScreen(pairs);
+    planQ = transformQuality(planT);
+
     /* Self-heal a console switch: if none of the APs on screen appear in our
      * dataset, we're holding another console's data (its API prefix differs).
      * Drop it and re-resolve rather than showing stale numbers indefinitely. */
@@ -1299,6 +1323,10 @@
         `<span style="opacity:.5">${BUILD}</span>`;
       return;
     }
+    const fitBit = !planQ ? ""
+      : planQ.verified ? ` · plan fit ${esc(planQ.why)}`
+      : planQ.usable ? ` · plan fit unverified (${esc(planQ.why)})`
+      : "";
     const nSen = showSensors ? Object.keys(sensorByName).length : 0;
     const senBit = !showSensors ? ""
       : sensorErr ? ` · sensors: ${esc(sensorErr)}`
@@ -1314,7 +1342,7 @@
     const icons = all.length ? ` · icons <b>${withIcon || "none"}</b>` : "";
     statusText.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
       `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
-      `${usingBridge ? " · via <b>bridge</b>" : ""}${senBit}` +
+      `${usingBridge ? " · via <b>bridge</b>" : ""}${senBit}${fitBit}` +
       ` <span style="opacity:.5">${BUILD}</span>`;
   }
 
