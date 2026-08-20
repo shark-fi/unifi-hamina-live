@@ -898,3 +898,18 @@ def test_a_complete_radio_is_still_emitted(caplog):
                          tx_power_dbm=24)])
 
     assert len(mapping._position_radios(ap)) == 1
+
+
+def test_captured_requests_carry_a_timestamp(cat_client):
+    """So a capture can be lined up against Hamina's own timestamped errors.
+
+    Two of its sync mutations fail while the others succeed, and the question
+    that separates "our payload was rejected" from "Hamina errored before it
+    asked" is whether the failing call reached us at all — unanswerable from a
+    list with no times on it.
+    """
+    before = time.time()
+    cat_client.get("/dna/intent/api/v1/nothing-here")
+    rec = cat_client.get("/catalyst/_captured").json()["requests"][-1]
+
+    assert before <= rec["at"] <= time.time()

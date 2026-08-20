@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import os
 import platform
 from contextlib import asynccontextmanager
@@ -234,6 +235,15 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             ):
                 h = request.headers
                 app.state.catalyst_captured.append({
+                    # Wall-clock, so a capture can be lined up against a
+                    # timestamped error in Hamina's own GraphQL responses. Two
+                    # of its sync mutations fail while the others succeed, and
+                    # the question "did that failing call even reach us?" is
+                    # the one that separates our payload being rejected from
+                    # Hamina erroring before it ever asked. Without a time on
+                    # each record that has to be answered by clearing the
+                    # buffer and watching a stopwatch.
+                    "at": time.time(),
                     "method": request.method,
                     "path": path,
                     "query": request.url.query,

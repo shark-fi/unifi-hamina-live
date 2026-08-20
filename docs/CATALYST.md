@@ -90,7 +90,10 @@ After Hamina connects, inspect the capture buffer:
 
 ```bash
 curl -s localhost:8080/catalyst/_captured | jq
-# -> { "count": N, "requests": [ {method, path, query, status, implemented, authenticated}, ... ] }
+# -> { "count": N, "requests": [ {at, method, path, query, status, implemented, authenticated}, ... ] }
+# `at` is a unix timestamp — line it up against the timestamps in Hamina's
+# own GraphQL error responses to see whether a failing mutation ever
+# reached the facade at all.
 curl -s "localhost:8080/catalyst/_captured?clear=true"   # reset between attempts
 ```
 
