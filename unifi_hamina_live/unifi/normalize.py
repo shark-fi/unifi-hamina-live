@@ -22,6 +22,12 @@ UNIFI_MODEL_NAMES: dict[str, str] = {
     "U6EXT": "u6-extender",
     "U7PRO": "u7-pro", "U7PROMAX": "u7-pro-max",
     "UAPA6A6": "u7-pro-outdoor",
+    # Deliberate stand-in: Hamina's catalogue has no UniFi Express 7, so the
+    # honest code maps to nothing and an unmapped model is not merely a bad
+    # label — Hamina answers an unknown model with an empty device list and
+    # drops every AP in the batch, not just this one. The Express 7 is Wi-Fi 7
+    # 2x2 on 2.4/5/6 and Hamina's u7-pro is BE 2/2/2, so the radios match.
+    "UDMA69B": "u7-pro",
 }
 
 # UniFi radio key -> band label (GHz).
