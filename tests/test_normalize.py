@@ -138,3 +138,21 @@ def test_client_count_falls_back_when_the_radios_do_not_publish_it():
     assert normalize.wireless_client_count(
         {"user-num_sta": 4,
          "radio_table_stats": [{"radio": "ng", "state": "RUN"}]}) == 4
+
+
+def test_the_outdoor_ap_names_a_catalogue_variant_not_the_bare_model():
+    """Hamina lists no bare "u7-pro-outdoor" — only region/antenna variants.
+
+    Its catalogue carries u7-pro-outdoor-{internal,external} and an -eu twin of
+    each. The unit on site is the US one with the external omnis fitted, so
+    -external is the honest entry; the bare name resolves to nothing, and an
+    unresolvable model empties the whole sync rather than just this AP.
+    """
+    assert normalize.model_name("UAPA6A6") == "u7-pro-outdoor-external"
+
+
+def test_the_meraki_facade_still_knows_the_outdoor_ap():
+    """The Meraki model map is keyed on the same string, so it moves in step."""
+    from unifi_hamina_live.meraki.mapping import UNIFI_TO_MERAKI_MODEL
+
+    assert UNIFI_TO_MERAKI_MODEL[normalize.model_name("UAPA6A6")] == "MR86"
