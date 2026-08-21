@@ -94,6 +94,22 @@ def test_a_plain_ap_is_unaffected():
     assert normalize.is_access_point({"type": "uap", "model": "U7PRO"})
 
 
+def test_the_gateway_maps_to_a_model_hamina_knows():
+    """Unmapped, `UDMA69B` lower-cases to "udma69b" and Hamina knows no such model.
+
+    That is not a cosmetic label problem: an unrecognised model comes back as
+    `missingApModels` with an *empty* `liveAccessPoints`, so one unknown device
+    empties the whole sync. Hamina's catalogue has no Express 7, so u7-pro is a
+    deliberate stand-in with matching radios.
+    """
+    assert normalize.model_name("UDMA69B") == "u7-pro"
+    assert normalize.access_point(EXPRESS_7, "site-1").model == "u7-pro"
+
+
+def test_an_unknown_model_still_falls_through_to_the_code():
+    assert normalize.model_name("UNHEARDOF") == "unheardof"
+
+
 def test_the_gateways_radios_normalize_like_any_ap():
     ap = normalize.access_point(EXPRESS_7, "site-1")
     assert [(r.band, r.channel, r.channel_width_mhz) for r in ap.radios] == [
