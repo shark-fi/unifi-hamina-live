@@ -21,7 +21,12 @@ UNIFI_MODEL_NAMES: dict[str, str] = {
     "U6M": "u6-mesh", "U6IW": "u6-iw", "U6ENT": "u6-enterprise",
     "U6EXT": "u6-extender",
     "U7PRO": "u7-pro", "U7PROMAX": "u7-pro-max",
-    "UAPA6A6": "u7-pro-outdoor",
+    # Hamina has no bare "u7-pro-outdoor": the catalogue splits it four ways
+    # by region and antenna (…-internal/-external, each with an -eu twin).
+    # This is the US unit with the external omnis fitted. Guessing the bare
+    # name is not a near miss — an unresolvable model comes back as
+    # missingApModels with an empty liveAccessPoints, dropping the batch.
+    "UAPA6A6": "u7-pro-outdoor-external",
     # Deliberate stand-in: Hamina's catalogue has no UniFi Express 7, so the
     # honest code maps to nothing and an unmapped model is not merely a bad
     # label — Hamina answers an unknown model with an empty device list and

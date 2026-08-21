@@ -461,7 +461,7 @@ def test_positions_drop_radios_with_no_live_state():
 
     ap = AccessPoint(
         site_id="default", name="U7 Pro Outdoor", mac="94:2a:6f:5c:41:dc",
-        serial="Q2AA-BBBB-CCCC", model_code="UAPA6A6", model="u7-pro-outdoor",
+        serial="Q2AA-BBBB-CCCC", model_code="UAPA6A6", model="u7-pro-outdoor-external",
         online=True, floorplan_id="p1", x=600.0, y=450.0,
         radios=[
             Radio(band="2.4", channel=None, tx_power_dbm=None),   # not on air
