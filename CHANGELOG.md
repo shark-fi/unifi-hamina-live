@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project
 follows semantic versioning.
 
+## [Unreleased] — Wi-Fi HaLow from an Alfa radio
+
+A third live source. Point the bridge at an Alfa (or other OpenWrt) 802.11ah
+HaLow radio and its access point — plus every station associated to it — joins
+the same snapshot as the UniFi APs, reaching all four surfaces unchanged.
+
+### Added
+
+- **`halow/` package** — reads a HaLow radio over its OpenWrt `ubus` JSON-RPC
+  bridge (`session.login`, `iwinfo info`, `iwinfo assoclist`, and `rpc-oui
+  arp_table` for client IPs), the same read-only API the box's own web UI uses.
+  A HaLow AP carries a real BSSID and its stations real MACs, so unlike a cell
+  it needs no synthetic identity. `ubus.py` handles the one subtlety — an
+  expired session answers with a transport-level `-32002`, distinct from a
+  method-level permission `rc`, and a call that hits it re-logs-in once and
+  retries.
+- **The 5 GHz costume** (`halow/rf.py`) — HaLow is sub-GHz, so the band/channel
+  reported downstream is a stable, out-of-the-way 5 GHz DFS assignment (keyed on
+  the BSSID), following the cellular source's "don't read as a co-channel
+  neighbour of a real AP" reasoning. The driver's mapped 2.4 GHz channel is kept
+  in `carrier_label` and **`carrier_mhz` is left `null`** — the mapped figure is
+  not a measurement of the real S1G centre, which the permitted `ubus` surface
+  does not expose.
+- **`HALOW_*` settings** — `HALOW_ENABLED`, host/credentials, device, site, the
+  name/model cosmetics, and anchor/explicit placement reusing the cellular
+  `PlacementSpec`.
+- **`GET /api/halow`** — the companion to `/api/cellular`: says plainly that the
+  entry is an 802.11ah AP, its real carrier, and the Wi-Fi channel it wears.
+- **Independent failure and grey-out** — the radio fails independently of the
+  console and the core; an unreachable radio leaves its AP on the map greyed out
+  (last-known BSSID, no radio) rather than dropping it, and nothing is drawn
+  before the first successful poll.
+- **`docs/HALOW.md`**, README section, `.env.example` block, and `tests/test_halow.py`.
+
 ## [Unreleased] — LTE / 5G cells from an Open5GS core
 
 A second live source. Point the bridge at an Open5GS core and every cell it is
