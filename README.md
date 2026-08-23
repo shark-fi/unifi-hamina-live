@@ -107,6 +107,7 @@ controller) and reads, per site:
 | Sites | `…/self/sites` | site inventory + rollup counts |
 | Placement | classic Maps (`stat/device` x,y) or InnerSpace | floor plans + **live AP x,y** — so an AP move flows through the API without an OpenIntent rebuild |
 | LTE/5G cells | an Open5GS core's `/gnb-info`, `/enb-info`, `/ue-info`, `/pdu-info`, or an Open5G2GO backend's `/enodeb/status`, `/gnodeb/status`, `/connections` | cells as access points, attached UEs as clients — optional, see [LTE / 5G cells](#lte--5g-cells-from-an-open5gs-core) |
+| HaLow AP | an Alfa/OpenWrt radio's `ubus` `iwinfo info` / `assoclist` | the 802.11ah AP as an access point, associated stations as clients — optional, see [Wi-Fi HaLow](#wi-fi-halow-from-an-alfa-radio) |
 
 All reads are GETs; the only write is the login POST. Poll failures are logged
 and the last good snapshot is kept — the server never falls over because the
@@ -340,6 +341,44 @@ nothing to re-import.
 
 Full walkthrough, the Cisco-model requirement for the Hamina import, and what to
 say to Hamina about it: **[docs/OPEN5GS.md](docs/OPEN5GS.md)**.
+
+## Wi-Fi HaLow from an Alfa radio
+
+Set `HALOW_ENABLED=true` and point the bridge at an Alfa (or other OpenWrt)
+HaLow radio's address:
+
+```bash
+HALOW_ENABLED=true
+HALOW_HOST=10.10.5.158        # https assumed
+HALOW_USERNAME=admin          # MatrixPro default is admin / admin
+HALOW_PASSWORD=admin
+```
+
+The radio's access point — and every station associated to it — is folded into
+the same snapshot as the Wi-Fi APs, over the same read-only `ubus`/`iwinfo` API
+the box's own web UI uses, so it reaches all four surfaces with no new plumbing.
+
+**A HaLow AP is a real 802.11 access point, but not a 2.4/5/6 GHz one.** It runs
+sub-GHz (902–928 MHz in the US), so — as with a cell — the band and channel it
+reports downstream are a stable, out-of-the-way 5 GHz DFS costume, chosen so it
+does not read as a co-channel neighbour of a real UniFi radio. Its BSSID, TX
+power, and per-station signal are the hardware's own; the true carrier rides on
+`carrier_label`, and `carrier_mhz` is left empty rather than filled with the
+driver's mapped 2.4 GHz number, which is not where the radio transmits.
+
+```bash
+curl -s localhost:8080/api/halow | jq '.access_points[] | {name, online, real, costume}'
+{
+  "name": "WLPC HaLow", "online": true,
+  "real":    { "technology": "halow", "carrier_mhz": null, "tx_power_dbm": 30,
+               "carrier": "802.11ah HaLow (S1G, sub-GHz) (US, 8 MHz, driver maps to ch8/2447 MHz)" },
+  "costume": { "band": "5", "channel": 136, "channel_width_mhz": 20 }
+}
+```
+
+Place it the same way a cell is placed — anchor it to a UniFi AP already on the
+console's map (`HALOW_ANCHOR_AP`) and it rides that AP's position every poll.
+Full walkthrough: **[docs/HALOW.md](docs/HALOW.md)**.
 
 ## The extension
 

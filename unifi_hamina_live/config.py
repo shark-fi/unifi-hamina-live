@@ -142,6 +142,43 @@ class Settings(BaseSettings):
     # dashboard that gets screen-shared. Masked shows PLMN + last four.
     open5gs_mask_supi: bool = Field(default=True)
 
+    # --- Wi-Fi HaLow (802.11ah AP presented as an access point) -----------
+    # OFF by default. When on, an Alfa (or other OpenWrt/ubus) HaLow radio is
+    # read every poll and joins the same snapshot the UniFi APs are in, so it
+    # reaches the neutral API, the dashboard, the Meraki facade and the Catalyst
+    # facade with no new plumbing. A HaLow AP is a real 802.11 access point, but
+    # it is NOT a 2.4/5/6 GHz one — see the halow package for exactly which
+    # parts of the presentation are real and which are a costume.
+    halow_enabled: bool = Field(default=False)
+    # The radio's web address. https by default — these boxes serve the UI on
+    # https and the ubus bridge answers there. A bare host/IP is fine.
+    halow_host: str = Field(default="")
+    halow_username: str = Field(default="admin")
+    halow_password: str = Field(default="")
+    halow_verify_tls: bool = Field(default=False)
+    halow_timeout_seconds: float = Field(default=5.0, gt=0.0)
+    # The wireless interface to read. wlan0 on the Alfa AHM27292U; override for
+    # a radio that names it differently.
+    halow_device: str = Field(default="wlan0")
+    # Which UniFi site the AP belongs to. Empty = the same default the cellular
+    # side uses (OPEN5GS_SITE_ID, then the first site polled). This decides
+    # which floor plans it can be placed on.
+    halow_site_id: str = Field(default="")
+    # Cosmetics. The SSID is the default display name and the board model the
+    # default model; set these to override either on the map.
+    halow_name: str = Field(default="")
+    halow_model: str = Field(default="")
+    # Where the AP sits on a floor plan. Prefer the anchor form: name a UniFi AP
+    # that is already placed on the console's own map and the HaLow AP inherits
+    # its position every poll — nothing to re-import when it moves. The explicit
+    # form (a floor-plan id plus pixels) is for a radio with no UniFi AP near it.
+    halow_anchor_ap: str = Field(default="")
+    halow_dx_px: float = Field(default=0.0)
+    halow_dy_px: float = Field(default=0.0)
+    halow_floorplan: str = Field(default="")
+    halow_x_px: float | None = Field(default=None)
+    halow_y_px: float | None = Field(default=None)
+
     # --- Floor plans from somewhere other than the console -----------------
     # "innerspace" (default) reads plans from the console's InnerSpace app.
     # "openintent" reads them from a Hamina OpenIntent export instead, for a
