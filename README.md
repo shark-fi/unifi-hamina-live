@@ -108,6 +108,7 @@ controller) and reads, per site:
 | Placement | classic Maps (`stat/device` x,y) or InnerSpace | floor plans + **live AP x,y** — so an AP move flows through the API without an OpenIntent rebuild |
 | LTE/5G cells | an Open5GS core's `/gnb-info`, `/enb-info`, `/ue-info`, `/pdu-info`, or an Open5G2GO backend's `/enodeb/status`, `/gnodeb/status`, `/connections` | cells as access points, attached UEs as clients — optional, see [LTE / 5G cells](#lte--5g-cells-from-an-open5gs-core) |
 | HaLow AP | an Alfa/OpenWrt radio's `ubus` `iwinfo info` / `assoclist` | the 802.11ah AP as an access point, associated stations as clients — optional, see [Wi-Fi HaLow](#wi-fi-halow-from-an-alfa-radio) |
+| LoRaWAN gateway | a MikroTik RouterOS gateway's `/lora/print` over the binary API | the sub-GHz gateway as an access point (no clients — a packet forwarder keeps no association table) — optional, see [LoRaWAN gateway](#lorawan-gateway-from-a-mikrotik-radio) |
 
 All reads are GETs; the only write is the login POST. Poll failures are logged
 and the last good snapshot is kept — the server never falls over because the
@@ -379,6 +380,45 @@ curl -s localhost:8080/api/halow | jq '.access_points[] | {name, online, real, c
 Place it the same way a cell is placed — anchor it to a UniFi AP already on the
 console's map (`HALOW_ANCHOR_AP`) and it rides that AP's position every poll.
 Full walkthrough: **[docs/HALOW.md](docs/HALOW.md)**.
+
+## LoRaWAN gateway from a MikroTik radio
+
+Set `LORA_ENABLED=true` and point the bridge at a MikroTik LoRa gateway (a wAP
+LR8 running RouterOS 6):
+
+```bash
+LORA_ENABLED=true
+LORA_HOST=10.10.5.206         # RouterOS binary API, TCP 8728 (RouterOS 6 has no REST)
+LORA_USERNAME=admin           # a RouterOS user; read-only is ideal
+LORA_PASSWORD=admin
+```
+
+The gateway is folded into the same snapshot as the Wi-Fi APs, over the RouterOS
+binary API (only `print` reads — `/lora`, `/lora/servers`, ethernet, board), so
+it reaches all four surfaces with no new plumbing.
+
+**A LoRa gateway is not a Wi-Fi radio, and not an association point.** It is a
+sub-GHz LoRaWAN packet forwarder (US915, 902–928 MHz), so — as with a cell — the
+band and channel it reports downstream are a stable, out-of-the-way 5 GHz DFS
+costume. Its EUI, region/plan and upstream server are the hardware's own; the
+true carrier rides on `carrier_label`, and `carrier_mhz` is left empty because a
+gateway spreads across a whole sub-band rather than sitting on one frequency.
+Only the gateway is drawn: a single gateway's per-packet RSSI cannot position its
+end devices, so none are fabricated.
+
+```bash
+curl -s localhost:8080/api/lora | jq '.access_points[] | {name, online, real, costume}'
+{
+  "name": "WLPC-Gateway", "online": true,
+  "real":    { "technology": "lora", "carrier_mhz": null,
+               "carrier": "LoRaWAN gateway (sub-GHz) (902-928 MHz (US915), plan us-915-1, EUI 3235313254002800, → DockerNUC (10.10.5.147), Enabled)" },
+  "costume": { "band": "5", "channel": 120, "channel_width_mhz": 20 }
+}
+```
+
+Place it the same way — anchor it to a UniFi AP already on the console's map
+(`LORA_ANCHOR_AP`) and it rides that AP's position every poll. Full walkthrough:
+**[docs/LORA.md](docs/LORA.md)**.
 
 ## The extension
 

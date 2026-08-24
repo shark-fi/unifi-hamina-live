@@ -66,6 +66,12 @@ class Collector:
         # carry it too, and it shares the one tick and one snapshot.
         self.halow = None
         self.halow_note: str | None = None
+        # A LoRaWAN gateway, when one is configured. Built here for the same
+        # reason the cellular and HaLow sources are: a collector a test or
+        # script constructs should carry it too, and it shares the one tick and
+        # one snapshot.
+        self.lora = None
+        self.lora_note: str | None = None
         # Warned once, not per poll: a placement that cannot resolve says the
         # same thing every 30 seconds for as long as it is wrong.
         self._placement_warned: set[str] = set()
@@ -90,6 +96,15 @@ class Collector:
                     "HALOW_ENABLED is on but HALOW_HOST is not set, so no radio "
                     "is being read")
                 log.warning("halow: %s", self.halow_note)
+        if settings.lora_enabled:
+            from ..lora.source import LoraSource
+
+            self.lora = LoraSource(settings)
+            if not self.lora.configured:
+                self.lora_note = (
+                    "LORA_ENABLED is on but LORA_HOST is not set, so no gateway "
+                    "is being read")
+                log.warning("lora: %s", self.lora_note)
 
     def floor_image(self, plan_id: str) -> bytes | None:
         """Raw image bytes for a floor plan id, if the collector has fetched it."""
@@ -243,6 +258,10 @@ class Collector:
         # it is merged on the same terms: its AP survives a UniFi outage, and a
         # radio outage leaves the rest of the map intact.
         await self._merge_halow(snap)
+        # A LoRa gateway fails independently of the console, the core and the
+        # HaLow radio, so it is merged on the same terms: its AP survives a
+        # UniFi outage, and a gateway outage leaves the rest of the map intact.
+        await self._merge_lora(snap)
 
         async with self._lock:
             self._snapshot = snap
@@ -557,6 +576,70 @@ class Collector:
             return configured
         return snap.sites[0].id if snap.sites else "default"
 
+    async def _merge_lora(self, snap: Snapshot) -> None:
+        """Fold the LoRa gateway into the snapshot.
+
+        The gateway is a single access point with no clients — a LoRaWAN packet
+        forwarder keeps no association table — so this is the HaLow merge minus
+        the stations.
+        """
+        if self.lora is None or not self.lora.configured:
+            return
+        # Imported here, not at module scope, so the package is only loaded when
+        # a gateway is actually configured — as the cellular and HaLow layers are.
+        from ..cellular import normalize as cell_normalize
+        from ..lora import normalize as lora_normalize
+
+        # A failed console poll carries the last good access points forward, and
+        # those already include the LoRa gateway merged on the previous tick.
+        # Drop it before merging again, or every failed poll doubles it.
+        snap.access_points[:] = [a for a in snap.access_points
+                                 if a.source != lora_normalize.SOURCE]
+
+        site_id = self._lora_site(snap)
+        aps, _clients, placements = await self.lora.collect(site_id)
+        if not aps:
+            return
+
+        anchors = {a.name.strip().casefold(): a for a in snap.access_points}
+        for ap in aps:
+            placement = placements.get(ap.mac)
+            if placement is None or not placement.configured:
+                continue
+            problem = cell_normalize.place(ap, placement, anchors,
+                                           self._plan_anchors)
+            if problem and problem not in self._placement_warned:
+                self._placement_warned.add(problem)
+                log.warning("lora placement: %s", problem)
+
+        snap.access_points.extend(aps)
+        if not any(s.id == site_id for s in snap.sites):
+            # A console that has not answered yet — or a bridge pointed at a
+            # gateway and nothing else — still needs a site for the AP to hang
+            # off, or every projection downstream drops it.
+            snap.sites.append(Site(id=site_id, name=site_id))
+        for site in snap.sites:
+            if site.id == site_id:
+                site.num_aps = len(snap.aps_for_site(site_id))
+                site.num_clients = len(snap.clients_for_site(site_id))
+        for fp in snap.floorplans:
+            fp.num_aps = sum(1 for a in snap.access_points if a.floorplan_id == fp.id)
+
+    def _lora_site(self, snap: Snapshot) -> str:
+        """Which UniFi site the LoRa gateway belongs to.
+
+        LORA_SITE_ID wins, then the cellular default (OPEN5GS_SITE_ID), then the
+        first site polled — matching the HaLow rule, so all extra sources land
+        together on a single-site console with no configuration.
+        """
+        configured = (self._settings.lora_site_id or "").strip()
+        if configured:
+            return configured
+        configured = (self._settings.open5gs_site_id or "").strip()
+        if configured:
+            return configured
+        return snap.sites[0].id if snap.sites else "default"
+
     # -- lifecycle ---------------------------------------------------------
     async def _loop(self) -> None:
         interval = self._settings.poll_interval_seconds
@@ -583,3 +666,5 @@ class Collector:
             await self.cellular.aclose()
         if self.halow is not None:
             await self.halow.aclose()
+        if self.lora is not None:
+            await self.lora.aclose()

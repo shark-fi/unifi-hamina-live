@@ -4,6 +4,56 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project
 follows semantic versioning.
 
+## [Unreleased] — LoRaWAN gateway from a MikroTik radio
+
+A fourth live source. Point the bridge at a MikroTik LoRa gateway (a wAP LR8
+running RouterOS 6) and the gateway joins the same snapshot as the UniFi APs,
+reaching all four surfaces unchanged.
+
+### Added
+
+- **`lora/` package** — reads a MikroTik LoRa gateway over the RouterOS binary
+  API on TCP 8728 (RouterOS 6 has no REST — `/rest` returns 404), the same
+  protocol Winbox speaks. `api.py` hand-rolls the protocol (the self-describing
+  word-length prefix, `!re`/`!done`/`!trap`/`!fatal` sentences, and both the
+  6.43+ plain login and the pre-6.43 MD5 challenge) so no new dependency is
+  added — httpx and FastAPI stay the whole list, the same discipline the HaLow
+  `ubus` bridge follows. Only `print` reads are issued: `/lora`, `/lora/servers`,
+  `/interface/ethernet`, `/system/routerboard`.
+- **The 5 GHz costume** (`lora/rf.py`) — LoRa is sub-GHz, so the band/channel
+  reported downstream is a stable, out-of-the-way 5 GHz DFS assignment (keyed on
+  the gateway EUI), following the cellular and HaLow sources' "don't read as a
+  co-channel neighbour of a real AP" reasoning. The region/plan the gateway runs
+  (e.g. US915, 902–928 MHz) is kept in `carrier_label` and **`carrier_mhz` is
+  left `null`** — a gateway spreads across a whole sub-band, so there is no single
+  carrier to report and inventing one would be a wrong number dressed as a
+  measurement.
+- **One AP, no clients** — a LoRaWAN gateway is a packet forwarder, not an
+  association point, so it emits exactly one access point and never any clients.
+  Its end devices are visible in the box's live *Traffic* sniffer, but a single
+  gateway's RSSI cannot position them and a LoRaWAN `DevAddr` is reassigned on
+  every join, so no client positions are fabricated. Identity is the box's own
+  ethernet MAC, because the 64-bit gateway EUI is not itself a 48-bit MAC.
+- **`LORA_*` settings** — `LORA_ENABLED`, host/port/credentials, the interface to
+  read, site, cosmetic name/model, and the same anchor-or-explicit placement the
+  cellular and HaLow sources use (`LORA_ANCHOR_AP` rides a placed UniFi AP's
+  position every poll).
+- **`GET /api/lora`** — the companion to `/api/cellular` and `/api/halow`: says
+  plainly that the entry is a sub-GHz LoRaWAN gateway, what its real carrier is,
+  and which Wi-Fi channel it wears instead.
+- **`docs/LORA.md`** — the full walkthrough, and the honest limits on device data.
+- **`tests/test_lora.py`** — the projection, the costume's stability, the offline
+  grey-out, and the RouterOS API protocol itself (length-prefix round-trip,
+  `!re` parsing, `!trap` → error, auth vs unreachable) driven over a fake stream.
+
+### Behaviour
+
+- A gateway that stops answering stays on the map greyed out (`online: false`, no
+  radio), exactly as a UniFi AP that lost power does; nothing is drawn before the
+  first successful poll, so a first-poll failure never imports a phantom AP. A
+  gateway failure is independent of the console, the core and the HaLow radio —
+  each source survives the others going down.
+
 ## [Unreleased] — Wi-Fi HaLow from an Alfa radio
 
 A third live source. Point the bridge at an Alfa (or other OpenWrt) 802.11ah
