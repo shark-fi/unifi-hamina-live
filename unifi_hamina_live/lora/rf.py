@@ -82,11 +82,47 @@ def band_for_plan(channel_plan: str | None) -> str | None:
     return None
 
 
+def channel_span(channels: list[dict]) -> str | None:
+    """A concise summary of the gateway's *enabled* receive channels — the real
+    frequencies it listens on, read from ``/lora/channels/print``.
+
+    The regulatory band (``band_for_plan``) says what US915 *could* use; this
+    says what this gateway is actually configured for — the eight 125 kHz uplink
+    channels plus any wider LoRa/FSK ones. It stays honest about the multi-channel
+    nature (still no single carrier) while naming the concrete span, e.g.
+    ``8×125 kHz 902.3–903.7 MHz + 500 kHz @ 903 MHz``.
+    """
+    enabled = [c for c in channels
+               if (c.get("disabled") or "false").strip().lower() != "true"]
+    narrow: list[float] = []   # the 125 kHz uplink group, summarized as a span
+    wide: list[str] = []       # anything else, named individually
+    for c in enabled:
+        freq = _float(c.get("freq"))
+        if freq is None:
+            continue
+        bw = (c.get("bandwidth") or "").replace("_", " ").strip()
+        if bw.startswith("125"):
+            narrow.append(freq)
+        else:
+            wide.append(f"{bw} @ {_freq(freq)} MHz" if bw else f"{_freq(freq)} MHz")
+    parts: list[str] = []
+    if narrow:
+        lo, hi = min(narrow), max(narrow)
+        span = _freq(lo) if lo == hi else f"{_freq(lo)}–{_freq(hi)}"
+        parts.append(f"{len(narrow)}×125 kHz {span} MHz")
+    # De-duplicate the wider channels while keeping their order.
+    for w in dict.fromkeys(wide):
+        parts.append(w)
+    return " + ".join(parts) if parts else None
+
+
 def carrier_label(channel_plan: str | None, gateway_id: str | None,
-                  server: str | None, status: str | None) -> str:
+                  server: str | None, status: str | None,
+                  channels: str | None = None) -> str:
     """A one-line summary of what a ``source="lora"`` access point really is —
-    a LoRaWAN gateway, the band its channel-plan occupies, its EUI, and the
-    network server it forwards to."""
+    a LoRaWAN gateway, the band its channel-plan occupies (and the concrete
+    channels it listens on, when known), its EUI, and the network server it
+    forwards to."""
     parts = ["LoRaWAN gateway (sub-GHz)"]
     detail: list[str] = []
     band = band_for_plan(channel_plan)
@@ -94,6 +130,8 @@ def carrier_label(channel_plan: str | None, gateway_id: str | None,
         detail.append(band)
     if channel_plan:
         detail.append(f"plan {channel_plan}")
+    if channels:
+        detail.append(f"active {channels}")
     if gateway_id:
         detail.append(f"EUI {gateway_id}")
     if server:
@@ -101,3 +139,15 @@ def carrier_label(channel_plan: str | None, gateway_id: str | None,
     if status:
         detail.append(status)
     return parts[0] + (" (" + ", ".join(detail) + ")" if detail else "")
+
+
+def _float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _freq(mhz: float) -> str:
+    """A LoRa channel frequency, trimmed of a trailing ``.0`` (903.0 -> 903)."""
+    return f"{mhz:g}"

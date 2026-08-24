@@ -141,10 +141,12 @@ class LoraSource:
         mac = await self._identity(lora)
         model = self.spec.model or await self._board_model()
         server = await self._server_label(lora.get("servers"))
+        channels = await self._channel_span()
 
         ap = normalize.access_point(
             lora, mac, site_id,
-            name=self.spec.name or None, model=model or None, server=server)
+            name=self.spec.name or None, model=model or None, server=server,
+            channels=channels)
         self._last_mac = ap.mac
 
         self.status = {
@@ -152,6 +154,7 @@ class LoraSource:
             "name": lora.get("name"),
             "gateway_id": lora.get("gateway-id") or lora.get("hardware-id"),
             "channel_plan": lora.get("channel-plan"),
+            "channels": channels,
             "server": server,
             "status": lora.get("status"),
             "error": None,
@@ -197,6 +200,20 @@ class LoraSource:
         if rows:
             return rows[0].get("model") or rows[0].get("board-name") or None
         return None
+
+    async def _channel_span(self) -> str | None:
+        """The concrete enabled-channel span, read from ``/lora/channels/print``
+        — a courtesy for the honest label, allowed to fail. Names the real
+        frequencies the gateway listens on (the eight 125 kHz uplinks plus any
+        wider channels), which the regulatory band alone does not."""
+        try:
+            channels = await self._client.command(
+                "/lora/channels/print", detail="")
+        except RouterOSError as exc:
+            log.debug("lora channels read unavailable: %s", exc)
+            return None
+        from . import rf
+        return rf.channel_span(channels)
 
     async def _server_label(self, active: str | None) -> str | None:
         """The upstream network server, ``name (address)`` when the server list

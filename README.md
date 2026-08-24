@@ -411,7 +411,7 @@ curl -s localhost:8080/api/lora | jq '.access_points[] | {name, online, real, co
 {
   "name": "WLPC-Gateway", "online": true,
   "real":    { "technology": "lora", "carrier_mhz": null,
-               "carrier": "LoRaWAN gateway (sub-GHz) (902-928 MHz (US915), plan us-915-1, EUI 3235313254002800, → DockerNUC (10.10.5.147), Enabled)" },
+               "carrier": "LoRaWAN gateway (sub-GHz) (902-928 MHz (US915), plan us-915-1, active 8×125 kHz 902.3–903.7 MHz + 500 kHz @ 903 MHz, EUI 3235313254002800, → DockerNUC (10.10.5.147), Enabled)" },
   "costume": { "band": "5", "channel": 120, "channel_width_mhz": 20 }
 }
 ```
