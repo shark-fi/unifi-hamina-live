@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project
 follows semantic versioning.
 
+## [Unreleased] — the core decides whether a cell is on the network
+
+### Fixed
+
+- **A cell whose SNMP answers without implementing the RF OIDs no longer reads
+  as switched off.** The backend serialises `s1_link_up`/`rf_enabled` as plain
+  booleans that are `False` when the OID went unanswered, so a firmware that
+  does not implement them was indistinguishable from a transmitter that is off,
+  and the cell went grey while the core carried its UEs. RF state is now
+  believed only when the same payload carried real cell data — a radio that
+  reported its EARFCN or cell status answered the RF OIDs too.
+- **A radio the core has lost is offline however healthy SNMP looks.** The
+  inverse case: with the S1 association gone but SNMP reporting the transmitter
+  on, the cell stayed green — the map claiming coverage the network cannot
+  carry.
+
+Where both readers describe the same radio the S1 link now decides, and SNMP can
+take "up" away in exactly one case: it *positively* reported the transmitter off,
+which is a real and different condition (an RF kill, a lapsed CBRS grant) that
+leaves the radio attached but serving nobody. That case is unchanged, as is the
+unreachable-SNMP handling and the S1AP address preference added in #64/#65.
+
 ## [Unreleased] — LoRaWAN gateway from a MikroTik radio
 
 A fourth live source. Point the bridge at a MikroTik LoRa gateway (a wAP LR8

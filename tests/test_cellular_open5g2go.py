@@ -157,6 +157,46 @@ def test_a_radio_with_its_transmitter_off_is_not_online():
     assert open5g2go.cells_from_enodeb_status(body)[0]["connected"] is False
 
 
+def test_snmp_that_answers_without_rf_oids_does_not_read_as_switched_off():
+    """`rf_enabled` is False when the OID went unanswered, not only when the
+    transmitter is off — so a firmware that does not implement it must not take
+    a radio the core is attached to off the map.
+
+    Distinguished by whether the same payload carried real cell data: a radio
+    that reported its EARFCN answered the RF OIDs too.
+    """
+    body = json.loads(json.dumps(ENODEB_STATUS))
+    snmp = body["snmp"]["enodebs"][0]
+    snmp["cell"] = {"status": None, "band_class": None, "earfcn": None}
+    snmp["connection"] = {"s1_link_up": False, "rf_enabled": False, "ue_count": 0}
+
+    cell = open5g2go.cells_from_enodeb_status(body)[0]
+    assert cell["connected"] is True
+
+
+def test_a_radio_the_core_has_lost_is_offline_however_healthy_snmp_looks():
+    """The inverse of the unreachable-SNMP case: SNMP is perfectly happy and
+    reports the transmitter on, but the S1 association is gone. The core is the
+    authority on whether the radio is on the network, so green here would be the
+    map claiming coverage the network cannot carry."""
+    body = json.loads(json.dumps(ENODEB_STATUS))
+    body["s1ap"]["enodebs"][0]["connected"] = False
+
+    cell = open5g2go.cells_from_enodeb_status(body)[0]
+    assert cell["connected"] is False
+    assert cell["arfcn"] == 55340          # still reports what it transmits
+
+
+def test_a_transmitter_reported_off_still_takes_the_radio_offline():
+    """The one case where SNMP overrules an attached radio, kept intact: an RF
+    kill or a lapsed CBRS grant leaves S1 up and nobody served."""
+    body = json.loads(json.dumps(ENODEB_STATUS))
+    body["snmp"]["enodebs"][0]["connection"]["rf_enabled"] = False
+
+    cell = open5g2go.cells_from_enodeb_status(body)[0]
+    assert cell["connected"] is False
+
+
 def test_an_enodeb_snmp_could_not_reach_still_appears_from_s1ap():
     body = json.loads(json.dumps(ENODEB_STATUS))
     body["snmp"]["enodebs"] = []

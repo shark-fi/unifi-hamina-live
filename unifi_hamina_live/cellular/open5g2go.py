@@ -106,8 +106,8 @@ def cells_from_enodeb_status(body: dict) -> list[dict]:
     snmp = (body.get("snmp") or {}).get("enodebs") or []
     s1ap = (body.get("s1ap") or {}).get("enodebs") or []
 
-    live = {str(i.get("serial_number") or ""): i for i in s1ap
-            if isinstance(i, dict) and i.get("connected")}
+    by_serial = {str(i.get("serial_number") or ""): i for i in s1ap
+                 if isinstance(i, dict)}
 
     cells: list[dict] = []
     seen_serials: set[str] = set()
@@ -116,21 +116,34 @@ def cells_from_enodeb_status(body: dict) -> list[dict]:
             continue
         cell = _snmp_cell(item, plmn)
         serial = str(cell.get("serial") or item.get("serial_number") or "")
-        if not item.get("reachable") and serial in live:
-            # A radio SNMP cannot reach still appears in the SNMP list, as an
-            # entry with reachable:false — so the S1AP fallback below never
-            # fires for it, and the cell was drawn offline while carrying its
-            # attached UEs. The S1 link is the authority on whether the eNodeB
-            # is up; SNMP only adds RF detail, and its absence leaves radios
-            # empty, which is honest. Seen live: SNMP timing out because it was
-            # configured with a different address than the one S1AP connected
-            # from.
-            cell["connected"] = True
-            # Prefer the address S1AP connected FROM over the one SNMP was
-            # configured with: when SNMP is timing out, the configured address
-            # is frequently the reason, and showing it as the radio's IP sends
-            # whoever debugs this next to the wrong host.
-            cell["peer"] = live[serial].get("ip_address") or cell.get("peer") or ""
+        record = by_serial.get(serial) if serial else None
+        if record is not None:
+            # Where both readers describe the same radio, the S1 link is the
+            # authority on whether the eNodeB is up. SNMP only adds RF detail,
+            # and it can take "up" away in exactly one case: it positively
+            # reported the transmitter off, which is a real and different
+            # condition — an RF kill, or a CBRS grant that lapsed — and leaves
+            # the radio attached but serving nobody.
+            #
+            # It must be a positive report, not a silent one. The backend
+            # serialises `rf_enabled` as a plain bool that is False when the OID
+            # went unanswered, so a firmware that does not implement it is
+            # indistinguishable from a transmitter that is off unless the same
+            # payload carried real cell data alongside it — see `rf_reported`.
+            attached = bool(record.get("connected"))
+            rf_off = bool(cell.get("rf_reported")) and not bool(cell.get("rf_enabled"))
+            cell["connected"] = attached and not rf_off
+            if not item.get("reachable") and attached:
+                # A radio SNMP cannot reach still appears in the SNMP list, as
+                # an entry with reachable:false — so the S1AP fallback below
+                # never fires for it, and the cell was drawn offline while
+                # carrying its attached UEs. Seen live: SNMP timing out because
+                # it was configured with a different address than the one S1AP
+                # connected from. Prefer the address S1AP connected FROM: when
+                # SNMP is timing out, the configured address is frequently the
+                # reason, and showing it as the radio's IP sends whoever debugs
+                # this next to the wrong host.
+                cell["peer"] = record.get("ip_address") or cell.get("peer") or ""
         cells.append(cell)
         if serial:
             seen_serials.add(serial)
@@ -162,11 +175,27 @@ def _snmp_cell(item: dict, plmn: str) -> dict:
     perf = item.get("performance") or {}
     power = item.get("tx_power") or {}
     reachable = bool(item.get("reachable"))
+    # Did this payload actually report RF state, or is it defaulting?
+    #
+    # `s1_link_up` and `rf_enabled` arrive as plain bools that are False when the
+    # OID went unanswered, so a radio that answered SNMP without implementing
+    # them looks identical to one with its transmitter off. Believe them only
+    # when the same payload carried real cell data — a radio that told us its
+    # EARFCN or cell status answered the RF OIDs too.
+    rf_reported = reachable and (
+        radio.get("earfcn") is not None or bool(radio.get("status"))
+    )
+    rf_enabled = bool(conn.get("rf_enabled"))
     # "Up" means the core has it: S1 established and the RF actually on. An
     # eNodeB answering SNMP with its transmitter off is not serving anybody, and
-    # showing it green would be the map lying about coverage.
-    online = reachable and bool(conn.get("s1_link_up")) and bool(conn.get("rf_enabled"))
+    # showing it green would be the map lying about coverage. Used only when no
+    # S1AP record describes this radio; where one does, it decides — see
+    # `cells_from_enodeb_status`.
+    online = reachable and bool(conn.get("s1_link_up")) and (
+        rf_enabled or not rf_reported)
     return {
+        "rf_reported": rf_reported,
+        "rf_enabled": rf_enabled,
         "technology": "lte",
         "source": "open5g2go",
         "name": (item.get("config_name") or identity.get("enodeb_name")
