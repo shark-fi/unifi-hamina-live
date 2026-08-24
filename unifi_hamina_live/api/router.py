@@ -286,6 +286,52 @@ def halow(col: Collector = Depends(collector), snap: Snapshot = Depends(snapshot
     }
 
 
+@router.get("/lora")
+def lora(col: Collector = Depends(collector), snap: Snapshot = Depends(snapshot)):
+    """What the LoRa side is doing, and what it is pretending to be.
+
+    The companion to ``/cellular`` and ``/halow``: every other surface shows the
+    LoRa gateway as an access point, which is the point of the integration and
+    also the thing most likely to mislead. This says plainly that it is a
+    sub-GHz LoRaWAN gateway, what its real carrier is, and which Wi-Fi channel
+    it reports instead.
+    """
+    source = getattr(col, "lora", None)
+    aps = [a for a in snap.access_points if a.source == "lora"]
+    rows = []
+    for ap in aps:
+        radio = ap.radios[0] if ap.radios else None
+        rows.append({
+            "name": ap.name, "mac": ap.mac, "serial": ap.serial,
+            "model": ap.model, "online": ap.online, "ip": ap.ip,
+            "site_id": ap.site_id, "num_clients": ap.num_clients,
+            "floorplan_id": ap.floorplan_id, "x": ap.x, "y": ap.y,
+            "placed": ap.floorplan_id is not None and ap.x is not None,
+            "real": {
+                "technology": radio.technology if radio else None,
+                # None on purpose: a LoRaWAN gateway spreads across a sub-band,
+                # not one centre frequency, so there is no carrier to report.
+                # See lora/rf.py.
+                "carrier_mhz": radio.carrier_mhz if radio else None,
+                "carrier": radio.carrier_label if radio else None,
+            },
+            "costume": {
+                "band": radio.band if radio else None,
+                "channel": radio.channel if radio else None,
+                "channel_width_mhz": radio.channel_width_mhz if radio else None,
+            },
+        })
+    return {
+        "generated_at": snap.generated_at,
+        "enabled": source is not None,
+        "configured": bool(source and source.configured),
+        "note": getattr(col, "lora_note", None),
+        "error": getattr(source, "error", None),
+        "status": getattr(source, "status", {}),
+        "access_points": rows,
+    }
+
+
 @router.post("/refresh")
 async def refresh_now(col: Collector = Depends(collector)):
     """Force an immediate poll (useful for demos / after config changes)."""

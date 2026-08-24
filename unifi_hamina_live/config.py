@@ -179,6 +179,44 @@ class Settings(BaseSettings):
     halow_x_px: float | None = Field(default=None)
     halow_y_px: float | None = Field(default=None)
 
+    # --- LoRaWAN gateway (MikroTik RouterOS, presented as an access point) --
+    # OFF by default. When on, a MikroTik LoRa gateway (a wAP LR8 running
+    # RouterOS 6) is read every poll over the RouterOS binary API and joins the
+    # same snapshot the UniFi APs are in, so it reaches the neutral API, the
+    # dashboard, the Meraki facade and the Catalyst facade with no new plumbing.
+    # A LoRa gateway is NOT a 2.4/5/6 GHz radio — it is a sub-GHz LoRaWAN packet
+    # forwarder — see the lora package for exactly which parts are real and
+    # which are a costume. Only the gateway is drawn; its end devices cannot be
+    # positioned from a single gateway's RSSI, so none are fabricated.
+    lora_enabled: bool = Field(default=False)
+    # The gateway's address. RouterOS 6 has no REST API, so this speaks the
+    # binary API on TCP 8728. A bare host/IP is fine.
+    lora_host: str = Field(default="")
+    lora_port: int = Field(default=8728)
+    lora_username: str = Field(default="admin")
+    lora_password: str = Field(default="")
+    lora_timeout_seconds: float = Field(default=5.0, gt=0.0)
+    # Which /lora interface to read, when the box has more than one. Empty =
+    # the first one printed, which is what a single-gateway box wants.
+    lora_interface: str = Field(default="")
+    # Which UniFi site the gateway belongs to. Empty = the same default the
+    # cellular and HaLow sides use (OPEN5GS_SITE_ID, then the first site polled).
+    lora_site_id: str = Field(default="")
+    # Cosmetics. The /lora interface name is the default display name and the
+    # RouterBOARD model the default model; set these to override either.
+    lora_name: str = Field(default="")
+    lora_model: str = Field(default="")
+    # Where the gateway sits on a floor plan. Prefer the anchor form: name a
+    # UniFi AP already placed on the console's own map and the gateway inherits
+    # its position every poll. The explicit form (a floor-plan id plus pixels)
+    # is for a gateway with no UniFi AP near it.
+    lora_anchor_ap: str = Field(default="")
+    lora_dx_px: float = Field(default=0.0)
+    lora_dy_px: float = Field(default=0.0)
+    lora_floorplan: str = Field(default="")
+    lora_x_px: float | None = Field(default=None)
+    lora_y_px: float | None = Field(default=None)
+
     # --- Floor plans from somewhere other than the console -----------------
     # "innerspace" (default) reads plans from the console's InnerSpace app.
     # "openintent" reads them from a Hamina OpenIntent export instead, for a
