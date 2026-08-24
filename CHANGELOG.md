@@ -49,7 +49,10 @@ reaching all four surfaces unchanged.
   (e.g. US915, 902–928 MHz) is kept in `carrier_label` and **`carrier_mhz` is
   left `null`** — a gateway spreads across a whole sub-band, so there is no single
   carrier to report and inventing one would be a wrong number dressed as a
-  measurement.
+  measurement. The label also names the **concrete enabled channels** the gateway
+  actually listens on, read from `/lora/channels/print` (e.g. `active 8×125 kHz
+  902.3–903.7 MHz + 500 kHz @ 903 MHz`) — measured config off the box, not the
+  regulatory band alone — and surfaced on `/api/lora` as `status.channels`.
 - **One AP, no clients** — a LoRaWAN gateway is a packet forwarder, not an
   association point, so it emits exactly one access point and never any clients.
   Its end devices are visible in the box's live *Traffic* sniffer, but a single

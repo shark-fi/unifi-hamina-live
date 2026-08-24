@@ -37,7 +37,8 @@ def _running(lora: dict) -> bool:
     return not disabled and status not in ("disabled", "down")
 
 
-def radio_for(lora: dict, gateway_id: str, server: str | None) -> Radio:
+def radio_for(lora: dict, gateway_id: str, server: str | None,
+              channels: str | None = None) -> Radio:
     """The single radio a LoRa gateway reports, wearing its 5 GHz costume.
 
     The band and channel reported downstream are the stable, out-of-the-way
@@ -56,13 +57,15 @@ def radio_for(lora: dict, gateway_id: str, server: str | None) -> Radio:
         technology=SOURCE,
         carrier_mhz=None,
         carrier_label=rf.carrier_label(
-            lora.get("channel-plan"), gateway_id, server, lora.get("status")),
+            lora.get("channel-plan"), gateway_id, server, lora.get("status"),
+            channels),
     )
 
 
 def access_point(lora: dict, mac: str, site_id: str, *,
                  name: str | None = None, model: str | None = None,
-                 server: str | None = None) -> AccessPoint:
+                 server: str | None = None,
+                 channels: str | None = None) -> AccessPoint:
     """One LoRa gateway, as the access point every downstream surface
     understands.
 
@@ -85,7 +88,7 @@ def access_point(lora: dict, mac: str, site_id: str, *,
         state="online" if running else "offline",
         online=running,
         num_clients=0,
-        radios=[radio_for(lora, gateway_id, server)] if running else [],
+        radios=[radio_for(lora, gateway_id, server, channels)] if running else [],
         source=SOURCE,
     )
 

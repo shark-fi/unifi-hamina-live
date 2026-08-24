@@ -25,7 +25,7 @@ the gateway itself.
 
 | | where it comes from |
 |---|---|
-| **Real, off the box** | gateway EUI, channel-plan/region, the network server it forwards to, whether it is enabled, and the box's ethernet MAC — all via the RouterOS binary API on TCP 8728 (RouterOS 6 has no REST) |
+| **Real, off the box** | gateway EUI, channel-plan/region, the concrete enabled channels it listens on (`/lora/channels`), the network server it forwards to, whether it is enabled, and the box's ethernet MAC — all via the RouterOS binary API on TCP 8728 (RouterOS 6 has no REST) |
 | **Real, declared by you** | where the gateway sits on a floor plan, and optional cosmetic name / model |
 | **Invented (a costume)** | the Wi-Fi band + channel reported downstream — a *stable, out-of-the-way* 5 GHz DFS channel, so the gateway does not read as a co-channel neighbour of a real UniFi radio |
 
@@ -64,8 +64,8 @@ That is enough to make the gateway appear on every surface. Everything else is
 placement and cosmetics.
 
 The account only needs to *read*: `/lora/print`, `/lora/servers/print`,
-`/interface/ethernet/print`, and `/system/routerboard/print`. The bridge never
-reconfigures the gateway. A read-only RouterOS group (with `api` and `read`
+`/lora/channels/print`, `/interface/ethernet/print`, and
+`/system/routerboard/print`. The bridge never reconfigures the gateway. A read-only RouterOS group (with `api` and `read`
 policies) is enough, and better than reusing the admin login.
 
 ## 2. Put the gateway on the UniFi map
@@ -111,7 +111,7 @@ and which Wi-Fi channel it is wearing instead.
     "name": "WLPC-Gateway", "mac": "2c:c8:1b:01:5f:a1", "online": true,
     "model": "RBwAPR-2nD",
     "real":    { "technology": "lora", "carrier_mhz": null,
-                 "carrier": "LoRaWAN gateway (sub-GHz) (902-928 MHz (US915), plan us-915-1, EUI 3235313254002800, → DockerNUC (10.10.5.147), Enabled)" },
+                 "carrier": "LoRaWAN gateway (sub-GHz) (902-928 MHz (US915), plan us-915-1, active 8×125 kHz 902.3–903.7 MHz + 500 kHz @ 903 MHz, EUI 3235313254002800, → DockerNUC (10.10.5.147), Enabled)" },
     "costume": { "band": "5", "channel": 120, "channel_width_mhz": 20 }
   }]
 }

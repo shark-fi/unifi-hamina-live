@@ -33,6 +33,21 @@ SERVERS = [
     {"name": "TTN-US", "address": "us.mikrotik.thethings.industries"},
     {"name": "DockerNUC", "address": "10.10.5.147"},
 ]
+# Real /lora/channels/print rows: eight 125 kHz uplinks, a 500 kHz LoRa channel,
+# and a disabled FSK one that must not count toward the active span.
+CHANNELS = [
+    {"freq": "902.3", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "902.5", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "902.7", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "902.9", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "903.1", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "903.3", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "903.5", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "903.7", "bandwidth": "125_kHz", "disabled": "false"},
+    {"freq": "903", "bandwidth": "500_kHz", "spread-factor": "SF8",
+     "disabled": "false"},
+    {"freq": "902.7", "bandwidth": "125_kHz", "disabled": "true"},  # FSK, off
+]
 
 
 # --- the projection -------------------------------------------------------
@@ -92,6 +107,22 @@ def test_band_mapping_covers_the_common_regions():
     assert "AS923" in rf.band_for_plan("as-923-1")
     assert rf.band_for_plan("no-such-plan") is None
     assert rf.band_for_plan(None) is None
+
+
+def test_channel_span_names_the_real_enabled_channels():
+    # The regulatory band says US915 could use 902-928; the span says what this
+    # gateway actually listens on. The disabled FSK channel must not appear.
+    span = rf.channel_span(CHANNELS)
+    assert span == "8×125 kHz 902.3–903.7 MHz + 500 kHz @ 903 MHz"
+    assert rf.channel_span([]) is None
+
+
+def test_the_active_span_rides_on_the_label():
+    ap = normalize.access_point(LORA, "2C:C8:1B:01:5F:A1", "site1",
+                                channels=rf.channel_span(CHANNELS))
+    label = ap.radios[0].carrier_label
+    assert "active 8×125 kHz 902.3–903.7 MHz" in label
+    assert "500 kHz @ 903 MHz" in label
 
 
 # --- the RouterOS API client ----------------------------------------------
@@ -212,6 +243,8 @@ async def test_source_collects_one_ap_and_no_clients():
         ["!re", *[f"={k}={v}" for k, v in BOARD.items()]], ["!done"], # board
         ["!re", *[f"={k}={v}" for k, v in SERVERS[0].items()]],
         ["!re", *[f"={k}={v}" for k, v in SERVERS[1].items()]], ["!done"],
+        *[["!re", *[f"={k}={v}" for k, v in ch.items()]] for ch in CHANNELS],
+        ["!done"],                                                    # channels
     ])
     aps, clients, placements = await src.collect("site1")
     assert len(aps) == 1 and aps[0].source == "lora"
@@ -220,7 +253,10 @@ async def test_source_collects_one_ap_and_no_clients():
     assert clients == [], "a LoRaWAN gateway keeps no association table"
     assert src.status["online"] is True
     assert src.status["channel_plan"] == "us-915-1"
-    assert "10.10.5.147" in (aps[0].radios[0].carrier_label or "")
+    assert src.status["channels"] == "8×125 kHz 902.3–903.7 MHz + 500 kHz @ 903 MHz"
+    label = aps[0].radios[0].carrier_label or ""
+    assert "10.10.5.147" in label
+    assert "active 8×125 kHz 902.3–903.7 MHz" in label
     assert aps[0].mac in placements
     await src.aclose()
 
@@ -233,6 +269,8 @@ async def test_an_unreachable_gateway_greys_out_the_last_known_ap():
         ["!re", *[f"={k}={v}" for k, v in ETH.items()]], ["!done"],
         ["!re", *[f"={k}={v}" for k, v in BOARD.items()]], ["!done"],
         ["!re", *[f"={k}={v}" for k, v in SERVERS[1].items()]], ["!done"],
+        *[["!re", *[f"={k}={v}" for k, v in ch.items()]] for ch in CHANNELS],
+        ["!done"],
     ])
     aps, _, _ = await src.collect("site1")
     assert aps[0].online is True
