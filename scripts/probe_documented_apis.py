@@ -45,6 +45,7 @@ import urllib.error
 import urllib.request
 
 CLOUD = "https://api.ui.com"
+SCAN_LIMIT = 40  # how far down the device list to look for an AP
 SPECS = {
     "network": "https://developer.ui.com/network/v10.4.57/openapi.json",
     "innerspace": "https://developer.ui.com/innerspace/v1.3.23/openapi.json",
@@ -54,18 +55,21 @@ SPECS = {
 # Matched against observed field names by shape, because the documented API
 # spells everything differently (camelCase, and often not at all).
 CAPABILITIES = {
-    "tx power":            r"(?i)(tx.?power|transmit.?power|power.?dbm|eirp)",
-    # Anchored away from cpu/memory/disk: statistics/latest carries
-    # cpuUtilizationPct and memoryUtilizationPct, which are not airtime.
-    "channel utilisation": r"(?i)^(?!cpu|mem|disk|load|storage).*(utili[sz]ation|cu_total|airtime|channel.?busy)",
-    "per-radio clients":   r"(?i)(num.?sta|client.?count|num.?client|sta.?count)",
-    "client RSSI":         r"(?i)(rssi|signal|snr|noise)",
-    "client SSID":         r"(?i)(essid|ssid|wlan.?name)",
-    "client rates":        r"(?i)((tx|rx).?(rate|bytes))",
-    "channel":             r"(?i)channel",
-    # ^ht$/^bw$ anchored: a bare "ht" substring also matches "height",
-    # which InnerSpace returns as the AP mounting height in metres.
-    "channel width":       r"(?i)(width|bandwidth|^ht$|^bw$)",
+    # (match against the field's LEAF name, exclude on the FULL path).
+    # The exclusions are not cosmetic: without them a floor plan's image
+    # `width` reads as channel width, and a device's wired `uplink.txRateBps`
+    # reads as a wireless client's data rate. Both reported telemetry as
+    # present on a console where it is absent.
+    "tx power":            (r"(?i)(tx.?power|transmit.?power|power.?dbm|eirp)", None),
+    "channel utilisation": (r"(?i)^(?!cpu|mem|disk|load|storage)"
+                            r".*(utili[sz]ation|cu_total|airtime|channel.?busy)", None),
+    "per-radio clients":   (r"(?i)(num.?sta|client.?count|num.?client|sta.?count)", None),
+    "client RSSI":         (r"(?i)(rssi|signal|snr|noise)", None),
+    "client SSID":         (r"(?i)(essid|ssid|wlan.?name)", None),
+    "client rates":        (r"(?i)((tx|rx).?(rate|bytes))", r"(?i)uplink"),
+    "channel":             (r"(?i)channel", r"(?i)floor_plans|utili[sz]ation"),
+    # Never a bare "width": that is the plan image, not a radio.
+    "channel width":       (r"(?i)(channel.?width|width.?mhz|bandwidth|^ht$|^bw$)", None),
 }
 
 
@@ -267,13 +271,30 @@ def main() -> int:
             ("wifi broadcasts", f"/v1/sites/{site_id}/wifi/broadcasts"),
         ])
         devs, _ = http.get(f"{net_base}/v1/sites/{site_id}/devices")
-        ids = [d.get("id") for d in ((devs or {}).get("data") or [])][:args.max_devices]
-        for i, did in enumerate(ids):
+        ids = [d.get("id") for d in ((devs or {}).get("data") or [])]
+        # A console's first devices are typically the gateway and switches,
+        # which publish no radios at all. Sampling only those makes every
+        # radio field look absent from the API when it is merely absent from
+        # the sample, so keep going until at least one AP has been seen.
+        sampled, radios_seen = 0, 0
+        for did in ids[:SCAN_LIMIT]:
+            if sampled >= args.max_devices and radios_seen:
+                break
+            detail, err = http.get(f"{net_base}/v1/sites/{site_id}/devices/{did}")
+            n = len((((detail or {}).get("interfaces") or {}).get("radios")) or [])
+            radios_seen += n
+            label = f"device[{sampled}] detail"
+            net[label] = {"path": did, "error": err,
+                          "fields": observed_fields(detail) if err is None else {}}
+            count = len(net[label]["fields"])
+            print(f"  {label:34} " + (err or f"{count} fields, {n} radios"))
             net.update(probe(http, net_base, [
-                (f"device[{i}] detail", f"/v1/sites/{site_id}/devices/{did}"),
-                (f"device[{i}] stats",
-                 f"/v1/sites/{site_id}/devices/{did}/statistics/latest"),
-            ]))
+                (f"device[{sampled}] stats",
+                 f"/v1/sites/{site_id}/devices/{did}/statistics/latest")]))
+            sampled += 1
+        if not radios_seen:
+            print("  NOTE: no device sampled had any radios — radio fields below "
+                  "are unproven, not absent.")
 
     raw = {"innerspace": ins, "network": net}
 
@@ -308,8 +329,10 @@ def main() -> int:
     for results in (ins, net):
         for r in results.values():
             everything.update(r["fields"])
-    for cap, pattern in CAPABILITIES.items():
-        hits = sorted(p for p in everything if re.search(pattern, p.split(".")[-1]))
+    for cap, (pattern, exclude) in CAPABILITIES.items():
+        hits = sorted(p for p in everything
+                      if re.search(pattern, p.split(".")[-1])
+                      and not (exclude and re.search(exclude, p)))
         if hits:
             print(f"  FOUND    {cap:22} {', '.join(hits[:4])}"
                   + (f" (+{len(hits)-4})" if len(hits) > 4 else ""))
