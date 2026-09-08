@@ -38,6 +38,49 @@ _DASHBOARD = (Path(__file__).parent / "web" / "dashboard.html").read_text(encodi
 _SENSORS = (Path(__file__).parent / "web" / "sensors.html").read_text(encoding="utf-8")
 
 
+def _warn_if_the_exporter_is_missing(settings: Settings) -> None:
+    """Say at startup that the scheduled export cannot run, and why.
+
+    The refresher already reports a missing exporter, but only on
+    /openintent/status and only once the first interval has elapsed.
+    /api/health keeps reporting ok, because the collector genuinely is — so a
+    bridge whose export has never once succeeded looks entirely healthy. One
+    deployment ran four weeks that way (#79).
+
+    Warn rather than refuse: the live telemetry path does not depend on the
+    exporter, and it is the more valuable half. Failing the healthcheck instead
+    would restart-loop the container over a feature that is not load-bearing.
+    """
+    exporter = Path(settings.openintent_exporter_path)
+    if exporter.exists():
+        return
+    log = logging.getLogger(__name__)
+    parent = exporter.parent
+    empty_dir = parent.is_dir() and not any(parent.iterdir())
+    if empty_dir:
+        # Docker CREATES a bind mount's target when the host path is missing
+        # rather than refusing, so an empty directory exactly where the
+        # exporter should be is a broken mount, not a typo. Saying "set
+        # OPENINTENT_EXPORTER_PATH" here sends people to the one setting that
+        # is already correct.
+        log.warning(
+            "the scheduled OpenIntent export cannot run: %s is an EMPTY "
+            "directory, so nothing is mounted there. Docker creates a bind "
+            "mount's target when the host path does not exist instead of "
+            "failing, so check the host side of the /exporter mount in "
+            "docker-compose.override.yml (it is likely also root-owned). "
+            "The bridge will keep serving live data; the export will fail "
+            "every %.0fs until this is fixed.",
+            parent, settings.openintent_refresh_seconds)
+    else:
+        log.warning(
+            "the scheduled OpenIntent export cannot run: no exporter at %s. "
+            "Set OPENINTENT_EXPORTER_PATH, or mount the companion exporter "
+            "there. The bridge will keep serving live data; the export will "
+            "fail every %.0fs until this is fixed.",
+            exporter, settings.openintent_refresh_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
@@ -59,6 +102,7 @@ async def lifespan(app: FastAPI):
                 "openintent, so plans come FROM a zip and there is no "
                 "InnerSpace on this console to export them back out of")
         else:
+            _warn_if_the_exporter_is_missing(settings)
             app.state.refresher = OpenIntentRefresher(settings, collector=collector)
             app.state.refresher.start()
     try:

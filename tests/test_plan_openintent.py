@@ -306,3 +306,93 @@ def test_an_anchor_on_neither_side_says_so():
     problem = cell_normalize.place(ap, PlacementSpec(anchor_ap="Nowhere"), {}, {})
     assert problem is not None
     assert "neither this console nor the floor plan" in problem
+
+
+# --- the export that never ran (#79) ---------------------------------------
+
+def _startup_warnings(caplog):
+    """Only the startup check's own messages.
+
+    The refresher logs its own "set OPENINTENT_EXPORTER_PATH" line on the run
+    it does at startup, so asserting against the whole capture would pass on
+    the wrong logger's text and prove nothing about this check.
+    """
+    return "\n".join(r.getMessage() for r in caplog.records
+                      if r.name == "unifi_hamina_live.app")
+
+
+def _refresh_settings(tmp_path, exporter_path):
+    return Settings(unifi_host="https://x", unifi_username="u",
+                    unifi_password="p", openintent_refresh_enabled=True,
+                    openintent_exporter_path=str(exporter_path),
+                    openintent_output_dir=str(tmp_path / "out"),
+                    poll_seconds=3600)
+
+
+def test_an_empty_mount_point_is_named_as_a_broken_mount_not_a_bad_setting(
+        tmp_path, caplog):
+    """An empty dir where the exporter should be is Docker, not a typo.
+
+    Docker creates a bind mount's target when the host path is missing rather
+    than failing, so the mount "succeeds" and the directory is simply empty.
+    Telling the operator to set OPENINTENT_EXPORTER_PATH sends them to the one
+    setting that is already correct — which is what happened for four weeks.
+    """
+    from fastapi.testclient import TestClient
+
+    from unifi_hamina_live.app import create_app
+
+    mount = tmp_path / "exporter"
+    mount.mkdir()
+    settings = _refresh_settings(tmp_path, mount / "unifi_export.py")
+    app = create_app(settings=settings)
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+
+    warned = _startup_warnings(caplog)
+    assert "EMPTY directory" in warned
+    assert "bind mount" in warned
+    assert "OPENINTENT_EXPORTER_PATH" not in warned  # wrong advice for this case
+
+
+def test_a_genuinely_wrong_path_still_points_at_the_setting(tmp_path, caplog):
+    from fastapi.testclient import TestClient
+
+    from unifi_hamina_live.app import create_app
+
+    settings = _refresh_settings(tmp_path, tmp_path / "nope" / "unifi_export.py")
+    app = create_app(settings=settings)
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+
+    warned = _startup_warnings(caplog)
+    assert "OPENINTENT_EXPORTER_PATH" in warned
+    assert "EMPTY directory" not in warned
+
+
+def test_a_present_exporter_warns_about_nothing(tmp_path, caplog):
+    from fastapi.testclient import TestClient
+
+    from unifi_hamina_live.app import create_app
+
+    exporter = tmp_path / "unifi_export.py"
+    exporter.write_text("# stand-in\n")
+    settings = _refresh_settings(tmp_path, exporter)
+    app = create_app(settings=settings)
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+
+    assert "OpenIntent export cannot run" not in _startup_warnings(caplog)
+
+
+def test_the_bridge_still_serves_live_data_with_no_exporter(tmp_path, caplog):
+    """The warning must not become a refusal: the export is not load-bearing."""
+    from fastapi.testclient import TestClient
+
+    from unifi_hamina_live.app import create_app
+
+    settings = _refresh_settings(tmp_path, tmp_path / "nope" / "unifi_export.py")
+    app = create_app(settings=settings)
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+        assert getattr(app.state, "refresher", None) is not None
