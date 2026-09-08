@@ -77,15 +77,39 @@ class Http:
             self.ctx.check_hostname = False
             self.ctx.verify_mode = ssl.CERT_NONE
 
+    # UniFi OS answers ANY unrouted path with the login portal's SPA shell
+    # rather than a JSON 404, so an HTML body is the single most informative
+    # failure this probe can hit: it means the request never reached the app.
+    PORTAL = re.compile(rb"(?i)<!doctype html|<html|UNIFI_OS_MANIFEST")
+
+    def _decode(self, body: bytes, ctype: str):
+        if self.PORTAL.search(body[:2048]):
+            return None, ("UniFi OS portal HTML, not JSON — the path was not "
+                          "routed to an application. Either this console does "
+                          "not expose that app at that path, or the request "
+                          "was unauthenticated and fell through to the login "
+                          "page. Try the api.ui.com connector path.")
+        if not body.strip():
+            return None, "empty body"
+        try:
+            return json.loads(body), None
+        except json.JSONDecodeError:
+            return None, f"non-JSON body (Content-Type: {ctype or 'unset'})"
+
     def get(self, url: str):
         req = urllib.request.Request(url, headers={
             "X-API-KEY": self.key, "Accept": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout,
                                         context=self.ctx) as r:
-                return json.loads(r.read() or b"null"), None
+                return self._decode(r.read() or b"",
+                                    r.headers.get("Content-Type", ""))
         except urllib.error.HTTPError as e:
-            return None, f"HTTP {e.code}"
+            body = e.read() or b""
+            _, hint = self._decode(body, e.headers.get("Content-Type", ""))
+            # A 401 with a JSON body is UniFi telling us which layer refused;
+            # a 401 with portal HTML is UniFi OS never having asked the app.
+            return None, f"HTTP {e.code} — {hint}" if hint else f"HTTP {e.code}"
         except ssl.SSLCertVerificationError:
             return None, ("TLS verify failed. For a local console add "
                           "--insecure. For api.ui.com on python.org macOS "
