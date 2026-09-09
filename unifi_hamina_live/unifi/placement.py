@@ -91,6 +91,7 @@ def innerspace_placement(
     """
     plans = {p["id"]: p for p in project.get("plans") or []}
     products = {p["id"]: p for p in project.get("products") or []}
+    registry = project.get("planScales") or {}
     by_plan: dict[str, list[dict]] = {}
     for s in project.get("shapes") or []:
         pid = s.get("planId")
@@ -114,7 +115,8 @@ def innerspace_placement(
                 source="innerspace",
                 width_px=img_w,
                 height_px=img_h,
-                meters_per_px=_meters_per_px(shapes, map_shape),
+                meters_per_px=_meters_per_px(
+                    shapes, map_shape, registry.get(pid), img_w),
                 image_ref=map_shape.get("urlImage"),
             )
         )
@@ -133,7 +135,28 @@ def innerspace_placement(
     return floorplans, positions
 
 
-def _meters_per_px(shapes: list[dict], map_shape: dict) -> float | None:
+def _meters_per_px(
+    shapes: list[dict],
+    map_shape: dict,
+    registry: dict | None = None,
+    img_w: float | None = None,
+) -> float | None:
+    """Metres per image pixel for one InnerSpace plan.
+
+    InnerSpace keeps the authoritative scale in the project's ``planScales``
+    registry, keyed by plan id — ``{"scale": <metres across the image>, ...}``
+    — which is what the app renders and what its Set Scale dialog writes. The
+    per-plan ``scale`` SHAPES are not authoritative: a plan can carry a stale
+    or default shape (the 42.29 m the console assigns a fresh plan) while the
+    registry holds the real number, and reconstructing from the shape then
+    reports the floor at the wrong size — the same trap the OpenIntent
+    exporter hit. Prefer the registry; fall back to the shape only when there
+    is no registry entry (or the image width needed to divide it is unknown).
+    """
+    reg = registry or {}
+    if reg.get("scale") and img_w:
+        return round(float(reg["scale"]) / float(img_w), 6)
+
     scale_shape = next((s for s in shapes if s.get("type") == "scale"), None)
     if not scale_shape or not scale_shape.get("scale"):
         return None
