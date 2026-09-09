@@ -63,6 +63,29 @@ def test_innerspace_without_dims_emits_plan_but_no_positions():
     assert pos == {}
 
 
+def test_planscales_registry_wins_over_the_scale_shape():
+    # The scale SHAPE reconstructs to 0.05 m/px (5 m over 100 units), but the
+    # authoritative registry says the floor is 129 m across 1000 px = 0.129.
+    # Prefer the registry, as InnerSpace itself does.
+    project = {**PROJECT, "planScales": {"p1": {"scale": 129.0, "height": 2.7}}}
+    fps, _ = placement.innerspace_placement("s1", project, {"p1": (1000.0, 800.0)})
+    assert fps[0].meters_per_px == 0.129
+
+
+def test_scale_shape_is_used_when_there_is_no_registry_entry():
+    # No planScales at all -> fall back to reconstructing from the shape.
+    fps, _ = placement.innerspace_placement("s1", PROJECT, {"p1": (1000.0, 800.0)})
+    assert fps[0].meters_per_px == 0.05
+
+
+def test_registry_needs_image_width_to_apply():
+    # Registry scale is metres-across-the-image; without img_w it can't be
+    # divided, so the shape remains the fallback rather than returning nothing.
+    fps, _ = placement.innerspace_placement(
+        "s1", {**PROJECT, "planScales": {"p1": {"scale": 129.0}}}, {})
+    assert fps[0].meters_per_px == 0.05  # from the shape; img_w was unknown
+
+
 def test_innerspace_image_urls():
     assert placement.innerspace_image_urls(PROJECT) == {"p1": "/dl/p1.png"}
 
