@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b33";        // shown in the status chip; bump on every change
+  const BUILD = "b34";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -518,6 +518,120 @@
     return next;
   }
 
+  /* --- dfs-monitor (optional) ---------------------------------------------
+   * A separate service (dfs-monitor) that scores DFS radar
+   * hits as real or false, proposes channel plans and judges every channel
+   * change afterwards. It needs SSH to the APs and round-the-clock collection,
+   * which an extension can't do, so it runs elsewhere and we only read its
+   * /api/overlay: {sources: [{source, names, aps: {name: {radar, plan, health}}}]}.
+   *
+   * One dfs-monitor can watch several consoles, so it is a single setting, not
+   * per console, and the source for this plan is picked by which one's AP names
+   * match the markers on screen. Read through the worker for the same reason as
+   * the bridge: a LAN http:// address from an https:// page is mixed content. */
+  const DFS_REFRESH_MS = 60000;
+  let dfsBase = null, dfsByName = {}, dfsSource = null, dfsErr = null, dfsTimer = 0;
+  const lastDomNames = new Set();
+  try {
+    chrome.storage.local.get(["dfsMonitor"]).then((s) => { dfsBase = s.dfsMonitor || null; }, () => {});
+    // set or cleared in the popup: pick it up without a page reload
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== "local" || !("dfsMonitor" in ch)) return;
+      dfsBase = ch.dfsMonitor.newValue || null;
+      dfsErr = null;
+      refreshDfs();
+    });
+  } catch (_e) { /* storage unavailable: no DFS layer */ }
+
+  async function refreshDfs() {
+    if (!dfsBase) { dfsByName = {}; dfsSource = null; return; }
+    try {
+      const reply = await chrome.runtime.sendMessage(
+        { type: "get", url: dfsBase.replace(/\/+$/, "") + "/api/overlay" });
+      if (!reply?.ok) throw new Error(reply?.error || "unreachable");
+      const r = reply.res;
+      if (/^\s*</.test(String(r.text || ""))) {
+        throw new Error(/cloudflareaccess\.com/i.test(r.text)
+          ? "needs an Access login — open it in a tab and sign in" : `returned HTML (HTTP ${r.status})`);
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = JSON.parse(r.text);
+      // the source whose AP names best match this plan
+      const here = hereNames();
+      let best = null, bestHits = 0;
+      for (const s of j.sources || []) {
+        const hits = (s.names || []).filter((n) => here.has(norm(n))).length;
+        if (hits > bestHits) { best = s; bestHits = hits; }
+      }
+      dfsSource = best ? { name: best.source, matched: bestHits } : null;
+      const next = {};
+      for (const [name, v] of Object.entries(best?.aps || {})) next[norm(name)] = v;
+      dfsByName = next;
+      dfsErr = null;
+    } catch (e) {
+      dfsErr = e.message;
+    }
+    updateStatus();
+  }
+
+  const DFS_RADAR = {  // worst verdict among the AP's hits -> chip tone
+    confirmed: ["bad", "confirmed radar"], plausible: ["mid", "plausible"],
+    uncorroborated: ["", "uncorroborated"], "likely-false": ["ok", "likely false"],
+  };
+  const DFS_HEALTH = {
+    healthy: ["ok", "✓ healthy"], watch: ["mid", "▲ watch"], degraded: ["bad", "✕ degraded"],
+    confirmed: ["bad", "✕ confirmed bad"], cleared: ["ok", "✓ cleared"],
+    pending: ["", "… checking"], "no-data": ["", "? no data"],
+  };
+  const BAND_OF = { ng: "2.4", na: "5", "6e": "6" };
+
+  function dfsChips(apName) {
+    const d = dfsByName[apName];
+    if (!d) return "";
+    let out = "";
+    if (d.radar) {
+      // tone from the most credible verdict; the text carries how many were judged false,
+      // which is usually the point (a lone AP "seeing radar" everywhere it goes)
+      const [tone] = DFS_RADAR[d.radar.worst] || [""];
+      const nFalse = d.radar.counts["likely-false"] || 0;
+      const falseBit = nFalse === d.radar.hits ? " · all false" : nFalse ? ` · ${nFalse} false` : "";
+      out += `<span class="chip dfs ${tone}" data-dfs="radar">⚠ ${d.radar.hits} radar${falseBit}</span>`;
+    }
+    for (const m of d.plan?.moves || []) {
+      out += `<span class="chip dfs plan" data-dfs="plan">${BAND_OF[m.band] || m.band}G ${m.from}→${m.to}</span>`;
+    }
+    if (d.health) {
+      const [tone, label] = DFS_HEALTH[d.health.verdict] || ["", d.health.verdict];
+      out += `<span class="chip dfs ${tone}" data-dfs="health">${label}</span>`;
+    }
+    return out;
+  }
+
+  function dfsTip(apName, kind) {
+    const d = dfsByName[apName] || {};
+    const when = (ts) => new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit" });
+    const list = (xs) => xs.map((x) => `<div class="why">${esc(x)}</div>`).join("");
+    if (kind === "radar" && d.radar) {
+      const r = d.radar;
+      return `<div class="t">DFS radar · ${r.hits} hit${r.hits === 1 ? "" : "s"} (30 days)</div>` +
+        rows(Object.entries(r.counts).map(([v, n]) => [(DFS_RADAR[v] || [, v])[1], n])) +
+        rows([["Channels", r.channels.join(", ")], ["Last", when(r.last_ts)]]) + list(r.reasons || []);
+    }
+    if (kind === "plan" && d.plan) {
+      return `<div class="t">Proposed in plan #${d.plan.plan_id} (recommend-only)</div>` +
+        d.plan.moves.map((m) => `<div class="r"><span>${BAND_OF[m.band] || m.band} GHz</span>` +
+          `<span>${m.from} → ${m.to} / ${m.width} MHz</span></div>` + list(m.why.slice(0, 4))).join("");
+    }
+    if (kind === "health" && d.health) {
+      const h = d.health;
+      return `<div class="t">Change ${when(h.ts)}: ${BAND_OF[h.band] || h.band} GHz ${h.from} → ${h.to}</div>` +
+        rows([["Verdict", (DFS_HEALTH[h.verdict] || [, h.verdict])[1]],
+              ["Rollback test", h.test]]) + list(h.findings || []);
+    }
+    return "";
+  }
+
   async function refreshData() {
     // Sensors update every 300 s at the source, so this is far more often than
     // it changes — but it costs one same-origin GET and keeps the two views
@@ -732,6 +846,17 @@
       #${NS}-overlay .grp.sensor .chip.sen.ok  { color: #4ade80; border-color: #2f6b45; }
       #${NS}-overlay .grp.sensor .chip.sen.mid { color: #eab308; border-color: #6b5a1f; }
       #${NS}-overlay .grp.sensor .chip.sen.bad { color: #f87171; border-color: #6b2f2f; }
+      /* dfs-monitor chips: a verdict, not a count, so they read like the sensor
+         link chips (outlined, tinted text) rather than UniFi's channel pills */
+      #${NS}-overlay .chip.dfs { font-weight: 600; padding: 0 7px; border-radius: 8px;
+        background: #1b2130; color: #cfd6e4; border: 1px solid #2a3346; cursor: default; }
+      #${NS}-overlay .chip.dfs.ok   { color: #4ade80; border-color: #2f6b45; }
+      #${NS}-overlay .chip.dfs.mid  { color: #eab308; border-color: #6b5a1f; }
+      #${NS}-overlay .chip.dfs.bad  { color: #f87171; border-color: #6b2f2f; }
+      #${NS}-overlay .chip.dfs.plan { color: #93c5fd; border-color: #2b4a7a; border-style: dashed; }
+      #${NS}-tip .why { margin-top: 5px; padding-left: 9px; position: relative;
+        color: #cfd6e4; white-space: normal; }
+      #${NS}-tip .why::before { content: "·"; position: absolute; left: 0; color: #9aa0a6; }
       #${NS}-status { display: flex; align-items: center; gap: 10px;
         position: fixed; left: 14px; bottom: 14px; z-index: 2147483001;
         background: #131722ee; color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
@@ -818,7 +943,10 @@
       if (!grp) return;
       const apName = [...groups].find(([, g]) => g.el === grp)?.[0];
       if (!apName) return;
-      if (chip) {
+      if (chip && chip.dataset.dfs) {
+        // no band to spotlight, and fading the group would hide the chip being read
+        showTip(dfsTip(apName, chip.dataset.dfs), chip);
+      } else if (chip) {
         // our own chips spotlight their band too, same as UniFi's channel chips
         hoveredAp = apName;
         hoverBand = chip.dataset.band || null;
@@ -827,7 +955,7 @@
       } else if (cli) showTip(clientTip(apName, cli.dataset.mac), cli);
     });
     overlay.addEventListener("mouseout", (e) => {
-      if (e.target.closest?.(".chip")) { hoveredAp = null; hoverBand = null; }
+      if (e.target.closest?.(".chip:not(.dfs)")) { hoveredAp = null; hoverBand = null; }
       if (e.target.closest?.(".chip, .cli")) hideTip();
     });
 
@@ -1056,8 +1184,9 @@
        an absent chip says "not on air" more honestly than a word does. */
     const chans = nativeCh ? []
       : (ap.radios || []).filter((r) => r.channel != null && r.channel !== "");
+    const dfs = dfsChips(apName);
     const sig = [filter, nativeCh ? "n" : "", below, BANDS.map((b) => counts[b]).join("/"),
-      chans.map((r) => r.band + r.channel).join(","),
+      chans.map((r) => r.band + r.channel).join(","), dfs,
       shown.map((c) => c.mac + bandOf(c) + (selected?.mac === c.mac ? "*" : "")).join(",")].join("|");
     if (g.sig === sig) return;
     g.sig = sig;
@@ -1098,6 +1227,9 @@
       // the gap between the two rows scales too, so they stay adjacent at any zoom
       `<span class="badges cl" style="top:calc(${below}px + ${chanChips ? 26 : 0}px * var(--s,1))"
         >${badges}</span>` +
+      // dfs-monitor's radar / plan / health chips go last, under everything UniFi-derived
+      (dfs ? `<span class="badges dfs" style="top:calc(${below}px + ${(chanChips ? 26 : 0) + (badges ? 26 : 0)}px * var(--s,1))"
+        >${dfs}</span>` : "") +
       icons;
     // inline handlers are blocked by the page CSP, so bind the fallback here:
     // a fingerprint icon that 404s reverts the chip to its glyph/initial.
@@ -1209,7 +1341,8 @@
       const ap = apByName[name];
       const sen = !ap && showSensors ? sensorByName[name] : null;
       if (!ap && !sen) return;
-      if (ap && !ap.clients.length && !sen) return;
+      // an AP with no clients still gets drawn when dfs-monitor has something to say about it
+      if (ap && !ap.clients.length && !sen && !dfsByName[name]) return;
       const r = sec.getBoundingClientRect();
       const x = r.left + r.width / 2, y = r.top - 22;
       if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) return;
@@ -1245,6 +1378,12 @@
       }
     });
     for (const [name, g] of groups) if (!seen.has(name)) g.el.style.display = "none";
+    if (domNames.size) {  // what dfs-monitor matches its sources against
+      const first = !lastDomNames.size;
+      lastDomNames.clear();
+      domNames.forEach((n) => lastDomNames.add(n));
+      if (first && dfsBase) updateStatus();  // the DFS totals are per plan, and now we know the plan
+    }
 
     /* Fit plan -> screen from every AP we placed this pass. Refitting each
      * time rather than caching: InnerSpace pans and zooms, so the mapping is
@@ -1342,8 +1481,28 @@
     const icons = all.length ? ` · icons <b>${withIcon || "none"}</b>` : "";
     statusText.innerHTML = `UniFi Live: <b>${all.length}</b> client${all.length === 1 ? "" : "s"} on ` +
       `<b>${aps.length}</b> AP${aps.length === 1 ? "" : "s"}${per ? " — " + per : ""}${icons}` +
-      `${usingBridge ? " · via <b>bridge</b>" : ""}${senBit}${fitBit}` +
+      `${usingBridge ? " · via <b>bridge</b>" : ""}${senBit}${fitBit}${dfsStatus()}` +
       ` <span style="opacity:.5">${BUILD}</span>`;
+  }
+
+  // The APs on this plan: the markers drawn on screen, or - before the first
+  // frame has been drawn (a background tab gets no animation frames) - this
+  // console's own AP list. Used both to pick the source and to scope the totals.
+  const hereNames = () => (lastDomNames.size ? lastDomNames : new Set(Object.keys(apByName)));
+
+  function dfsStatus() {
+    if (!dfsBase) return "";
+    if (dfsErr) return ` · DFS: ${esc(showErr(dfsErr))}`;
+    if (!dfsSource) return " · DFS: no source matches this plan";
+    // this plan's APs only: one dfs-monitor source can be a whole district
+    const here = hereNames();
+    const ds = Object.entries(dfsByName).filter(([n]) => !here.size || here.has(n)).map(([, d]) => d);
+    const radar = ds.reduce((n, d) => n + (d.radar?.hits || 0), 0);
+    const moves = ds.reduce((n, d) => n + (d.plan?.moves.length || 0), 0);
+    const bad = ds.filter((d) => ["degraded", "confirmed"].includes(d.health?.verdict)).length;
+    return ` · DFS <b>${esc(dfsSource.name)}</b>: <b>${radar}</b> radar hit${radar === 1 ? "" : "s"}` +
+      (moves ? ` · <b>${moves}</b> proposed move${moves === 1 ? "" : "s"}` : "") +
+      (bad ? ` · <b>${bad}</b> degraded change${bad === 1 ? "" : "s"}` : "");
   }
 
   // --- lifecycle --------------------------------------------------------
@@ -1372,12 +1531,18 @@
     ensureOverlay();
     refreshData();
     dataTimer = setInterval(refreshData, REFRESH_MS);
+    // once the first frame has named the markers, so the source match has something to go on
+    setTimeout(refreshDfs, 1500);
+    dfsTimer = setInterval(refreshDfs, DFS_REFRESH_MS);
     schedule();
   }
   function unmount() {
     if (!mounted) return;
     mounted = false;
     clearInterval(dataTimer);
+    clearInterval(dfsTimer);
+    dfsByName = {}; dfsSource = null;
+    lastDomNames.clear();
     document.removeEventListener("mouseover", onDocHover, true);
     document.removeEventListener("mouseout", onDocHover, true);
     hoveredAp = null;
