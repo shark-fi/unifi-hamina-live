@@ -294,6 +294,85 @@ $("testbridge").addEventListener("click", async () => {
     + `listening on that port? First bytes: ${r.text.slice(0, 80)}`, "bad");
 });
 
+/* --- dfs-monitor ------------------------------------------------------- */
+
+/* A single setting, not per console: one dfs-monitor can watch several
+ * consoles, and the overlay picks the right source by AP name. Tested through
+ * the worker (the same path the overlay uses), then summarised from
+ * /api/overlay so a working URL shows what it will actually draw. */
+function setDfsStatus(msg, cls) {
+  const el = $("dfsstatus");
+  el.textContent = msg;
+  el.className = cls || "";
+}
+
+function showDfsDash(base) {
+  const a = $("dfsdash");
+  a.hidden = !base;
+  if (base) a.href = base + "/";
+}
+
+async function summariseDfs(base) {
+  const reply = await chrome.runtime.sendMessage({ type: "get", url: base + "/api/overlay" });
+  const r = reply?.res;
+  if (!reply?.ok || !r?.ok) return;
+  let j;
+  try { j = JSON.parse(r.text); } catch (_e) { return; }
+  $("dfssummary").textContent = (j.sources || []).map((s) => {
+    const ds = Object.values(s.aps || {});
+    const radar = ds.reduce((n, d) => n + (d.radar?.hits || 0), 0);
+    const moves = ds.reduce((n, d) => n + (d.plan?.moves.length || 0), 0);
+    const bad = ds.filter((d) => ["degraded", "confirmed"].includes(d.health?.verdict)).length;
+    return `${s.source}: ${s.names.length} APs · ${radar} radar hit(s) · ${moves} proposed move(s)`
+      + (bad ? ` · ${bad} degraded change(s)` : "");
+  }).join("\n");
+}
+
+$("testdfs").addEventListener("click", async () => {
+  const base = normBridge($("dfs").value);
+  if (!base) return setDfsStatus("Enter the dfs-monitor URL, e.g. http://127.0.0.1:8765", "bad");
+  setDfsStatus("Requesting permission…");
+  let granted;
+  try {
+    granted = await chrome.permissions.request({ origins: [base + "/*"] });
+  } catch (e) {
+    return setDfsStatus("Permission error: " + e.message, "bad");
+  }
+  if (!granted) return setDfsStatus("Permission denied for " + base, "bad");
+  // /api/health answers {service: "dfs-monitor"}, which also tells it apart from a bridge
+  const reply = await chrome.runtime.sendMessage({ type: "probeBridge", base });
+  const r = reply?.res;
+  if (!reply?.ok || !r) return setDfsStatus("Worker error: " + (reply?.error || "no reply"), "bad");
+  if (!r.ok) {
+    return setDfsStatus(r.stage === "access"
+      ? "Reached it, but an Access policy wants a login: open the URL in a tab and sign in once."
+      : r.stage === "fetch"
+        ? `Fetch failed: ${r.error}. Is dfs-monitor running (python3 -m dfsmon run)?`
+        : `Reached it, but it answered HTTP ${r.status} — is that the dfs-monitor port?`, "bad");
+  }
+  if (r.json?.service !== "dfs-monitor") {
+    return setDfsStatus("That answers, but it isn't dfs-monitor — a bridge URL goes in the Bridge field.", "bad");
+  }
+  await chrome.storage.local.set({ dfsMonitor: base });
+  showDfsDash(base);
+  setDfsStatus(`Works — HTTP ${r.status} in ${r.ms} ms. Saved; open InnerSpace to see the chips.`, "ok");
+  await summariseDfs(base);
+});
+
+$("cleardfs").addEventListener("click", async () => {
+  await chrome.storage.local.remove("dfsMonitor");
+  $("dfs").value = "";
+  $("dfssummary").textContent = "";
+  showDfsDash(null);
+  setDfsStatus("Cleared — the chips are gone from open maps.");
+});
+
+chrome.storage.local.get("dfsMonitor").then(({ dfsMonitor }) => {
+  $("dfs").value = dfsMonitor || "";
+  showDfsDash(dfsMonitor);
+  if (dfsMonitor) summariseDfs(dfsMonitor);
+});
+
 /* --- Hamina overlay ---------------------------------------------------- */
 
 function setHaminaStatus(msg, cls) {

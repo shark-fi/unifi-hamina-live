@@ -124,6 +124,37 @@ A few things worth knowing:
   `scripts/check-tunnel.sh` to verify the policy actually took — see its
   `docs/EXPOSURE.md`.
 
+## DFS Monitor (optional)
+
+A `dfs-monitor` instance (a separate service) adds a third row of chips under
+each AP marker:
+
+- **⚠ radar**: DFS radar hits over the last 30 days, with how many were
+  judged false (`⚠ 7 radar · 6 false`). The tone comes from the most credible
+  verdict: red for confirmed radar, amber for plausible, grey for uncorroborated,
+  green when every hit was judged false.
+- **plan** (dashed): a channel move proposed by the latest recommend-only plan,
+  e.g. `5G 36→149`.
+- **health**: the verdict on the AP's last channel change in the past 48 hours:
+  healthy, watch, degraded, confirmed bad (a rollback fixed it), or cleared.
+
+Hover a chip for the reasons. The status chip adds a line for this plan, e.g.
+`DFS mist-morgan: 15 radar hits`.
+
+dfs-monitor collects around the clock and reads radar counters and AP-to-AP
+signal over SSH on the APs, which an extension can't do. So it runs as its own
+service, and the extension only reads `GET <dfs-monitor>/api/overlay` through
+the service worker, the same way it reads a bridge. One instance can watch
+several consoles (Mist too), so it's a **single setting**, not per console.
+Which of its sources belongs to the plan on screen is decided by AP-name
+overlap.
+
+Set **DFS Monitor URL** in the popup (`http://127.0.0.1:8765` when it runs on
+this machine) and press **Test and save**. The test checks that the service is
+dfs-monitor and not a bridge, then lists what each source will draw. Like a
+bridge, its API has no login of its own, so off this machine put it behind a
+tunnel with an Access policy.
+
 ## Status
 
 Confirmed against three live consoles:
@@ -152,6 +183,8 @@ so problems are diagnosable from the page rather than by guesswork.
    details, click a band chip to filter.
 5. *Optional, and only if the console's own API can't be reached:* fill in
    **Bridge URL** and press **Test bridge**.
+6. *Optional:* fill in **DFS Monitor URL** and press **Test and save** for the
+   radar / plan / health chips.
 
 **Disable** from the popup and reload the console tab to remove it.
 
@@ -223,6 +256,10 @@ published through a tunnel, that traffic crosses Cloudflare's edge like any othe
 request to it — your own inventory, on your own hostname, but not a LAN-only path
 any more. A bridge on a plain LAN address avoids that entirely and works
 wherever the console's own API would have.
+
+**A configured dfs-monitor is contacted the same way.** Only if you set one. The
+worker fetches `/api/overlay` once a minute while an InnerSpace plan is open, and
+sends nothing but that request.
 
 ## Related
 

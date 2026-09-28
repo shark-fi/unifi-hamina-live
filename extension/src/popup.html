@@ -48,6 +48,7 @@
   .msg { margin-top: 8px; font-size: 11.5px; color: #8b93a7;
     overflow-wrap: anywhere; }
   .msg:empty { margin: 0; }
+  #dfssummary { white-space: pre-line; }
   .msg.ok { color: #4ade80; }
   .msg.bad { color: #f87171; }
 
@@ -110,6 +111,34 @@
       <p>One bridge polls one console, so this is stored per console. Test it
         before relying on it — pointing at a bridge covering a different console
         looks healthy and draws nothing.</p>
+    </details>
+  </section>
+
+  <section>
+    <h2>DFS Monitor <span class="opt">optional</span></h2>
+    <label for="dfs">DFS Monitor URL</label>
+    <input id="dfs" type="text" placeholder="http://127.0.0.1:8765" />
+    <div class="row">
+      <button id="testdfs">Test and save</button>
+      <button id="cleardfs">Clear</button>
+      <a id="dfsdash" href="#" target="_blank" hidden>Open dashboard</a>
+    </div>
+    <div class="msg" id="dfsstatus"></div>
+    <div class="msg" id="dfssummary"></div>
+    <details>
+      <summary>What this adds</summary>
+      <p>Chips on each AP marker from a <code>dfs-monitor</code> instance:
+        <strong>⚠ radar</strong> hits, coloured by the strongest verdict
+        (confirmed / plausible / uncorroborated / likely false), a dashed
+        <strong>plan</strong> chip for a proposed channel move, and the
+        <strong>health</strong> of the AP's last channel change. Hover a chip
+        for the reasons.</p>
+      <p>dfs-monitor reads radar counters and AP-to-AP signal over SSH and
+        collects around the clock, which an extension can't, so it runs as its
+        own service. One instance can watch several consoles: the one matching
+        the plan on screen is picked by AP name, so this is a single setting.</p>
+      <p>Its API has no login of its own. Off this machine, publish it the same
+        way as a bridge: a tunnel with an Access policy in front.</p>
     </details>
   </section>
 

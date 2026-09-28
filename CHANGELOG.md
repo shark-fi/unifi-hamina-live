@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project
 follows semantic versioning.
 
+## [Unreleased] — DFS radar, channel plans and change health on the floor plan
+
+### Added
+
+- **Extension (build b34): an optional DFS Monitor layer.** Set a
+  `dfs-monitor` URL in the popup and each InnerSpace AP marker gets chips for
+  its DFS radar hits (with how many were judged false), a channel move proposed
+  by the latest plan, and the health verdict of its last channel change. Each
+  chip has a hover panel with the reasons. The status chip adds this plan's
+  totals.
+- The source for the plan is picked by AP-name overlap, because one dfs-monitor
+  can watch several consoles. Data is read through the service worker from
+  `/api/overlay`, the same path as a bridge.
+- An AP with no clients is now drawn when dfs-monitor has something to report
+  on it.
+
 ## [Unreleased] — the core decides whether a cell is on the network
 
 ### Fixed
