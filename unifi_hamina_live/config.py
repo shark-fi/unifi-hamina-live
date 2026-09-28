@@ -217,6 +217,28 @@ class Settings(BaseSettings):
     lora_x_px: float | None = Field(default=None)
     lora_y_px: float | None = Field(default=None)
 
+    # --- Cisco Meraki APs (Dashboard API) ------------------------------------
+    # OFF by default. When on, a Meraki organization's wireless APs are read
+    # every poll from the Dashboard API and join the same snapshot as the UniFi
+    # APs — real Wi-Fi radios, so no costume. See docs/MERAKI_LIVE.md.
+    meraki_live_enabled: bool = Field(default=False)
+    # A Dashboard API key (My profile > API access). Read-only access is enough.
+    meraki_live_api_key: str = Field(default="")
+    # Needed only when the key sees more than one organization.
+    meraki_live_org_id: str = Field(default="")
+    # Comma-separated network ids to read. Empty = every network with APs.
+    meraki_live_network_ids: str = Field(default="")
+    meraki_live_base_url: str = Field(default="https://api.meraki.com/api/v1")
+    meraki_live_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    # Which UniFi site the Meraki APs join. Empty = the same default the other
+    # extra sources use (OPEN5GS_SITE_ID, then the first site polled).
+    meraki_live_site_id: str = Field(default="")
+    # Placement on the console's own floor plan, per Meraki AP:
+    # "Home-Lab=U7-Pro-Bedroom@30,0; Other=Kitchen" rides each on a placed UniFi
+    # AP, nudged by dx,dy pixels. The Hamina panel needs none of this: it joins
+    # by the AP's name on the Hamina map.
+    meraki_live_anchors: str = Field(default="")
+
     # --- Floor plans from somewhere other than the console -----------------
     # "innerspace" (default) reads plans from the console's InnerSpace app.
     # "openintent" reads them from a Hamina OpenIntent export instead, for a
