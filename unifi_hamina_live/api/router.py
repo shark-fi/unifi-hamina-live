@@ -332,6 +332,30 @@ def lora(col: Collector = Depends(collector), snap: Snapshot = Depends(snapshot)
     }
 
 
+@router.get("/meraki-live")
+def meraki_live(col: Collector = Depends(collector), snap: Snapshot = Depends(snapshot)):
+    """What the Meraki source is reading: org, networks, and each AP's radios."""
+    source = getattr(col, "meraki_live", None)
+    aps = [a for a in snap.access_points if a.source == "meraki"]
+    return {
+        "generated_at": snap.generated_at,
+        "enabled": source is not None,
+        "configured": bool(source and source.configured),
+        "note": getattr(col, "meraki_live_note", None),
+        "error": getattr(source, "error", None),
+        "status": getattr(source, "status", {}),
+        "access_points": [{
+            "name": a.name, "serial": a.serial, "mac": a.mac, "model": a.model,
+            "online": a.online, "ip": a.ip, "site_id": a.site_id,
+            "num_clients": a.num_clients,
+            "placed": a.floorplan_id is not None and a.x is not None,
+            "radios": [r.model_dump(include={"band", "channel", "channel_width_mhz",
+                                             "tx_power_dbm", "channel_utilization_pct"})
+                       for r in a.radios],
+        } for a in aps],
+    }
+
+
 @router.post("/refresh")
 async def refresh_now(col: Collector = Depends(collector)):
     """Force an immediate poll (useful for demos / after config changes)."""

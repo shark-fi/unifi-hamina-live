@@ -72,6 +72,9 @@ class Collector:
         # one snapshot.
         self.lora = None
         self.lora_note: str | None = None
+        # Meraki APs from a Dashboard organization, when configured.
+        self.meraki_live = None
+        self.meraki_live_note: str | None = None
         # Warned once, not per poll: a placement that cannot resolve says the
         # same thing every 30 seconds for as long as it is wrong.
         self._placement_warned: set[str] = set()
@@ -105,6 +108,15 @@ class Collector:
                     "LORA_ENABLED is on but LORA_HOST is not set, so no gateway "
                     "is being read")
                 log.warning("lora: %s", self.lora_note)
+        if settings.meraki_live_enabled:
+            from ..meraki_live.source import MerakiLiveSource
+
+            self.meraki_live = MerakiLiveSource(settings)
+            if not self.meraki_live.configured:
+                self.meraki_live_note = (
+                    "MERAKI_LIVE_ENABLED is on but MERAKI_LIVE_API_KEY is not "
+                    "set, so no Meraki organization is being read")
+                log.warning("meraki: %s", self.meraki_live_note)
 
     def floor_image(self, plan_id: str) -> bytes | None:
         """Raw image bytes for a floor plan id, if the collector has fetched it."""
@@ -262,6 +274,9 @@ class Collector:
         # HaLow radio, so it is merged on the same terms: its AP survives a
         # UniFi outage, and a gateway outage leaves the rest of the map intact.
         await self._merge_lora(snap)
+        # Meraki APs come from Cisco's cloud, independent of the console and of
+        # every radio above, so they merge on the same terms.
+        await self._merge_meraki(snap)
 
         async with self._lock:
             self._snapshot = snap
@@ -640,6 +655,52 @@ class Collector:
             return configured
         return snap.sites[0].id if snap.sites else "default"
 
+    async def _merge_meraki(self, snap: Snapshot) -> None:
+        """Fold the Meraki APs and their clients into the snapshot."""
+        if self.meraki_live is None or not self.meraki_live.configured:
+            return
+        from ..cellular import normalize as cell_normalize
+        from ..meraki_live import normalize as meraki_normalize
+
+        # A failed console poll carries the last good APs forward, Meraki ones
+        # included: drop them and their clients before merging again.
+        old = {a.mac for a in snap.access_points if a.source == meraki_normalize.SOURCE}
+        snap.access_points[:] = [a for a in snap.access_points if a.source != meraki_normalize.SOURCE]
+        snap.clients[:] = [c for c in snap.clients if (c.ap_mac or "") not in old]
+
+        site_id = self._meraki_site(snap)
+        aps, clients, placements = await self.meraki_live.collect(site_id)
+        if not aps:
+            return
+        anchors = {a.name.strip().casefold(): a for a in snap.access_points}
+        for ap in aps:
+            placement = placements.get(ap.mac)
+            if placement is None or not placement.configured:
+                continue
+            problem = cell_normalize.place(ap, placement, anchors, self._plan_anchors)
+            if problem and problem not in self._placement_warned:
+                self._placement_warned.add(problem)
+                log.warning("meraki placement: %s", problem)
+
+        snap.access_points.extend(aps)
+        snap.clients.extend(clients)
+        if not any(s.id == site_id for s in snap.sites):
+            snap.sites.append(Site(id=site_id, name=site_id))
+        for site in snap.sites:
+            if site.id == site_id:
+                site.num_aps = len(snap.aps_for_site(site_id))
+                site.num_clients = len(snap.clients_for_site(site_id))
+        for fp in snap.floorplans:
+            fp.num_aps = sum(1 for a in snap.access_points if a.floorplan_id == fp.id)
+
+    def _meraki_site(self, snap: Snapshot) -> str:
+        """MERAKI_LIVE_SITE_ID, then the cellular default, then the first site —
+        the rule the HaLow and LoRa sources follow."""
+        for configured in (self._settings.meraki_live_site_id, self._settings.open5gs_site_id):
+            if (configured or "").strip():
+                return configured.strip()
+        return snap.sites[0].id if snap.sites else "default"
+
     # -- lifecycle ---------------------------------------------------------
     async def _loop(self) -> None:
         interval = self._settings.poll_interval_seconds
@@ -668,3 +729,5 @@ class Collector:
             await self.halow.aclose()
         if self.lora is not None:
             await self.lora.aclose()
+        if self.meraki_live is not None:
+            await self.meraki_live.aclose()
