@@ -11,6 +11,14 @@ from unifi_hamina_live.unifi import normalize
 from unifi_hamina_live.models import Snapshot
 
 
+@pytest.fixture(autouse=True)
+def _no_local_env(monkeypatch):
+    """Tests must not read the developer's .env. With a real source switched on
+    there (MERAKI_LIVE_ENABLED plus a key, say), every collector a test builds
+    would poll that live source and its APs would land in the test's snapshot."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+
+
 # --- raw UniFi payload samples (trimmed to fields we consume) --------------
 SITES_RAW = [
     {"name": "default", "desc": "HQ"},
