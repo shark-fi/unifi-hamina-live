@@ -69,6 +69,22 @@ async function initBridge(stored) {
     : "Open the console's tab first — this is stored per console.";
 }
 
+// Stored per console, keyed the same way the bridge is (bridgeKey, set by
+// initBridge, which runs first). One dfs-monitor per site now, so each console
+// reads its own; the pre-per-console single value carries over only while no
+// per-console entry exists anywhere.
+async function initDfs(stored) {
+  const map = stored.dfsMonitors || {};
+  const base = map[bridgeKey]
+    || (Object.keys(map).length ? "" : (stored.dfsMonitor || ""));
+  $("dfs").value = base;
+  $("dfsFor").textContent = bridgeKey
+    ? "Applies to " + bridgeKey.replace(/^https?:\/\//, "")
+    : "Open the console's tab first — this is stored per console.";
+  showDfsDash(base);
+  if (base) summariseDfs(base);
+}
+
 /* Which of the two things this tab is. The console field used to take the tab
  * origin unconditionally, so opening the popup on a Hamina tab offered
  * "https://us.hamina.com" as your console — a value that can only fail.
@@ -138,7 +154,8 @@ async function fillHaminaBridge(stored, haminaBridge) {
 }
 
 async function init() {
-  const stored = await chrome.storage.local.get(["origin", "site", "bridge", "bridges"]);
+  const stored = await chrome.storage.local.get(
+    ["origin", "site", "bridge", "bridges", "dfsMonitor", "dfsMonitors"]);
   const tab = await activeTab();
   const tabUrl = (tab && tab.url) || "";
   const tabOrigin = (() => {
@@ -161,6 +178,7 @@ async function init() {
   await fillConsoleList();
   if (stored.origin) setStatus(`Enabled for ${stored.origin}`);
   await initBridge(stored);
+  await initDfs(stored);
 }
 
 function setStatus(msg) {
@@ -301,10 +319,10 @@ $("testbridge").addEventListener("click", async () => {
 
 /* --- dfs-monitor ------------------------------------------------------- */
 
-/* A single setting, not per console: one dfs-monitor can watch several
- * consoles, and the overlay picks the right source by AP name. Tested through
- * the worker (the same path the overlay uses), then summarised from
- * /api/overlay so a working URL shows what it will actually draw. */
+/* Stored per console (in the dfsMonitors map, keyed by bridgeKey), like the
+ * bridge — one dfs-monitor per site. Tested through the worker (the same path
+ * the overlay uses), then summarised from /api/overlay so a working URL shows
+ * what it will actually draw. */
 function setDfsStatus(msg, cls) {
   const el = $("dfsstatus");
   el.textContent = msg;
@@ -358,24 +376,27 @@ $("testdfs").addEventListener("click", async () => {
   if (r.json?.service !== "dfs-monitor") {
     return setDfsStatus("That answers, but it isn't dfs-monitor — a bridge URL goes in the Bridge field.", "bad");
   }
-  await chrome.storage.local.set({ dfsMonitor: base });
+  if (!bridgeKey) {
+    return setDfsStatus(
+      "Open the console's tab first — the DFS monitor is stored per console.", "bad");
+  }
+  const map = (await chrome.storage.local.get("dfsMonitors")).dfsMonitors || {};
+  map[bridgeKey] = base;
+  await chrome.storage.local.set({ dfsMonitors: map });
   showDfsDash(base);
-  setDfsStatus(`Works — HTTP ${r.status} in ${r.ms} ms. Saved; open InnerSpace to see the chips.`, "ok");
+  setDfsStatus(`Works — HTTP ${r.status} in ${r.ms} ms. Saved for `
+    + bridgeKey.replace(/^https?:\/\//, "") + "; open InnerSpace to see the chips.", "ok");
   await summariseDfs(base);
 });
 
 $("cleardfs").addEventListener("click", async () => {
-  await chrome.storage.local.remove("dfsMonitor");
+  const map = (await chrome.storage.local.get("dfsMonitors")).dfsMonitors || {};
+  delete map[bridgeKey];
+  await chrome.storage.local.set({ dfsMonitors: map });
   $("dfs").value = "";
   $("dfssummary").textContent = "";
   showDfsDash(null);
-  setDfsStatus("Cleared — the chips are gone from open maps.");
-});
-
-chrome.storage.local.get("dfsMonitor").then(({ dfsMonitor }) => {
-  $("dfs").value = dfsMonitor || "";
-  showDfsDash(dfsMonitor);
-  if (dfsMonitor) summariseDfs(dfsMonitor);
+  setDfsStatus("Cleared for this console — its chips are gone from open maps.");
 });
 
 /* --- Hamina overlay ---------------------------------------------------- */
