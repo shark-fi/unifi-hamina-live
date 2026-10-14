@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b36";        // shown in the status chip; bump on every change
+  const BUILD = "b37";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -530,21 +530,28 @@
    * which an extension can't do, so it runs elsewhere and we only read its
    * /api/overlay: {sources: [{source, names, aps: {name: {radar, plan, health}}}]}.
    *
-   * One dfs-monitor can watch several consoles, so it is a single setting, not
-   * per console, and the source for this plan is picked by which one's AP names
+   * Stored per console (one dfs-monitor per site), keyed like the bridge; within
+   * one monitor the source for this plan is still picked by which one's AP names
    * match the markers on screen. Read through the worker for the same reason as
    * the bridge: a LAN http:// address from an https:// page is mixed content. */
   const DFS_REFRESH_MS = 60000;
   let dfsBase = null, dfsByName = {}, dfsSource = null, dfsErr = null, dfsTimer = 0;
   const lastDomNames = new Set();
+  function resolveDfsBase(s) {
+    const map = s.dfsMonitors || {};
+    // fall back to the pre-per-console single value only while no map entry exists
+    return map[consoleKey()] || (Object.keys(map).length ? null : (s.dfsMonitor || null));
+  }
   try {
-    chrome.storage.local.get(["dfsMonitor"]).then((s) => { dfsBase = s.dfsMonitor || null; }, () => {});
+    chrome.storage.local.get(["dfsMonitor", "dfsMonitors"]).then((s) => { dfsBase = resolveDfsBase(s); }, () => {});
     // set or cleared in the popup: pick it up without a page reload
     chrome.storage.onChanged.addListener((ch, area) => {
-      if (area !== "local" || !("dfsMonitor" in ch)) return;
-      dfsBase = ch.dfsMonitor.newValue || null;
-      dfsErr = null;
-      refreshDfs();
+      if (area !== "local" || !("dfsMonitors" in ch || "dfsMonitor" in ch)) return;
+      chrome.storage.local.get(["dfsMonitor", "dfsMonitors"]).then((s) => {
+        dfsBase = resolveDfsBase(s);
+        dfsErr = null;
+        refreshDfs();
+      }, () => {});
     });
   } catch (_e) { /* storage unavailable: no DFS layer */ }
 

@@ -123,6 +123,7 @@
       <button id="cleardfs">Clear</button>
       <a id="dfsdash" href="#" target="_blank" hidden>Open dashboard</a>
     </div>
+    <div class="msg" id="dfsFor"></div>
     <div class="msg" id="dfsstatus"></div>
     <div class="msg" id="dfssummary"></div>
     <details>
@@ -135,8 +136,10 @@
         for the reasons.</p>
       <p>dfs-monitor reads radar counters and AP-to-AP signal over SSH and
         collects around the clock, which an extension can't, so it runs as its
-        own service. One instance can watch several consoles: the one matching
-        the plan on screen is picked by AP name, so this is a single setting.</p>
+        own service. Run one instance per site (on that site's gateway); this
+        URL is stored <strong>per console</strong>, like the bridge, so each
+        console reads its own monitor. Within one monitor, the source matching
+        the plan on screen is still picked by AP name.</p>
       <p>Its API has no login of its own. Off this machine, publish it the same
         way as a bridge: a tunnel with an Access policy in front.</p>
     </details>
