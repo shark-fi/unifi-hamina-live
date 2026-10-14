@@ -202,8 +202,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // async sendResponse
 });
 
-// Re-assert registration on browser startup (in case it was cleared).
-chrome.runtime.onStartup.addListener(async () => {
+// Re-assert registration from stored config. Runs on browser startup AND on
+// install/update — the latter matters because a persisted dynamic registration
+// is NOT refreshed when the extension is reloaded or updated. One left over from
+// a version that registered content.js without transform.js would inject
+// content.js alone, so fitPlanToScreen (defined in transform.js) is undefined
+// and the overlay throws "render error — fitPlanToScreen is not defined".
+// registerForOrigin unregisters first, so re-asserting the current js set heals it.
+async function reassertRegistrations() {
   const { origin, haminaOrigin } = await chrome.storage.local.get(["origin", "haminaOrigin"]);
   if (origin) {
     const granted = await chrome.permissions.contains({ origins: [origin + "/*"] });
@@ -213,4 +219,7 @@ chrome.runtime.onStartup.addListener(async () => {
     const granted = await chrome.permissions.contains({ origins: [haminaOrigin + "/*"] });
     if (granted) await registerHamina(haminaOrigin);
   }
-});
+}
+
+chrome.runtime.onStartup.addListener(reassertRegistrations);
+chrome.runtime.onInstalled.addListener(reassertRegistrations);
