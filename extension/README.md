@@ -120,7 +120,11 @@ A few things worth knowing:
   unauthenticated by design, expecting a LAN. Tunnelled bare they publish your
   whole client inventory to anyone who learns the hostname. With Cloudflare
   Access, the extension needs no credential of its own: sign in once in a tab and
-  the service worker reuses that session cookie. The bridge repo ships
+  the service worker reuses that session cookie. When you are not signed in,
+  **Test bridge** (and the overlay) now report that Access redirected you to a
+  login rather than a bare "Failed to fetch" — the redirect to the
+  `cloudflareaccess.com` origin is one the worker can't follow, so it is named
+  instead of surfacing as "unreachable". The bridge repo ships
   `scripts/check-tunnel.sh` to verify the policy actually took — see its
   `docs/EXPOSURE.md`.
 
