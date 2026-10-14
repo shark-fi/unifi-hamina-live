@@ -20,7 +20,7 @@
   const MIN_SEP = 36;        // preferred px between client icon centres
   const DENSE_SEP = 30;      // below this the chips shrink to keep the gap open
   const NS = "unifi-live";
-  const BUILD = "b34";        // shown in the status chip; bump on every change
+  const BUILD = "b35";        // shown in the status chip; bump on every change
 
   const BANDS = ["2.4", "5", "6", "?"];
   const BAND_CLS = { "2.4": "b24", "5": "b5", "6": "b6", "?": "bx" };
@@ -145,6 +145,10 @@
   async function getJson(url) {
     let r;
     try { r = await rawGet(url); } catch (e) { failedUrls.add(url); throw e; }
+    if (r.redirected) {
+      failedUrls.add(url);
+      throw new Error("redirected to a sign-in — open it in a tab and log in");
+    }
     const body = String(r.text || "");
     const head = body.trimStart().slice(0, 1);
     if (head === "<") {
@@ -450,6 +454,7 @@
       { type: "get", url: bridgeBase.replace(/\/+$/, "") + path });
     if (!reply?.ok) throw new Error(reply?.error || "bridge unreachable");
     const r = reply.res;
+    if (r.redirected) throw new Error("bridge needs an Access login — open it in a tab and sign in");
     const body = String(r.text || "");
     if (/^\s*</.test(body)) {
       throw new Error(/cloudflareaccess\.com/i.test(body)
@@ -550,6 +555,7 @@
         { type: "get", url: dfsBase.replace(/\/+$/, "") + "/api/overlay" });
       if (!reply?.ok) throw new Error(reply?.error || "unreachable");
       const r = reply.res;
+      if (r.redirected) throw new Error("needs an Access login — open it in a tab and sign in");
       if (/^\s*</.test(String(r.text || ""))) {
         throw new Error(/cloudflareaccess\.com/i.test(r.text)
           ? "needs an Access login — open it in a tab and sign in" : `returned HTML (HTTP ${r.status})`);

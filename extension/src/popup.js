@@ -269,8 +269,13 @@ $("testbridge").addEventListener("click", async () => {
       + bridgeKey.replace(/^https?:\/\//, "") + ".", "ok");
   }
   if (r.stage === "access") {
+    // A redirect bounce carries no readable status (opaqueredirect → 0); a
+    // login page served inline does. Word it for whichever we got.
+    const how = r.redirect || !r.status
+      ? "redirected it to a login"
+      : `is asking for a login (HTTP ${r.status})`;
     return setBridgeStatus(
-      `Reached it, but Cloudflare Access is asking for a login (HTTP ${r.status}). `
+      `Reached ${base}, but Cloudflare Access ${how}. `
       + "Open the bridge URL in a tab and sign in once — the worker will then "
       + "carry the session cookie.", "bad");
   }

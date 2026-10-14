@@ -85,7 +85,21 @@ async function unregister() {
  * separate origin (<console-id>.id.ui.direct), and content-script fetches are
  * subject to the page's CORS; the worker's are not, given host permission. */
 async function proxyGet(url) {
-  const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+  const r = await fetch(url, {
+    credentials: "include",
+    redirect: "manual",
+    headers: { Accept: "application/json" },
+  });
+  // A redirect the worker is not allowed to follow (manual mode yields an
+  // opaqueredirect; a visible 3xx is the same signal) is an auth gateway
+  // bouncing the request to a login on ANOTHER origin — Cloudflare Access in
+  // front of a tunnelled bridge, or the console's own SSO. With the default
+  // redirect:"follow" the worker tries to follow it to an origin it has no
+  // permission for and the fetch throws "Failed to fetch", which reads as
+  // "unreachable". Report the redirect so callers can say "sign in" instead.
+  if (r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400)) {
+    return { ok: false, status: r.status || 0, type: "", text: "", redirected: true };
+  }
   const text = await r.text();
   return { ok: r.ok, status: r.status, type: r.headers.get("content-type") || "", text };
 }
@@ -108,12 +122,24 @@ async function probeBridge(base) {
   let r;
   try {
     // credentials:"include" so a Cloudflare Access session cookie is carried
-    // when the bridge is published through a tunnel behind an Access policy
-    r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+    // when the bridge is published through a tunnel behind an Access policy.
+    // redirect:"manual" so an Access login bounce is seen as a redirect rather
+    // than throwing "Failed to fetch" when the worker can't follow it to the
+    // cloudflareaccess.com origin (which it has no permission for).
+    r = await fetch(url, {
+      credentials: "include",
+      redirect: "manual",
+      headers: { Accept: "application/json" },
+    });
   } catch (e) {
     return { ok: false, stage: "fetch", url, error: String((e && e.message) || e) };
   }
   const ms = Date.now() - t0;
+  // Redirected to a login on another origin — Cloudflare Access, almost always.
+  // Name it as "access" so the UI tells you to sign in, not that it's down.
+  if (r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400)) {
+    return { ok: false, stage: "access", url, status: r.status || 0, ms, redirect: true };
+  }
   const text = (await r.text()).slice(0, 400);
   // Judge the body by shape, and JSON first: the bridge's health payload
   // contains "access_points", so any keyword sniff for Access has to lose to a
