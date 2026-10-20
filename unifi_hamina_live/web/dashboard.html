@@ -24,6 +24,8 @@
     display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
   h1 { font-size: 18px; margin: 0; font-weight: 650; }
   .sub { color: var(--muted); font-size: 13px; }
+  .xlink { font-size: 13px; text-decoration: none; white-space: nowrap; }
+  .xlink:hover { text-decoration: underline; }
   .status { margin-left: auto; display: flex; gap: 16px; align-items: center;
     color: var(--muted); font-size: 13px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
@@ -124,6 +126,8 @@
 <header>
   <h1>UniFi Live</h1>
   <span class="sub">access points &amp; connected clients, straight from the console</span>
+  <a id="dfsLink" class="xlink" hidden target="_blank" rel="noopener"
+     title="This site's DFS Monitor: radar hits, channel plan and change health">DFS channel plan ↗</a>
   <div class="status">
     <span id="conn"><span class="dot" id="dot"></span><span id="connText">connecting…</span></span>
     <span id="age">—</span>
@@ -211,6 +215,10 @@ async function tick() {
       fetch("/api/summary").then(r => r.json()),
     ]);
     setConn(h.ok, h.ok ? "live" : ("error: " + (h.error || "unknown")));
+    const dfs = $("dfsLink");
+    dfs.hidden = !h.dfs_monitor_url;
+    // #tab=plan opens the DFS Monitor straight on its Channel plan tab
+    if (h.dfs_monitor_url) dfs.href = h.dfs_monitor_url + "/#tab=plan";
     $("age").textContent = h.age_seconds != null ? `updated ${h.age_seconds}s ago` : "—";
     $("cSites").textContent = h.sites;
     $("cAps").textContent = h.access_points;
