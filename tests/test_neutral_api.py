@@ -7,6 +7,17 @@ def test_health(client):
     assert h["access_points"] == 2
     assert h["clients"] == 2
     assert h["sites"] == 2
+    assert h["dfs_monitor_url"] is None   # no link unless DFS_MONITOR_URL is set
+
+
+def test_health_reports_the_dfs_monitor_link():
+    from fastapi.testclient import TestClient
+
+    from unifi_hamina_live.app import create_app
+    from unifi_hamina_live.config import Settings
+
+    with TestClient(create_app(settings=Settings(dfs_monitor_url="http://gw:8765/"))) as c:
+        assert c.get("/api/health").json()["dfs_monitor_url"] == "http://gw:8765"
 
 
 def test_sites(client):

@@ -10,7 +10,8 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from ..deps import collector, snapshot
+from ..config import Settings
+from ..deps import collector, settings, snapshot
 from ..models import AccessPoint, Client, FloorPlan, Site, Snapshot
 from ..unifi.collector import Collector
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["neutral"])
 
 
 @router.get("/health")
-def health(snap: Snapshot = Depends(snapshot)):
+def health(snap: Snapshot = Depends(snapshot), cfg: Settings = Depends(settings)):
     age = time.time() - snap.generated_at if snap.generated_at else None
     return {
         "ok": snap.ok,
@@ -28,6 +29,8 @@ def health(snap: Snapshot = Depends(snapshot)):
         "sites": len(snap.sites),
         "access_points": len(snap.access_points),
         "clients": len(snap.clients),
+        # this site's DFS Monitor, linked from the dashboard header (DFS_MONITOR_URL)
+        "dfs_monitor_url": cfg.dfs_monitor_url.strip().rstrip("/") or None,
     }
 
 

@@ -217,6 +217,12 @@ class Settings(BaseSettings):
     lora_x_px: float | None = Field(default=None)
     lora_y_px: float | None = Field(default=None)
 
+    # --- This site's DFS Monitor -------------------------------------------
+    # The dfs-monitor dashboard for the same site (shark-fi/dfs-monitor), e.g.
+    # http://192.168.60.151:8765. When set, the dashboard header links to its
+    # channel plan, and /api/health reports it. Empty = no link.
+    dfs_monitor_url: str = Field(default="")
+
     # --- Cisco Meraki APs (Dashboard API) ------------------------------------
     # OFF by default. When on, a Meraki organization's wireless APs are read
     # every poll from the Dashboard API and join the same snapshot as the UniFi
